@@ -1,0 +1,56 @@
+{
+  "expo": {
+    "name": "CabBooking Driver",
+    "slug": "cabooking-driver",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0F172A"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.cabooking.driver",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "We need your location to show you nearby trip requests.",
+        "NSLocationAlwaysUsageDescription": "Background location allows us to match you with passengers even when the app is in background.",
+        "NSCameraUsageDescription": "Camera is needed to upload your KYC documents.",
+        "NSPhotoLibraryUsageDescription": "Photo library is used to select KYC documents."
+      }
+    },
+    "android": {
+      "package": "com.cabooking.driver",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "backgroundColor": "#F59E0B"
+      },
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "FOREGROUND_SERVICE"
+      ],
+      "useNextNotificationsApi": true
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-font",
+      "expo-status-bar"
+    ],
+    "extra": {
+      "apiUrl": "http://localhost:80/api/v1",
+      "wsUrl": "http://localhost:8010"
+    }
+  }
+}

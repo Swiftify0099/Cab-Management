@@ -1,0 +1,258 @@
+name: CI — CabBooking SuperApp
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20"
+
+# ─────────────────────────────────────────────────────────
+# JOB 1 — Backend Tests (pytest)
+# ─────────────────────────────────────────────────────────
+jobs:
+  backend-tests:
+    name: 🐍 Backend Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: cabuser
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: cabdb_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://cabuser:testpassword@localhost:5432/cabdb_test
+      REDIS_URL: redis://localhost:6379/0
+      SECRET_KEY: ci-test-secret-key-do-not-use-in-prod
+      ENVIRONMENT: testing
+      RAZORPAY_KEY_ID: rzp_test_placeholder
+      RAZORPAY_KEY_SECRET: placeholder_secret
+      RAZORPAY_WEBHOOK_SECRET: webhook_placeholder
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install shared dependencies
+        run: |
+          pip install -r backend/common/requirements.txt
+
+      - name: Install service dependencies
+        run: |
+          for svc in auth-service booking-service matching-service payment-service parcel-service admin-service; do
+            echo "Installing $svc..."
+            pip install -r backend/$svc/requirements.txt 2>/dev/null || true
+          done
+
+      - name: Run Alembic migrations (test DB)
+        run: |
+          cd backend/auth-service
+          alembic upgrade head
+        env:
+          DATABASE_URL: postgresql+asyncpg://cabuser:testpassword@localhost:5432/cabdb_test
+
+      - name: Run pytest — auth-service
+        run: |
+          cd backend/auth-service
+          python -m pytest tests/ -v --tb=short --cov=app --cov-report=xml -x
+        continue-on-error: false
+
+      - name: Run pytest — booking-service
+        run: |
+          cd backend/booking-service
+          python -m pytest tests/ -v --tb=short --cov=app --cov-report=xml -x
+        continue-on-error: false
+
+      - name: Run pytest — matching-service
+        run: |
+          cd backend/matching-service
+          python -m pytest tests/ -v --tb=short --cov=app --cov-report=xml -x
+        continue-on-error: false
+
+      - name: Run pytest — payment-service
+        run: |
+          cd backend/payment-service
+          python -m pytest tests/ -v --tb=short --cov=app --cov-report=xml -x
+        continue-on-error: false
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v4
+        with:
+          files: backend/*/coverage.xml
+          flags: backend
+        continue-on-error: true
+
+  # ─────────────────────────────────────────────────────────
+  # JOB 2 — Frontend Builds (TypeScript + Vite)
+  # ─────────────────────────────────────────────────────────
+  frontend-builds:
+    name: ⚛️ Frontend Builds
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            apps/customer-web/package-lock.json
+            apps/admin-web/package-lock.json
+
+      - name: Install Customer Web deps
+        run: npm ci
+        working-directory: apps/customer-web
+
+      - name: Build Customer Web (TypeScript + Vite)
+        run: npm run build
+        working-directory: apps/customer-web
+
+      - name: Install Admin Web deps
+        run: npm ci
+        working-directory: apps/admin-web
+
+      - name: Build Admin Web (TypeScript + Vite)
+        run: npm run build
+        working-directory: apps/admin-web
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-builds
+          path: |
+            apps/customer-web/dist
+            apps/admin-web/dist
+          retention-days: 7
+
+  # ─────────────────────────────────────────────────────────
+  # JOB 3 — Code Quality
+  # ─────────────────────────────────────────────────────────
+  code-quality:
+    name: 🔍 Code Quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install linting tools
+        run: pip install ruff mypy types-redis
+
+      - name: Ruff lint (Python)
+        run: ruff check backend/ --select=E,W,F,I --ignore=E501
+        continue-on-error: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: ESLint — Customer Web
+        run: |
+          npm ci
+          npx eslint src/ --ext .ts,.tsx --max-warnings=50
+        working-directory: apps/customer-web
+        continue-on-error: true
+
+  # ─────────────────────────────────────────────────────────
+  # JOB 4 — Docker Build Validation
+  # ─────────────────────────────────────────────────────────
+  docker-build:
+    name: 🐳 Docker Build Check
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build auth-service image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend/auth-service
+          push: false
+          tags: cabooking/auth-service:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build booking-service image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend/booking-service
+          push: false
+          tags: cabooking/booking-service:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ─────────────────────────────────────────────────────────
+  # JOB 5 — Deploy (main branch only)
+  # ─────────────────────────────────────────────────────────
+  deploy:
+    name: 🚀 Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-builds, code-quality]
+    if: github.ref == 'refs/heads/main'
+    environment: staging
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download frontend artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-builds
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            cd /opt/cabooking
+            git pull origin main
+            docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            docker system prune -f
+        continue-on-error: true

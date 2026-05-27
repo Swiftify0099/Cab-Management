@@ -1,0 +1,286 @@
+version: "3.8"
+
+# =============================================================
+# PRODUCTION Docker Compose — CabBooking SuperApp
+# Phase 10 — Hardening
+# =============================================================
+# Usage:
+#   docker compose -f docker-compose.prod.yml up -d
+# =============================================================
+
+x-service-defaults: &service-defaults
+  restart: unless-stopped
+  networks:
+    - cabnet
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "50m"
+      max-file: "5"
+
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+  SECRET_KEY: ${SECRET_KEY}
+  ENVIRONMENT: production
+  SENTRY_DSN: ${SENTRY_DSN:-}
+
+services:
+  # ── Infrastructure ────────────────────────────────────────
+  postgres:
+    <<: *service-defaults
+    image: postgis/postgis:16-3.4-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cabuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-cabdb}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/infra/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cabuser}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  redis:
+    <<: *service-defaults
+    image: redis:7-alpine
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── API Gateway ───────────────────────────────────────────
+  nginx:
+    <<: *service-defaults
+    image: nginx:1.25-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./backend/gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./backend/gateway/conf.d:/etc/nginx/conf.d:ro
+      - uploads_data:/var/www/uploads
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - auth-service
+      - booking-service
+      - matching-service
+      - payment-service
+      - parcel-service
+      - websocket-gateway
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # ── Backend Services ──────────────────────────────────────
+  auth-service:
+    <<: *service-defaults
+    build:
+      context: ./backend/auth-service
+      dockerfile: Dockerfile
+    environment:
+      <<: *backend-env
+      SERVICE_NAME: auth-service
+      OTP_EXPIRY_SECONDS: 300
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID}
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 512M
+
+  booking-service:
+    <<: *service-defaults
+    build:
+      context: ./backend/booking-service
+      dockerfile: Dockerfile
+    environment:
+      <<: *backend-env
+      SERVICE_NAME: booking-service
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 512M
+
+  matching-service:
+    <<: *service-defaults
+    build:
+      context: ./backend/matching-service
+      dockerfile: Dockerfile
+    environment:
+      <<: *backend-env
+      SERVICE_NAME: matching-service
+      DISPATCH_TIMEOUT_SECONDS: 45
+      MAX_DISPATCH_ATTEMPTS: 5
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 512M
+
+  payment-service:
+    <<: *service-defaults
+    build:
+      context: ./backend/payment-service
+      dockerfile: Dockerfile
+    environment:
+      <<: *backend-env
+      SERVICE_NAME: payment-service
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET}
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  parcel-service:
+    <<: *service-defaults
+    build:
+      context: ./backend/parcel-service
+      dockerfile: Dockerfile
+    environment:
+      <<: *backend-env
+      SERVICE_NAME: parcel-service
+    volumes:
+      - uploads_data:/var/www/uploads
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  admin-service:
+    <<: *service-defaults
+    build:
+      context: ./backend/admin-service
+      dockerfile: Dockerfile
+    environment:
+      <<: *backend-env
+      SERVICE_NAME: admin-service
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  notification-service:
+    <<: *service-defaults
+    build:
+      context: ./backend/notification-service
+      dockerfile: Dockerfile
+    environment:
+      <<: *backend-env
+      SERVICE_NAME: notification-service
+      FCM_SERVER_KEY: ${FCM_SERVER_KEY:-}
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  websocket-gateway:
+    <<: *service-defaults
+    build:
+      context: ./backend/websocket-gateway
+      dockerfile: Dockerfile
+    environment:
+      <<: *backend-env
+      SERVICE_NAME: websocket-gateway
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 512M
+
+  # ── Monitoring Stack ──────────────────────────────────────
+  prometheus:
+    <<: *service-defaults
+    image: prom/prometheus:v2.48.1
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./backend/infra/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  grafana:
+    <<: *service-defaults
+    image: grafana/grafana:10.2.3
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin123}
+      GF_SERVER_ROOT_URL: ${GRAFANA_URL:-http://localhost:3001}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./backend/infra/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./backend/infra/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+networks:
+  cabnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:
+  prometheus_data:
+  grafana_data:

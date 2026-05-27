@@ -1,0 +1,66 @@
+{
+  "expo": {
+    "name": "CabBooking",
+    "slug": "cabooking-customer",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#2563EB"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.cabooking.customer",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "We need your location to find nearby drivers and show your pickup/drop points.",
+        "NSLocationAlwaysUsageDescription": "Background location is used to track your ride in real-time.",
+        "NSCameraUsageDescription": "Camera is used to upload your profile photo.",
+        "NSPhotoLibraryUsageDescription": "Photo library is used to pick a profile photo."
+      }
+    },
+    "android": {
+      "package": "com.cabooking.customer",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "backgroundColor": "#2563EB"
+      },
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE"
+      ],
+      "useNextNotificationsApi": true
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-font",
+      [
+        "expo-status-bar",
+        {
+          "style": "auto"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "apiUrl": "http://localhost:80/api/v1",
+      "wsUrl": "http://localhost:8010"
+    }
+  }
+}

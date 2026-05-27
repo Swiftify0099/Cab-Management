@@ -1,0 +1,52 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'auth-service'
+    static_configs:
+      - targets: ['auth-service:8001']
+    metrics_path: /metrics
+
+  - job_name: 'booking-service'
+    static_configs:
+      - targets: ['booking-service:8002']
+    metrics_path: /metrics
+
+  - job_name: 'matching-service'
+    static_configs:
+      - targets: ['matching-service:8003']
+    metrics_path: /metrics
+
+  - job_name: 'payment-service'
+    static_configs:
+      - targets: ['payment-service:8004']
+    metrics_path: /metrics
+
+  - job_name: 'parcel-service'
+    static_configs:
+      - targets: ['parcel-service:8005']
+    metrics_path: /metrics
+
+  - job_name: 'admin-service'
+    static_configs:
+      - targets: ['admin-service:8009']
+    metrics_path: /metrics
+
+  - job_name: 'websocket-gateway'
+    static_configs:
+      - targets: ['websocket-gateway:8010']
+    metrics_path: /metrics
+
+  - job_name: 'notification-service'
+    static_configs:
+      - targets: ['notification-service:8007']
+    metrics_path: /metrics
+
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']

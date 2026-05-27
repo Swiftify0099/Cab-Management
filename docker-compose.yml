@@ -1,0 +1,349 @@
+version: "3.9"
+
+networks:
+  cabooking_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:
+
+services:
+  # ============================================================
+  # DATABASE — PostgreSQL + PostGIS
+  # ============================================================
+  postgres:
+    image: postgis/postgis:15-3.3
+    container_name: cabooking_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cabooking}
+      POSTGRES_USER: ${POSTGRES_USER:-cabooking_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cabooking_pass}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/infra/sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - cabooking_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cabooking_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================
+  # CACHE + PUB/SUB — Redis
+  # ============================================================
+  redis:
+    image: redis:7-alpine
+    container_name: cabooking_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - cabooking_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================
+  # AUTH SERVICE — OTP + JWT
+  # ============================================================
+  auth-service:
+    build:
+      context: ./backend/auth-service
+      dockerfile: Dockerfile
+    container_name: cabooking_auth
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - SERVICE_PORT=8001
+    ports:
+      - "8001:8001"
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cabooking_net
+
+  # ============================================================
+  # BOOKING SERVICE
+  # ============================================================
+  booking-service:
+    build:
+      context: ./backend/booking-service
+      dockerfile: Dockerfile
+    container_name: cabooking_booking
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - SERVICE_PORT=8002
+    ports:
+      - "8002:8002"
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cabooking_net
+
+  # ============================================================
+  # MATCHING SERVICE — Driver Matching Engine
+  # ============================================================
+  matching-service:
+    build:
+      context: ./backend/matching-service
+      dockerfile: Dockerfile
+    container_name: cabooking_matching
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - SERVICE_PORT=8003
+    ports:
+      - "8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cabooking_net
+
+  # ============================================================
+  # PAYMENT SERVICE — Razorpay + Multi-gateway
+  # ============================================================
+  payment-service:
+    build:
+      context: ./backend/payment-service
+      dockerfile: Dockerfile
+    container_name: cabooking_payment
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - SERVICE_PORT=8004
+    ports:
+      - "8004:8004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cabooking_net
+
+  # ============================================================
+  # PARCEL SERVICE
+  # ============================================================
+  parcel-service:
+    build:
+      context: ./backend/parcel-service
+      dockerfile: Dockerfile
+    container_name: cabooking_parcel
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - SERVICE_PORT=8005
+    ports:
+      - "8005:8005"
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cabooking_net
+
+  # ============================================================
+  # HOTEL SERVICE
+  # ============================================================
+  hotel-service:
+    build:
+      context: ./backend/hotel-service
+      dockerfile: Dockerfile
+    container_name: cabooking_hotel
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - SERVICE_PORT=8006
+    ports:
+      - "8006:8006"
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cabooking_net
+
+  # ============================================================
+  # NOTIFICATION SERVICE — FCM Push
+  # ============================================================
+  notification-service:
+    build:
+      context: ./backend/notification-service
+      dockerfile: Dockerfile
+    container_name: cabooking_notification
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - SERVICE_PORT=8007
+    ports:
+      - "8007:8007"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cabooking_net
+
+  # ============================================================
+  # ANALYTICS SERVICE
+  # ============================================================
+  analytics-service:
+    build:
+      context: ./backend/analytics-service
+      dockerfile: Dockerfile
+    container_name: cabooking_analytics
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - SERVICE_PORT=8008
+    ports:
+      - "8008:8008"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cabooking_net
+
+  # ============================================================
+  # ADMIN SERVICE
+  # ============================================================
+  admin-service:
+    build:
+      context: ./backend/admin-service
+      dockerfile: Dockerfile
+    container_name: cabooking_admin_svc
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - SERVICE_PORT=8009
+    ports:
+      - "8009:8009"
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cabooking_net
+
+  # ============================================================
+  # WEBSOCKET GATEWAY — Socket.IO + Redis Adapter
+  # ============================================================
+  websocket-gateway:
+    build:
+      context: ./backend/websocket-gateway
+      dockerfile: Dockerfile
+    container_name: cabooking_ws
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - SERVICE_PORT=8010
+    ports:
+      - "8010:8010"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - cabooking_net
+
+  # ============================================================
+  # CELERY WORKER
+  # ============================================================
+  celery-worker:
+    build:
+      context: ./backend/booking-service
+      dockerfile: Dockerfile
+    container_name: cabooking_celery_worker
+    restart: unless-stopped
+    env_file: .env
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cabooking_net
+
+  # ============================================================
+  # CELERY BEAT — Scheduled Tasks
+  # ============================================================
+  celery-beat:
+    build:
+      context: ./backend/booking-service
+      dockerfile: Dockerfile
+    container_name: cabooking_celery_beat
+    restart: unless-stopped
+    env_file: .env
+    command: celery -A app.workers.celery_app beat --loglevel=info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cabooking_net
+
+  # ============================================================
+  # NGINX — API Gateway / Reverse Proxy
+  # ============================================================
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: cabooking_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./backend/gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./backend/gateway/conf.d:/etc/nginx/conf.d:ro
+      - uploads_data:/var/www/uploads:ro
+    depends_on:
+      - auth-service
+      - booking-service
+      - matching-service
+      - payment-service
+      - parcel-service
+      - hotel-service
+      - notification-service
+      - analytics-service
+      - admin-service
+      - websocket-gateway
+    networks:
+      - cabooking_net
