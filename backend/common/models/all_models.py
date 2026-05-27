@@ -583,7 +583,7 @@ class Transaction(Base, UUIDMixin, TimestampMixin):
     gateway_order_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     status: Mapped[PaymentStatus] = mapped_column(Enum(PaymentStatus), default=PaymentStatus.PENDING, index=True)
     ledger_type: Mapped[LedgerType] = mapped_column(Enum(LedgerType), nullable=False)
-    metadata: Mapped[dict] = mapped_column(JSONB, default={})
+    tx_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
     refunded_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
 
     booking: Mapped[Optional["Booking"]] = relationship(back_populates="transaction")

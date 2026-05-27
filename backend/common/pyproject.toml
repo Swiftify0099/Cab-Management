@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cab-common"
+version = "0.1.0"
+description = "Shared models, config and utilities for CabBooking microservices"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["common*"]
