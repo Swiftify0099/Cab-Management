@@ -1,5 +1,5 @@
 """
-Analytics API — Phase 9
+Analytics API  Phase 9
 Provides BI reports, revenue graphs, and system usage metrics for the Admin dashboard.
 """
 from typing import List, Dict, Any

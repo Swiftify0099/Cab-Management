@@ -1,5 +1,5 @@
 """
-Booking API — Seat booking + Fare estimation.
+Booking API  Seat booking + Fare estimation.
 Phase 3: Customers book seats on Driver Trips.
 """
 from datetime import datetime
@@ -19,7 +19,7 @@ booking_router = APIRouter()
 fare_router = APIRouter()
 
 
-# ─── Fare schemas ─────────────────────────────────────────────────────────────
+#  Fare schemas 
 
 class FareRequest(BaseModel):
     from_city: str
@@ -33,17 +33,17 @@ class FareRequest(BaseModel):
     @classmethod
     def validate_seats(cls, v: int) -> int:
         if v < 1 or v > 40:
-            raise ValueError("Seats must be 1–40")
+            raise ValueError("Seats must be 140")
         return v
 
     def get_departure(self) -> datetime:
         try:
             return datetime.fromisoformat(self.departure_time.replace("Z", "+00:00"))
         except Exception:
-            raise ValueError("Invalid departure_time — use ISO 8601")
+            raise ValueError("Invalid departure_time  use ISO 8601")
 
 
-# ─── Booking schemas ──────────────────────────────────────────────────────────
+#  Booking schemas 
 
 class CreateBookingRequest(BaseModel):
     trip_id: str
@@ -58,7 +58,7 @@ class CreateBookingRequest(BaseModel):
     @classmethod
     def validate_seats(cls, v: int) -> int:
         if v < 1 or v > 10:
-            raise ValueError("You can book 1–10 seats per booking")
+            raise ValueError("You can book 110 seats per booking")
         return v
 
 
@@ -66,7 +66,7 @@ class CancelBookingRequest(BaseModel):
     reason: str
 
 
-# ─── Fare Routes ──────────────────────────────────────────────────────────────
+#  Fare Routes 
 
 @fare_router.post(
     "",
@@ -91,7 +91,7 @@ async def get_fare_estimates(
     )
 
 
-# ─── Booking Routes ──────────────────────────────────────────────────────────
+#  Booking Routes 
 
 @booking_router.post(
     "/",

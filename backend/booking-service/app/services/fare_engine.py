@@ -1,14 +1,14 @@
 """
-Fare Calculation Engine — Phase 3
+Fare Calculation Engine  Phase 3
 
 Business rules:
-  - Base fare = distance_km × base_rate (varies by vehicle_type)
-  - Platform fee = ₹10 flat per booking
-  - Window seat surcharge = ₹30 if window seat selected
-  - Parcel surcharge = ₹50 per parcel
+  - Base fare = distance_km  base_rate (varies by vehicle_type)
+  - Platform fee = 10 flat per booking
+  - Window seat surcharge = 30 if window seat selected
+  - Parcel surcharge = 50 per parcel
   - Per-seat fare = (base_fare + surcharges) / total_seats
-  - Night surcharge (10 PM – 6 AM) = +15%
-  - Toll estimation = ₹2/km on highway routes (simplified)
+  - Night surcharge (10 PM  6 AM) = +15%
+  - Toll estimation = 2/km on highway routes (simplified)
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from typing import Optional
 
 from app.core.config import booking_settings
 
-# Vehicle type rate multipliers (₹/km)
+# Vehicle type rate multipliers (/km)
 VEHICLE_RATES: dict[str, float] = {
     "mini":            3.0,
     "sedan":           3.5,
@@ -36,7 +36,7 @@ VEHICLE_CAPACITY: dict[str, int] = {
     "bus":             40,
 }
 
-# Simple city-to-city distance table (km) — Phase 3 demo data
+# Simple city-to-city distance table (km)  Phase 3 demo data
 # In Phase 5 this will be replaced with Google Maps Distance Matrix
 CITY_DISTANCES: dict[frozenset, float] = {
     frozenset({"pune", "mumbai"}): 149,
@@ -61,7 +61,7 @@ def get_distance_km(from_city: str, to_city: str) -> float:
 
 
 def is_night_trip(departure_time: datetime) -> bool:
-    """Night surcharge applies 10 PM – 6 AM."""
+    """Night surcharge applies 10 PM  6 AM."""
     hour = departure_time.hour
     return hour >= 22 or hour < 6
 
@@ -118,7 +118,7 @@ def calculate_fare(
     parcel_fee = 50.0 if with_parcel else 0.0
     window_seat_fee = booking_settings.WINDOW_SEAT_SURCHARGE if window_seat else 0.0
     night_surch = base_fare * 0.15 if is_night_trip(departure_time) else 0.0
-    toll_estimate = math.floor(distance / 50) * 30  # ₹30 per 50 km (simplified)
+    toll_estimate = math.floor(distance / 50) * 30  # 30 per 50 km (simplified)
 
     total_fare = base_fare + platform_fee + parcel_fee + window_seat_fee + night_surch + toll_estimate
 

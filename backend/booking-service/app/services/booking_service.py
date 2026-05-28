@@ -1,5 +1,5 @@
 """
-Seat Booking Service — Customer books seats on a driver's Trip.
+Seat Booking Service  Customer books seats on a driver's Trip.
 Aligned with the Booking model which links to trip_id + customer_profile.id.
 """
 from __future__ import annotations

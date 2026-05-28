@@ -1,5 +1,5 @@
 """
-Booking Service — Settings
+Booking Service  Settings
 """
 from functools import lru_cache
 from typing import List

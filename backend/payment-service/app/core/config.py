@@ -1,5 +1,5 @@
 """
-Payment Service — Configuration (Phase 6)
+Payment Service  Configuration (Phase 6)
 Razorpay keys loaded from environment.
 """
 from functools import lru_cache
@@ -24,11 +24,11 @@ class PaymentSettings(BaseSettings):
     # Platform settings
     PLATFORM_COMMISSION_PCT: float = 10.0   # 10% platform fee
     DRIVER_PAYOUT_PCT: float = 90.0         # 90% to driver
-    WALLET_MIN_RECHARGE: int = 50           # ₹50 minimum top-up
-    WALLET_MAX_BALANCE: int = 50000         # ₹50,000 max wallet balance
-    REWARD_POINTS_PER_RUPEE: float = 1.0    # 1 point per ₹1 spent
-    REWARD_RUPEE_VALUE: float = 0.10        # ₹0.10 per point (10 pts = ₹1)
-    REFERRAL_BONUS_RUPEES: int = 100        # ₹100 for referrer + referee
+    WALLET_MIN_RECHARGE: int = 50           # 50 minimum top-up
+    WALLET_MAX_BALANCE: int = 50000         # 50,000 max wallet balance
+    REWARD_POINTS_PER_RUPEE: float = 1.0    # 1 point per 1 spent
+    REWARD_RUPEE_VALUE: float = 0.10        # 0.10 per point (10 pts = 1)
+    REFERRAL_BONUS_RUPEES: int = 100        # 100 for referrer + referee
 
     CORS_ORIGINS: list = ["*"]
 

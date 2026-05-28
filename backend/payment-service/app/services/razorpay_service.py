@@ -1,11 +1,11 @@
 """
-Razorpay Payment Gateway — Phase 6.
+Razorpay Payment Gateway  Phase 6.
 
 Handles:
   - Create payment order (returns order_id for frontend SDK)
   - Verify payment signature (HMAC-SHA256)
   - Webhook processing (payment.captured, payment.failed, refund.created)
-  - Settlement: booking payment → driver wallet (90%) + platform (10%)
+  - Settlement: booking payment  driver wallet (90%) + platform (10%)
 """
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ class RazorpayService:
     ) -> dict:
         """
         Create a Razorpay order. Returns order data for frontend SDK.
-        Amount in rupees → converted to paise for Razorpay.
+        Amount in rupees  converted to paise for Razorpay.
         """
         amount_paise = int(amount_rupees * 100)
 
@@ -277,7 +277,7 @@ class RazorpayService:
         )
 
     async def _award_reward_points(self, customer_id: str, amount: Decimal) -> None:
-        """Award reward points to customer (1 point per ₹1 spent)."""
+        """Award reward points to customer (1 point per 1 spent)."""
         points = int(float(amount) * payment_settings.REWARD_POINTS_PER_RUPEE)
         from common.models.all_models import Customer
         result = await self.db.execute(

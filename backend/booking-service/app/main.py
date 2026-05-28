@@ -1,5 +1,5 @@
 """
-Booking Service — FastAPI entrypoint.
+Booking Service  FastAPI entrypoint.
 Handles: Trip CRUD, Fare Engine, Seat Booking lifecycle.
 """
 from contextlib import asynccontextmanager
@@ -23,15 +23,15 @@ limiter = Limiter(key_func=get_remote_address)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("🚀 Booking Service starting", env=booking_settings.ENVIRONMENT)
+    logger.info("[START] Booking Service starting", env=booking_settings.ENVIRONMENT)
     yield
-    logger.info("🛑 Booking Service shutting down")
+    logger.info(" Booking Service shutting down")
     await close_redis()
     await engine.dispose()
 
 
 app = FastAPI(
-    title="CabBooking — Booking Service",
+    title="CabBooking  Booking Service",
     description="Trip creation, fare calculation, seat booking, lifecycle management",
     version="1.0.0",
     docs_url="/docs" if booking_settings.is_development else None,
@@ -60,7 +60,7 @@ async def global_exc(request: Request, exc: Exception):
     )
 
 
-# ── Mount all routers ────────────────────────────────────────────────────────
+#  Mount all routers 
 from app.api.v1.subscriptions import router as subscription_router
 
 app.include_router(trip_router,    prefix="/api/v1/trips",         tags=["Trips"])

@@ -1,5 +1,5 @@
 """
-Redis client — async connection pool with helpers for
+Redis client  async connection pool with helpers for
 cache, Pub/Sub, rate limiting, and session management.
 """
 import json
@@ -124,7 +124,7 @@ async def is_token_blacklisted(jti: str) -> bool:
 # ============================================================
 
 async def set_driver_online(driver_id: str, location_data: dict) -> None:
-    """Mark driver as online with location data (TTL 30s — heartbeat)."""
+    """Mark driver as online with location data (TTL 30s  heartbeat)."""
     r = await get_redis()
     await r.setex(
         f"driver:online:{driver_id}",

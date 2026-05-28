@@ -1,5 +1,5 @@
 """
-Live Tracking Service — Phase 5.
+Live Tracking Service  Phase 5.
 
 Consumes GPS updates from Redis pub/sub (published by WebSocket gateway),
 persists to live_tracking table, and computes ETA using Haversine formula.
@@ -24,7 +24,7 @@ from common.utils.redis_client import get_redis, publish_event
 logger = structlog.get_logger(__name__)
 
 
-# ─── Haversine ETA Engine ────────────────────────────────────────────────────
+#  Haversine ETA Engine 
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Great-circle distance between two GPS coordinates in km."""
@@ -52,7 +52,7 @@ def estimate_eta(
     return round(distance_km, 2), eta_minutes
 
 
-# ─── Tracking Service ────────────────────────────────────────────────────────
+#  Tracking Service 
 
 class TrackingService:
     def __init__(self, db: AsyncSession):
@@ -87,7 +87,7 @@ class TrackingService:
                 speed_kmh,
             )
 
-        # Persist to DB (bulk insert mode — don't await individually)
+        # Persist to DB (bulk insert mode  don't await individually)
         point_wkt = f"SRID=4326;POINT({longitude} {latitude})"
         tracking = LiveTracking(
             trip_id=UUID(trip_id),
@@ -121,7 +121,7 @@ class TrackingService:
         }
         await r.setex(f"trip:location:{trip_id}", 60, json.dumps(location_data))
 
-        # Publish ETA update to trip room → Socket.IO gateway forwards to customers
+        # Publish ETA update to trip room  Socket.IO gateway forwards to customers
         await publish_event(
             f"trip:{trip_id}:events",
             {
@@ -140,7 +140,7 @@ class TrackingService:
         if raw:
             return json.loads(raw)
 
-        # DB fallback — latest recorded point
+        # DB fallback  latest recorded point
         result = await self.db.execute(
             select(LiveTracking)
             .where(LiveTracking.trip_id == UUID(trip_id))
@@ -193,7 +193,7 @@ class TrackingService:
         return result.scalar_one_or_none()
 
 
-# ─── Redis Pub/Sub Consumer (runs as background task in WebSocket Gateway) ───
+#  Redis Pub/Sub Consumer (runs as background task in WebSocket Gateway) 
 
 async def consume_location_updates(db_factory):
     """
@@ -204,7 +204,7 @@ async def consume_location_updates(db_factory):
     r = await get_redis()
     pubsub = r.pubsub()
     await pubsub.subscribe("live:location:updates")
-    logger.info("📍 Location consumer started")
+    logger.info(" Location consumer started")
 
     async for message in pubsub.listen():
         if message["type"] != "message":

@@ -1,5 +1,5 @@
 """
-Matching Service API — Driver location updates, booking dispatch trigger.
+Matching Service API  Driver location updates, booking dispatch trigger.
 """
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
@@ -15,7 +15,7 @@ from app.services.dispatch import DispatchService
 router = APIRouter()
 
 
-# ─── Schemas ──────────────────────────────────────────────────────────────────
+#  Schemas 
 
 class LocationUpdateRequest(BaseModel):
     latitude: float
@@ -42,7 +42,7 @@ class SearchDriversRequest(BaseModel):
     radius_km: float = 10.0
 
 
-# ─── Routes ───────────────────────────────────────────────────────────────────
+#  Routes 
 
 @router.post(
     "/location",

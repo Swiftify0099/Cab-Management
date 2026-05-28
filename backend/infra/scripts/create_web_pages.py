@@ -19,14 +19,14 @@ export function {comp}() {{
       <div className="max-w-4xl mx-auto px-4">
         <div className="mb-8">
           <h1 className="font-display text-3xl font-bold text-slate-900">{title}</h1>
-          <p className="text-slate-500 text-sm mt-1">Phase 3+ — coming soon</p>
+          <p className="text-slate-500 text-sm mt-1">Phase 3+  coming soon</p>
         </div>
         <motion.div
           initial={{{{ opacity: 0, y: 16 }}}}
           animate={{{{ opacity: 1, y: 0 }}}}
           className="card p-12 text-center"
         >
-          <div className="text-5xl mb-4">🚀</div>
+          <div className="text-5xl mb-4">[START]</div>
           <h3 className="font-semibold text-slate-700 mb-1">{title} Module</h3>
           <p className="text-slate-400 text-sm">Full implementation in Phase 3+</p>
           <span className="mt-4 inline-block badge badge-blue">Coming Soon</span>

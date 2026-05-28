@@ -1,5 +1,5 @@
 """
-Notification Service — Phase 9.
+Notification Service  Phase 9.
 Sends FCM push notifications, SMS (stub), and in-app notifications.
 Triggered by Redis pub/sub events from all services.
 """
@@ -120,36 +120,36 @@ class NotificationService:
             await self.db.commit()
 
 
-# ─── Event Consumer ───────────────────────────────────────────────────────────
+#  Event Consumer 
 
 # Notification templates for each event type
 TEMPLATES = {
     "DRIVER_ACCEPTED": {
-        "title": "Driver Found! 🚗",
+        "title": "Driver Found! ",
         "body": "Your driver is on the way. Track live in the app.",
     },
     "TRIP_STARTED": {
-        "title": "Trip Started 🎉",
+        "title": "Trip Started [YAY]",
         "body": "Your trip is underway. Have a safe journey!",
     },
     "PAYMENT_CAPTURED": {
-        "title": "Payment Successful ✅",
+        "title": "Payment Successful [OK]",
         "body": "Your payment was processed successfully.",
     },
     "PARCEL_STATUS_UPDATE": {
-        "title": "Parcel Update 📦",
+        "title": "Parcel Update [PKG]",
         "body": "Your parcel status has been updated.",
     },
     "EARNING_CREDITED": {
-        "title": "Earning Credited 💰",
+        "title": "Earning Credited ",
         "body": "Your trip earning has been added to your wallet.",
     },
     "INCOMING_TRIP_REQUEST": {
-        "title": "New Trip Request! 🔔",
+        "title": "New Trip Request! [BELL]",
         "body": "A customer wants you for a trip. Respond quickly!",
     },
     "SOS_ALERT": {
-        "title": "🆘 Emergency Alert",
+        "title": " Emergency Alert",
         "body": "SOS received during trip. Immediate action required.",
     },
 }
@@ -163,7 +163,7 @@ async def consume_notification_events(db_factory, fcm_key: str):
     r = await get_redis()
     pubsub = r.pubsub()
     await pubsub.subscribe("notification:events")
-    logger.info("🔔 Notification consumer started")
+    logger.info("[BELL] Notification consumer started")
 
     async for message in pubsub.listen():
         if message["type"] != "message":

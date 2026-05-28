@@ -77,7 +77,7 @@ app.dependency_overrides[get_db] = override_get_db
 
 async def run_tests():
     print("\n" + "="*50)
-    print("🚀 RUNNING AUTH API VERIFICATION TESTS 🚀")
+    print("[START] RUNNING AUTH API VERIFICATION TESTS [START]")
     print("="*50 + "\n")
     
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -123,7 +123,7 @@ async def run_tests():
             assert data["role"] == "admin"
             print(f"   [ADMIN LOGIN] Success! Received JWT for Admin.")
 
-    print("\n✅ ALL AUTH TESTS PASSED!")
+    print("\n[OK] ALL AUTH TESTS PASSED!")
     print("="*50)
 
 if __name__ == "__main__":

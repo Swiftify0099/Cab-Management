@@ -1,5 +1,5 @@
 """
-Matching Service — FastAPI entrypoint.
+Matching Service  FastAPI entrypoint.
 Handles: Geo-search, driver dispatch queue, accept/reject, penalty.
 """
 from contextlib import asynccontextmanager
@@ -24,15 +24,15 @@ limiter = Limiter(key_func=get_remote_address)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("🎯 Matching Service starting", env=matching_settings.ENVIRONMENT)
+    logger.info(" Matching Service starting", env=matching_settings.ENVIRONMENT)
     yield
-    logger.info("🛑 Matching Service shutting down")
+    logger.info(" Matching Service shutting down")
     await close_redis()
     await engine.dispose()
 
 
 app = FastAPI(
-    title="CabBooking — Matching Service",
+    title="CabBooking  Matching Service",
     description="PostGIS geo-search, driver dispatch, accept/reject, penalty system",
     version="1.0.0",
     docs_url="/docs" if matching_settings.is_development else None,

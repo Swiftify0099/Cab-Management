@@ -1,5 +1,5 @@
 """
-Customer profile service — business logic for profile CRUD and addresses.
+Customer profile service  business logic for profile CRUD and addresses.
 """
 import uuid
 from typing import List, Optional, Tuple

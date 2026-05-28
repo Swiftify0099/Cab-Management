@@ -1,5 +1,5 @@
 """
-Auth Service — FastAPI application entry point.
+Auth Service  FastAPI application entry point.
 Handles OTP-based auth for customers/drivers and email+password for admins.
 """
 import logging
@@ -30,8 +30,8 @@ limiter = Limiter(key_func=get_remote_address)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan — startup and shutdown events."""
-    logger.info("🚀 Auth Service starting up...")
+    """Application lifespan  startup and shutdown events."""
+    logger.info("[START] Auth Service starting up...")
 
     # Create upload directories
     await create_upload_dirs()
@@ -40,11 +40,11 @@ async def lifespan(app: FastAPI):
     await seed_admin_user()
     await seed_default_themes()
 
-    logger.info("✅ Auth Service ready.")
+    logger.info("[READY] Auth Service ready.")
     yield
 
     # Shutdown
-    logger.info("🔴 Auth Service shutting down...")
+    logger.info("[STOP] Auth Service shutting down...")
     await close_redis()
     await engine.dispose()
 
@@ -55,7 +55,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="CabBooking Auth Service",
-    description="Authentication & Authorization — OTP, JWT, Admin",
+    description="Authentication & Authorization  OTP, JWT, Admin",
     version="1.0.0",
     docs_url="/docs" if auth_settings.is_development else None,
     redoc_url="/redoc" if auth_settings.is_development else None,

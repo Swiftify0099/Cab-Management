@@ -1,5 +1,5 @@
 """
-Admin Service — Phase 9.
+Admin Service  Phase 9.
 Aggregates data from all services for dashboard, fleet, KYC, support.
 Exposes /api/v1/admin/* endpoints.
 """

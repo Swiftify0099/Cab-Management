@@ -1,5 +1,5 @@
 """
-Parcel Service Tests — Phase 10.
+Parcel Service Tests  Phase 10.
 Tests: fare calculation, tracking, OTP delivery, status machine.
 """
 import pytest
@@ -11,7 +11,7 @@ from app.main import app
 from app.services.parcel_service import ParcelService
 
 
-# ─── Fare Calculation (pure) ──────────────────────────────
+#  Fare Calculation (pure) 
 
 class TestParcelFare:
     def setup_method(self):
@@ -19,9 +19,9 @@ class TestParcelFare:
         self.svc = ParcelService(mock_db)
 
     def test_minimum_fare_enforced(self):
-        """Any parcel ≥ ₹80 minimum."""
+        """Any parcel  80 minimum."""
         fare = self.svc.calculate_fare(weight_kg=0.1, distance_km=10)
-        assert fare >= Decimal("80"), f"Minimum fare not enforced: ₹{fare}"
+        assert fare >= Decimal("80"), f"Minimum fare not enforced: {fare}"
 
     def test_fragile_surcharge(self):
         """Fragile parcels cost 20% more."""
@@ -54,12 +54,12 @@ class TestParcelFare:
         assert long_ > short, "Longer route should cost more"
 
 
-# ─── Tracking Number ──────────────────────────────────────
+#  Tracking Number 
 
 class TestTrackingNumber:
     @pytest.mark.anyio
     async def test_tracking_number_format(self):
-        """Tracking number should start with CB and be ≥12 chars."""
+        """Tracking number should start with CB and be 12 chars."""
         mock_db = AsyncMock()
 
         mock_trip = MagicMock()
@@ -92,7 +92,7 @@ class TestTrackingNumber:
             assert len("CB260601ABC123") >= 12
 
 
-# ─── OTP Delivery ─────────────────────────────────────────
+#  OTP Delivery 
 
 class TestOTPDelivery:
     @pytest.mark.anyio
@@ -140,7 +140,7 @@ class TestOTPDelivery:
             )
 
 
-# ─── API health ───────────────────────────────────────────
+#  API health 
 
 @pytest_asyncio.fixture
 async def client():

@@ -1,5 +1,5 @@
 """
-Geo-Search Service — PostGIS-powered nearest driver finder.
+Geo-Search Service  PostGIS-powered nearest driver finder.
 Uses ST_DWithin with progressive radius expansion.
 """
 from __future__ import annotations

@@ -1,5 +1,5 @@
 """
-Payment API — Phase 6.
+Payment API  Phase 6.
 Routes: payments, wallet, coupons, referrals, rewards.
 """
 from decimal import Decimal
@@ -19,7 +19,7 @@ from app.services.wallet_service import WalletService
 router = APIRouter()
 
 
-# ─── Schemas ──────────────────────────────────────────────────────────────────
+#  Schemas 
 
 class CreateOrderRequest(BaseModel):
     booking_id: str
@@ -52,7 +52,7 @@ class VerifyTopUpRequest(BaseModel):
     amount: float
 
 
-# ─── Payment Routes ───────────────────────────────────────────────────────────
+#  Payment Routes 
 
 @router.post(
     "/payments/create-order",
@@ -113,7 +113,7 @@ async def razorpay_webhook(
     return {"status": "ok"}
 
 
-# ─── Wallet Routes ────────────────────────────────────────────────────────────
+#  Wallet Routes 
 
 @router.get(
     "/wallet",
@@ -218,7 +218,7 @@ async def redeem_reward_points(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-# ─── Coupon Routes ────────────────────────────────────────────────────────────
+#  Coupon Routes 
 
 @router.post(
     "/coupons/validate",
@@ -242,7 +242,7 @@ async def validate_coupon(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-# ─── Referral Routes ─────────────────────────────────────────────────────────
+#  Referral Routes 
 
 @router.post(
     "/referrals/apply",
@@ -255,7 +255,7 @@ async def apply_referral(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
-    Validates referral code, credits ₹100 to both the referrer and referee.
+    Validates referral code, credits 100 to both the referrer and referee.
     """
     from common.models.all_models import Customer
     from sqlalchemy import select as sa_select
@@ -278,19 +278,19 @@ async def apply_referral(
     await wallet.credit_wallet(
         customer_id=str(referrer.id),
         amount=bonus,
-        description=f"Referral bonus — friend joined",
+        description=f"Referral bonus  friend joined",
         reference_id=current_user.user_id_str,
     )
     # Credit new user
     await wallet.credit_wallet(
         customer_id=current_user.user_id_str,
         amount=bonus,
-        description=f"Welcome bonus — referral applied",
+        description=f"Welcome bonus  referral applied",
         reference_id=str(referrer.id),
     )
 
     return SuccessResponse(
         success=True,
-        message=f"Referral applied! ₹{bonus} credited to your wallet.",
+        message=f"Referral applied! {bonus} credited to your wallet.",
         data={"bonus_amount": float(bonus)},
     )

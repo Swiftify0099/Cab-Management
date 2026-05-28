@@ -1,5 +1,5 @@
 """
-Auth API endpoints — OTP flow for customers/drivers.
+Auth API endpoints  OTP flow for customers/drivers.
 Includes rate limiting and mock OTP (123456 in dev mode).
 """
 import uuid
@@ -60,7 +60,7 @@ async def send_otp(
     Send OTP to the given phone number.
     - Rate limited to 5 requests per phone per hour.
     - In DEV mode, OTP is always 123456.
-    - No real SMS gateway — stub for production integration.
+    - No real SMS gateway  stub for production integration.
     """
     phone = payload.phone.strip()
 
@@ -82,7 +82,7 @@ async def send_otp(
         expire_seconds=auth_settings.OTP_EXPIRE_MINUTES * 60,
     )
 
-    # TODO: Production — integrate real SMS gateway here
+    # TODO: Production  integrate real SMS gateway here
     # await sms_gateway.send(phone, f"Your CabBooking OTP is {otp_code}")
 
     logger.info("OTP sent", phone=phone, dev_mode=auth_settings.OTP_DEV_MODE)
@@ -133,7 +133,7 @@ async def verify_otp(
             detail="Invalid OTP. Please try again.",
         )
 
-    # OTP verified — delete from Redis
+    # OTP verified  delete from Redis
     await delete_otp(phone)
 
     # Get or create user
@@ -157,7 +157,7 @@ async def verify_otp(
         device_name=payload.device_name,
     )
 
-    logger.info("OTP verified — user authenticated", user_id=str(user.id), is_new=is_new)
+    logger.info("OTP verified  user authenticated", user_id=str(user.id), is_new=is_new)
 
     return APIResponse(
         message="Login successful",

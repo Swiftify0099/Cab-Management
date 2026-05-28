@@ -1,12 +1,12 @@
 """
-WebSocket Gateway — Phase 4 Complete Implementation.
+WebSocket Gateway  Phase 4 Complete Implementation.
 
 Socket.IO with Redis adapter for horizontal scaling.
 Channels:
-  - user:{user_id}:events        — Customer events (driver accepted, tracking)
-  - driver:{driver_id}:events    — Driver events (incoming request, suspend)
-  - trip:{trip_id}               — Shared trip tracking room
-  - admins                       — Admin SOS + alerts
+  - user:{user_id}:events         Customer events (driver accepted, tracking)
+  - driver:{driver_id}:events     Driver events (incoming request, suspend)
+  - trip:{trip_id}                Shared trip tracking room
+  - admins                        Admin SOS + alerts
 
 Event types emitted to clients:
   INCOMING_TRIP_REQUEST, DRIVER_ACCEPTED, MATCHING_FAILED,
@@ -27,9 +27,9 @@ from app.core.config import ws_settings
 
 logger = structlog.get_logger(__name__)
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Socket.IO — Redis adapter for multi-instance horizontal scaling
-# ──────────────────────────────────────────────────────────────────────────────
+# 
+# Socket.IO  Redis adapter for multi-instance horizontal scaling
+# 
 mgr = socketio.AsyncRedisManager(ws_settings.REDIS_URL)
 sio = socketio.AsyncServer(
     async_mode="asgi",
@@ -41,13 +41,13 @@ sio = socketio.AsyncServer(
     ping_interval=25,
 )
 
-# sid → {user_id, role, driver_id/customer_id}
+# sid  {user_id, role, driver_id/customer_id}
 _connected_clients: dict[str, dict] = {}
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Redis Pub/Sub Listener — bridge Redis events → Socket.IO rooms
-# ──────────────────────────────────────────────────────────────────────────────
+# 
+# Redis Pub/Sub Listener  bridge Redis events  Socket.IO rooms
+# 
 
 async def _redis_listener():
     """
@@ -58,7 +58,7 @@ async def _redis_listener():
     # Use a separate connection for pub/sub
     pubsub_conn = r.pubsub()
     await pubsub_conn.psubscribe("driver:*:events", "customer:*:events", "trip:*:events")
-    logger.info("📡 Redis pub/sub listener started")
+    logger.info(" Redis pub/sub listener started")
 
     async for message in pubsub_conn.listen():
         if message["type"] not in ("message", "pmessage"):
@@ -69,9 +69,9 @@ async def _redis_listener():
             event_type = data.get("event", "EVENT")
 
             # Route to Socket.IO room based on channel pattern
-            # driver:DRIVER_ID:events → room "driver:DRIVER_ID"
-            # customer:CUSTOMER_ID:events → room "user:CUSTOMER_ID"
-            # trip:TRIP_ID:events → room "trip:TRIP_ID"
+            # driver:DRIVER_ID:events  room "driver:DRIVER_ID"
+            # customer:CUSTOMER_ID:events  room "user:CUSTOMER_ID"
+            # trip:TRIP_ID:events  room "trip:TRIP_ID"
             parts = channel.split(":")
             if len(parts) >= 3:
                 entity = parts[0]   # driver, customer, trip
@@ -94,18 +94,18 @@ async def _redis_listener():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("🔌 WebSocket Gateway starting...")
+    logger.info(" WebSocket Gateway starting...")
     # Start Redis listener as a background task
     listener_task = asyncio.create_task(_redis_listener())
     yield
     listener_task.cancel()
     await close_redis()
-    logger.info("🛑 WebSocket Gateway stopped")
+    logger.info(" WebSocket Gateway stopped")
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 # FastAPI App
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 app = FastAPI(
     title="CabBooking WebSocket Gateway",
     version="1.0.0",
@@ -123,9 +123,9 @@ app.add_middleware(
 )
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 # Socket.IO Event Handlers
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 
 @sio.event
 async def connect(sid, environ, auth):
@@ -135,7 +135,7 @@ async def connect(sid, environ, auth):
     """
     token = (auth or {}).get("token", "").replace("Bearer ", "")
     if not token:
-        logger.warning("WS connect rejected — no token", sid=sid)
+        logger.warning("WS connect rejected  no token", sid=sid)
         return False  # Reject connection
 
     try:
@@ -218,7 +218,7 @@ async def location_update(sid, data):
 async def driver_respond(sid, data):
     """
     Driver accepts or rejects an incoming trip request.
-    Publishes response to Redis — dispatch service picks it up.
+    Publishes response to Redis  dispatch service picks it up.
     """
     client = _connected_clients.get(sid, {})
     booking_id = data.get("booking_id")
@@ -242,7 +242,7 @@ async def driver_respond(sid, data):
 
 @sio.event
 async def heartbeat(sid, data):
-    """Driver heartbeat — updates online status TTL in Redis."""
+    """Driver heartbeat  updates online status TTL in Redis."""
     client = _connected_clients.get(sid, {})
     driver_id = client.get("user_id")
     if driver_id and client.get("role") == "driver":
@@ -261,7 +261,7 @@ async def heartbeat(sid, data):
 @sio.event
 async def sos_trigger(sid, data):
     """
-    Emergency SOS — broadcast to all admins immediately.
+    Emergency SOS  broadcast to all admins immediately.
     """
     client = _connected_clients.get(sid, {})
     sos_data = {
@@ -271,13 +271,13 @@ async def sos_trigger(sid, data):
         "event": "SOS_TRIGGERED",
     }
     await sio.emit("SOS_TRIGGERED", sos_data, room="admins")
-    await sio.emit("SOS_ACK", {"message": "SOS received — help is coming!"}, to=sid)
+    await sio.emit("SOS_ACK", {"message": "SOS received  help is coming!"}, to=sid)
     logger.critical("SOS triggered!", user_id=client.get("user_id"), data=data)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 # Mount as ASGI
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
 
 

@@ -1,7 +1,16 @@
-import { View, Text, TouchableOpacity } from 'react-native'
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useAuthStore } from '../../src/store/auth.store'
 import { router } from 'expo-router'
+
+const MENU_ITEMS = [
+  { icon: '👤', label: 'My Profile' },
+  { icon: '💳', label: 'Payment Methods' },
+  { icon: '🏠', label: 'Saved Addresses' },
+  { icon: '🎁', label: 'Referrals & Rewards' },
+  { icon: '❓', label: 'Help & Support' },
+  { icon: '⚙️', label: 'Settings' },
+]
 
 export default function ProfileTab() {
   const { user, logout } = useAuthStore()
@@ -12,49 +21,57 @@ export default function ProfileTab() {
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-slate-50 dark:bg-slate-900">
-      <View className="flex-1 px-6 pt-8">
+    <SafeAreaView style={styles.container}>
+      <View style={styles.content}>
         {/* Avatar */}
-        <View className="items-center mb-6">
-          <View className="w-20 h-20 rounded-full bg-blue-600 items-center justify-center mb-3">
-            <Text className="text-4xl">👤</Text>
+        <View style={styles.avatarSection}>
+          <View style={styles.avatar}>
+            <Text style={{ fontSize: 40 }}>👤</Text>
           </View>
-          <Text className="text-lg font-bold text-slate-900 dark:text-white">
-            {user?.phone || 'Customer'}
-          </Text>
-          <View className="bg-blue-50 dark:bg-blue-900/20 px-3 py-1 rounded-full mt-1">
-            <Text className="text-xs text-blue-600 font-semibold capitalize">{user?.role}</Text>
+          <Text style={styles.phone}>{user?.phone || 'Customer'}</Text>
+          <View style={styles.roleBadge}>
+            <Text style={styles.roleText}>{user?.role}</Text>
           </View>
         </View>
 
-        {/* Menu items */}
-        {[
-          { icon: '👤', label: 'My Profile' },
-          { icon: '💳', label: 'Payment Methods' },
-          { icon: '🏠', label: 'Saved Addresses' },
-          { icon: '🎁', label: 'Referrals & Rewards' },
-          { icon: '❓', label: 'Help & Support' },
-          { icon: '⚙️', label: 'Settings' },
-        ].map((item) => (
-          <TouchableOpacity
-            key={item.label}
-            className="flex-row items-center gap-3 bg-white dark:bg-slate-800 rounded-xl p-4 mb-3 border border-slate-200 dark:border-slate-700"
-          >
-            <Text className="text-xl">{item.icon}</Text>
-            <Text className="flex-1 text-sm font-medium text-slate-700 dark:text-slate-200">
-              {item.label}
-            </Text>
-            <Text className="text-slate-400">›</Text>
+        {/* Menu */}
+        {MENU_ITEMS.map((item) => (
+          <TouchableOpacity key={item.label} style={styles.menuItem}>
+            <Text style={{ fontSize: 20 }}>{item.icon}</Text>
+            <Text style={styles.menuLabel}>{item.label}</Text>
+            <Text style={styles.menuArrow}>›</Text>
           </TouchableOpacity>
         ))}
 
-        <TouchableOpacity
-          onPress={handleLogout}
-          className="mt-4 h-12 rounded-xl items-center justify-center bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900"
-        >
-          <Text className="text-red-600 font-semibold text-sm">Logout</Text>
+        <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
+          <Text style={styles.logoutText}>Logout</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
   )
 }
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  content: { flex: 1, paddingHorizontal: 24, paddingTop: 32 },
+  avatarSection: { alignItems: 'center', marginBottom: 24 },
+  avatar: {
+    width: 80, height: 80, borderRadius: 40,
+    backgroundColor: '#2563EB', alignItems: 'center', justifyContent: 'center', marginBottom: 12,
+  },
+  phone: { fontSize: 18, fontWeight: '700', color: '#0F172A' },
+  roleBadge: { backgroundColor: '#EFF6FF', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 20, marginTop: 4 },
+  roleText: { fontSize: 12, color: '#2563EB', fontWeight: '600', textTransform: 'capitalize' },
+  menuItem: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: '#FFFFFF', borderRadius: 12, padding: 16, marginBottom: 12,
+    borderWidth: 1, borderColor: '#E2E8F0',
+  },
+  menuLabel: { flex: 1, fontSize: 14, fontWeight: '500', color: '#334155' },
+  menuArrow: { fontSize: 18, color: '#94A3B8' },
+  logoutBtn: {
+    marginTop: 16, height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECACA',
+  },
+  logoutText: { color: '#EF4444', fontWeight: '600', fontSize: 14 },
+})

@@ -1,19 +1,11 @@
 /**
- * Profile Setup Screen — Mandatory after first login.
- * Collects name, gender, DOB, emergency contact.
- * NativeWind styled, multi-step layout.
+ * Profile Setup Screen — Customer App
+ * StyleSheet version (NativeWind removed — caused Metro 97% hang on dynamic classNames)
  */
 import React, { useState } from 'react'
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  ScrollView,
-  KeyboardAvoidingView,
-  Platform,
-  ActivityIndicator,
-  Alert,
+  View, Text, TextInput, TouchableOpacity, ScrollView,
+  KeyboardAvoidingView, Platform, ActivityIndicator, Alert, StyleSheet,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
@@ -31,11 +23,10 @@ const GENDERS: { value: Gender; label: string; emoji: string }[] = [
 
 export default function ProfileSetupScreen() {
   const setProfileComplete = useAuthStore((s) => s.setProfileComplete)
-
   const [fullName, setFullName] = useState('')
   const [gender, setGender] = useState<Gender | null>(null)
-  const [dob, setDob] = useState('')  // YYYY-MM-DD
-  const [dobDisplay, setDobDisplay] = useState('')  // DD/MM/YYYY display
+  const [dob, setDob] = useState('')
+  const [dobDisplay, setDobDisplay] = useState('')
   const [emergencyContact, setEmergencyContact] = useState('')
   const [loading, setLoading] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -45,148 +36,96 @@ export default function ProfileSetupScreen() {
     let formatted = digits
     if (digits.length > 2) formatted = digits.slice(0, 2) + '/' + digits.slice(2)
     if (digits.length > 4) formatted = formatted.slice(0, 5) + '/' + formatted.slice(5)
-
     setDobDisplay(formatted)
-
-    // Convert to YYYY-MM-DD
     if (digits.length === 8) {
-      const d = digits.slice(0, 2)
-      const m = digits.slice(2, 4)
-      const y = digits.slice(4, 8)
+      const d = digits.slice(0, 2), m = digits.slice(2, 4), y = digits.slice(4, 8)
       setDob(`${y}-${m}-${d}`)
-    } else {
-      setDob('')
-    }
+    } else { setDob('') }
   }
 
   const validate = () => {
     const e: Record<string, string> = {}
-    if (!fullName.trim() || fullName.trim().length < 2) {
-      e.fullName = 'Please enter your full name (min 2 characters)'
-    }
+    if (!fullName.trim() || fullName.trim().length < 2) e.fullName = 'Please enter your full name (min 2 characters)'
     if (!gender) e.gender = 'Please select your gender'
     if (!dob) e.dob = 'Please enter a valid date of birth (DD/MM/YYYY)'
-    if (!emergencyContact || emergencyContact.replace(/\D/g, '').length < 10) {
-      e.emergencyContact = 'Please enter a valid emergency contact number'
-    }
+    if (!emergencyContact || emergencyContact.replace(/\D/g, '').length < 10) e.emergencyContact = 'Please enter a valid emergency contact number'
     setErrors(e)
     return Object.keys(e).length === 0
   }
 
   const handleSubmit = async () => {
     if (!validate()) return
-
     setLoading(true)
     try {
       await profileApi.setup({
-        full_name: fullName.trim(),
-        gender: gender!,
-        dob,
-        emergency_contact: `+91${emergencyContact.replace(/\D/g, '')}`,
+        full_name: fullName.trim(), gender: gender!,
+        dob, emergency_contact: `+91${emergencyContact.replace(/\D/g, '')}`,
       })
-
       setProfileComplete()
       router.replace('/(tabs)')
     } catch (err: any) {
-      const msg = err?.response?.data?.detail || 'Failed to save profile. Please try again.'
-      Alert.alert('Error', msg)
-    } finally {
-      setLoading(false)
-    }
+      Alert.alert('Error', err?.response?.data?.detail || 'Failed to save profile. Please try again.')
+    } finally { setLoading(false) }
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-white dark:bg-slate-900">
-      <KeyboardAvoidingView
-        className="flex-1"
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
+    <SafeAreaView style={styles.container}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView
-          className="flex-1 px-6"
+          style={styles.scroll}
           contentContainerStyle={{ paddingBottom: 40 }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
           {/* Header */}
-          <View className="mt-8 mb-8">
-            <Text className="text-2xl font-bold text-slate-900 dark:text-white">
-              Complete Your Profile
-            </Text>
-            <Text className="text-sm text-slate-500 dark:text-slate-400 mt-1.5 leading-5">
-              This information helps us provide a safer travel experience.
-            </Text>
-            {/* Progress bar */}
-            <View className="mt-4 h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full">
-              <View className="h-full w-1/2 bg-blue-600 rounded-full" />
+          <View style={styles.header}>
+            <Text style={styles.title}>Complete Your Profile</Text>
+            <Text style={styles.subtitle}>This information helps us provide a safer travel experience.</Text>
+            <View style={styles.progressTrack}>
+              <View style={styles.progressFill} />
             </View>
-            <Text className="text-xs text-slate-400 mt-1">Step 1 of 2</Text>
+            <Text style={styles.stepText}>Step 1 of 2</Text>
           </View>
 
           {/* Full Name */}
-          <View className="mb-5">
-            <Text className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">
-              Full Name *
-            </Text>
+          <View style={styles.field}>
+            <Text style={styles.fieldLabel}>Full Name *</Text>
             <TextInput
-              className={`h-13 px-4 rounded-xl border-2 text-base text-slate-900 dark:text-white ${
-                errors.fullName
-                  ? 'border-red-400 bg-red-50'
-                  : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800'
-              }`}
+              style={[styles.input, errors.fullName ? styles.inputError : styles.inputNormal]}
               placeholder="Enter your full name"
               placeholderTextColor="#94A3B8"
               value={fullName}
               onChangeText={(t) => { setFullName(t); setErrors((e) => ({ ...e, fullName: '' })) }}
               autoCapitalize="words"
             />
-            {errors.fullName ? (
-              <Text className="text-red-500 text-xs mt-1">{errors.fullName}</Text>
-            ) : null}
+            {errors.fullName ? <Text style={styles.errorText}>{errors.fullName}</Text> : null}
           </View>
 
           {/* Gender */}
-          <View className="mb-5">
-            <Text className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">
-              Gender *
-            </Text>
-            <View className="flex-row flex-wrap gap-2">
+          <View style={styles.field}>
+            <Text style={styles.fieldLabel}>Gender *</Text>
+            <View style={styles.genderRow}>
               {GENDERS.map((g) => (
                 <TouchableOpacity
                   key={g.value}
                   onPress={() => { setGender(g.value); setErrors((e) => ({ ...e, gender: '' })) }}
-                  className={`flex-row items-center gap-2 px-4 py-2.5 rounded-xl border-2 ${
-                    gender === g.value
-                      ? 'border-blue-600 bg-blue-50 dark:bg-blue-900/20'
-                      : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800'
-                  }`}
+                  style={[styles.genderBtn, gender === g.value ? styles.genderBtnActive : styles.genderBtnInactive]}
                 >
-                  <Text className="text-base">{g.emoji}</Text>
-                  <Text className={`text-sm font-medium ${
-                    gender === g.value
-                      ? 'text-blue-700 dark:text-blue-300'
-                      : 'text-slate-600 dark:text-slate-300'
-                  }`}>
+                  <Text style={{ fontSize: 16 }}>{g.emoji}</Text>
+                  <Text style={[styles.genderLabel, { color: gender === g.value ? '#1D4ED8' : '#475569' }]}>
                     {g.label}
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
-            {errors.gender ? (
-              <Text className="text-red-500 text-xs mt-1">{errors.gender}</Text>
-            ) : null}
+            {errors.gender ? <Text style={styles.errorText}>{errors.gender}</Text> : null}
           </View>
 
           {/* Date of Birth */}
-          <View className="mb-5">
-            <Text className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">
-              Date of Birth * (must be 18+)
-            </Text>
+          <View style={styles.field}>
+            <Text style={styles.fieldLabel}>Date of Birth * (must be 18+)</Text>
             <TextInput
-              className={`h-13 px-4 rounded-xl border-2 text-base text-slate-900 dark:text-white ${
-                errors.dob
-                  ? 'border-red-400 bg-red-50'
-                  : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800'
-              }`}
+              style={[styles.input, errors.dob ? styles.inputError : styles.inputNormal]}
               placeholder="DD / MM / YYYY"
               placeholderTextColor="#94A3B8"
               keyboardType="number-pad"
@@ -194,27 +133,17 @@ export default function ProfileSetupScreen() {
               onChangeText={(t) => { formatDob(t); setErrors((e) => ({ ...e, dob: '' })) }}
               maxLength={10}
             />
-            {errors.dob ? (
-              <Text className="text-red-500 text-xs mt-1">{errors.dob}</Text>
-            ) : null}
+            {errors.dob ? <Text style={styles.errorText}>{errors.dob}</Text> : null}
           </View>
 
           {/* Emergency Contact */}
-          <View className="mb-8">
-            <Text className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">
-              Emergency Contact *
-            </Text>
-            <Text className="text-xs text-slate-400 mb-2">
-              A family member or trusted person we can reach in emergencies
-            </Text>
-            <View className={`flex-row items-center border-2 rounded-xl px-4 h-13 ${
-              errors.emergencyContact
-                ? 'border-red-400 bg-red-50'
-                : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800'
-            }`}>
-              <Text className="text-sm font-semibold text-slate-500 mr-2">+91</Text>
+          <View style={styles.field}>
+            <Text style={styles.fieldLabel}>Emergency Contact *</Text>
+            <Text style={styles.fieldHint}>A family member or trusted person we can reach in emergencies</Text>
+            <View style={[styles.phoneRow, errors.emergencyContact ? styles.inputError : styles.inputNormal]}>
+              <Text style={styles.countryCode}>+91</Text>
               <TextInput
-                className="flex-1 text-base text-slate-900 dark:text-white"
+                style={styles.phoneInput}
                 placeholder="Emergency contact number"
                 placeholderTextColor="#94A3B8"
                 keyboardType="phone-pad"
@@ -226,39 +155,29 @@ export default function ProfileSetupScreen() {
                 maxLength={10}
               />
             </View>
-            {errors.emergencyContact ? (
-              <Text className="text-red-500 text-xs mt-1">{errors.emergencyContact}</Text>
-            ) : null}
+            {errors.emergencyContact ? <Text style={styles.errorText}>{errors.emergencyContact}</Text> : null}
           </View>
 
           {/* Safety Badge */}
-          <View className="bg-blue-50 dark:bg-blue-900/20 rounded-2xl p-4 mb-8 flex-row items-start gap-3">
-            <Text className="text-xl">🔒</Text>
-            <View className="flex-1">
-              <Text className="text-sm font-semibold text-blue-800 dark:text-blue-300">
-                Your data is secure
-              </Text>
-              <Text className="text-xs text-blue-600 dark:text-blue-400 mt-0.5 leading-4">
+          <View style={styles.safetyBadge}>
+            <Text style={{ fontSize: 20 }}>🔒</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.safetyTitle}>Your data is secure</Text>
+              <Text style={styles.safetyText}>
                 Personal information is encrypted and only shared with verified drivers when required for safety.
               </Text>
             </View>
           </View>
 
-          {/* Submit Button */}
+          {/* Submit */}
           <TouchableOpacity
             onPress={handleSubmit}
             disabled={loading}
             activeOpacity={0.85}
-            className={`h-14 rounded-2xl items-center justify-center ${
-              loading ? 'bg-blue-400' : 'bg-blue-600 shadow-lg shadow-blue-600/30'
-            }`}
+            style={[styles.submitBtn, loading ? styles.submitBtnDisabled : styles.submitBtnActive]}
           >
-            {loading ? (
-              <ActivityIndicator color="white" />
-            ) : (
-              <Text className="text-white text-base font-bold">
-                Save Profile & Continue →
-              </Text>
+            {loading ? <ActivityIndicator color="white" /> : (
+              <Text style={styles.submitBtnText}>Save Profile & Continue →</Text>
             )}
           </TouchableOpacity>
         </ScrollView>
@@ -266,3 +185,39 @@ export default function ProfileSetupScreen() {
     </SafeAreaView>
   )
 }
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#FFFFFF' },
+  scroll: { flex: 1, paddingHorizontal: 24 },
+  header: { marginTop: 32, marginBottom: 32 },
+  title: { fontSize: 24, fontWeight: '700', color: '#0F172A' },
+  subtitle: { fontSize: 14, color: '#64748B', marginTop: 6, lineHeight: 20 },
+  progressTrack: { marginTop: 16, height: 6, backgroundColor: '#F1F5F9', borderRadius: 3 },
+  progressFill: { height: '100%' as any, width: '50%' as any, backgroundColor: '#2563EB', borderRadius: 3 },
+  stepText: { fontSize: 12, color: '#94A3B8', marginTop: 4 },
+  field: { marginBottom: 20 },
+  fieldLabel: { fontSize: 14, fontWeight: '600', color: '#334155', marginBottom: 8 },
+  fieldHint: { fontSize: 12, color: '#94A3B8', marginBottom: 8 },
+  input: { height: 52, paddingHorizontal: 16, borderRadius: 12, borderWidth: 2, fontSize: 16, color: '#0F172A' },
+  inputNormal: { borderColor: '#E2E8F0', backgroundColor: '#F8FAFC' },
+  inputError: { borderColor: '#F87171', backgroundColor: '#FEF2F2' },
+  errorText: { color: '#EF4444', fontSize: 12, marginTop: 4 },
+  genderRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  genderBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12, borderWidth: 2 },
+  genderBtnActive: { borderColor: '#2563EB', backgroundColor: '#EFF6FF' },
+  genderBtnInactive: { borderColor: '#E2E8F0', backgroundColor: '#F8FAFC' },
+  genderLabel: { fontSize: 14, fontWeight: '500' },
+  phoneRow: { flexDirection: 'row', alignItems: 'center', borderRadius: 12, borderWidth: 2, paddingHorizontal: 16, height: 52 },
+  countryCode: { fontSize: 14, fontWeight: '600', color: '#64748B', marginRight: 8 },
+  phoneInput: { flex: 1, fontSize: 16, color: '#0F172A' },
+  safetyBadge: {
+    backgroundColor: '#EFF6FF', borderRadius: 16, padding: 16,
+    flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 32,
+  },
+  safetyTitle: { fontSize: 14, fontWeight: '600', color: '#1E40AF' },
+  safetyText: { fontSize: 12, color: '#3B82F6', marginTop: 2, lineHeight: 16 },
+  submitBtn: { height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  submitBtnActive: { backgroundColor: '#2563EB', shadowColor: '#2563EB', shadowOpacity: 0.3, shadowRadius: 10, elevation: 4 },
+  submitBtnDisabled: { backgroundColor: '#93C5FD' },
+  submitBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+})

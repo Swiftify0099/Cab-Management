@@ -1,5 +1,5 @@
 """
-Prometheus Metrics Middleware — Phase 10.
+Prometheus Metrics Middleware  Phase 10.
 Attaches to all FastAPI services. Exports /metrics endpoint.
 Tracks: request count, latency, active connections.
 """
@@ -14,7 +14,7 @@ from prometheus_client import (
     CollectorRegistry,
 )
 
-# ─── Metric definitions ────────────────────────────────────────────────────────
+#  Metric definitions 
 
 REQUEST_COUNT = Counter(
     "http_requests_total",
@@ -53,7 +53,7 @@ WS_CONNECTIONS = Gauge(
 )
 
 
-# ─── Middleware ────────────────────────────────────────────────────────────────
+#  Middleware 
 
 def add_prometheus_middleware(app: FastAPI, service_name: str) -> None:
     """
@@ -94,12 +94,12 @@ def add_prometheus_middleware(app: FastAPI, service_name: str) -> None:
 def _normalize_path(path: str) -> str:
     """
     Normalize dynamic path segments to avoid high-cardinality labels.
-    e.g. /api/v1/trips/abc123 → /api/v1/trips/{id}
+    e.g. /api/v1/trips/abc123  /api/v1/trips/{id}
     """
     parts = path.split("/")
     normalized = []
     for part in parts:
-        # UUID or numeric ID → replace with placeholder
+        # UUID or numeric ID  replace with placeholder
         if len(part) > 8 and (part.replace("-", "").isalnum() or part.isnumeric()):
             normalized.append("{id}")
         else:
@@ -107,7 +107,7 @@ def _normalize_path(path: str) -> str:
     return "/".join(normalized)
 
 
-# ─── Business metric helpers ──────────────────────────────────────────────────
+#  Business metric helpers 
 
 def track_booking_event(event_type: str, service: str = "booking-service") -> None:
     """Call this when booking lifecycle events occur."""

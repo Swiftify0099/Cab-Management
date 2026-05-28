@@ -1,5 +1,5 @@
 """
-RBAC Auth Dependency — FastAPI Depends() for all protected routes.
+RBAC Auth Dependency  FastAPI Depends() for all protected routes.
 Validates JWT, checks blacklist, returns current user.
 """
 import uuid
@@ -81,7 +81,7 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db),
 ) -> AuthenticatedUser:
     """
-    Core auth dependency — validates JWT and returns AuthenticatedUser.
+    Core auth dependency  validates JWT and returns AuthenticatedUser.
     Use as: current_user: AuthenticatedUser = Depends(get_current_user)
     """
     user_id_str = payload.get("sub")
@@ -183,7 +183,7 @@ TokenData = AuthenticatedUser
 
 def require_role(*roles: str):
     """
-    Factory dependency — restricts access to specific roles.
+    Factory dependency  restricts access to specific roles.
     Usage: current_user: AuthenticatedUser = Depends(require_role("driver"))
     """
     async def _require_role(

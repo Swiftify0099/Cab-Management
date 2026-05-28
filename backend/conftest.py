@@ -1,5 +1,5 @@
 """
-Shared pytest fixtures — conftest.py for all backend services.
+Shared pytest fixtures  conftest.py for all backend services.
 Place this in backend/conftest.py or per-service tests/conftest.py.
 """
 import asyncio

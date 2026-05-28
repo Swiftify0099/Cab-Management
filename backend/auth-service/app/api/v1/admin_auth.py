@@ -1,5 +1,5 @@
 """
-Admin authentication endpoints — email+password with 2FA stub.
+Admin authentication endpoints  email+password with 2FA stub.
 """
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status

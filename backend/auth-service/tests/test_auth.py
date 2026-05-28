@@ -1,5 +1,5 @@
 """
-Auth Service Tests — Phase 10.
+Auth Service Tests  Phase 10.
 Tests: OTP send/verify, JWT flow, admin login, profile CRUD.
 """
 import pytest
@@ -23,7 +23,7 @@ async def client():
         yield ac
 
 
-# ─── OTP Flow ─────────────────────────────────────────────
+#  OTP Flow 
 
 class TestOTPFlow:
     @pytest.mark.anyio
@@ -62,7 +62,7 @@ class TestOTPFlow:
         assert res.status_code == 400
 
 
-# ─── Admin Login ──────────────────────────────────────────
+#  Admin Login 
 
 class TestAdminAuth:
     @pytest.mark.anyio
@@ -88,7 +88,7 @@ class TestAdminAuth:
         assert res.status_code == 401
 
 
-# ─── Health Check ─────────────────────────────────────────
+#  Health Check 
 
 class TestHealth:
     @pytest.mark.anyio

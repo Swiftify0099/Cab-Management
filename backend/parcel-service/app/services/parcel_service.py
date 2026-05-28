@@ -1,11 +1,11 @@
 """
-Parcel Service — Phase 7.
+Parcel Service  Phase 7.
 Intercity parcel delivery booking + tracking through trip lifecycle.
 
 Features:
   - Book parcel on an existing shared trip (adds to trip seat-equivalent)
   - Upload sender/receiver photos and proof images
-  - Parcel tracking: PENDING → PICKUP_DONE → IN_TRANSIT → DELIVERED
+  - Parcel tracking: PENDING  PICKUP_DONE  IN_TRANSIT  DELIVERED
   - Weight-based pricing
   - OTP-based delivery confirmation
 """
@@ -32,8 +32,8 @@ logger = structlog.get_logger(__name__)
 
 UPLOAD_DIR = "/var/www/uploads/parcels"
 MAX_FILE_SIZE_MB = 10
-PRICE_PER_KG = 15.0        # ₹15/kg base
-MIN_PARCEL_FARE = 80.0     # minimum ₹80
+PRICE_PER_KG = 15.0        # 15/kg base
+MIN_PARCEL_FARE = 80.0     # minimum 80
 
 
 class ParcelService:
@@ -48,11 +48,11 @@ class ParcelService:
         urgent: bool = False,
     ) -> Decimal:
         """
-        Fare = max(₹80, weight_kg × ₹15 + distance_based_fee)
+        Fare = max(80, weight_kg  15 + distance_based_fee)
         Fragile: +20%  | Urgent: +30%
         """
         base = weight_kg * PRICE_PER_KG
-        distance_fee = distance_km * 0.5  # ₹0.5/km
+        distance_fee = distance_km * 0.5  # 0.5/km
         total = max(base + distance_fee, MIN_PARCEL_FARE)
 
         if fragile:
@@ -197,7 +197,7 @@ class ParcelService:
         return {"parcel_id": parcel_id, "status": new_status}
 
     async def track_parcel(self, tracking_number: str) -> dict:
-        """Public tracking — returns parcel status without OTP."""
+        """Public tracking  returns parcel status without OTP."""
         result = await self.db.execute(
             select(Parcel).where(Parcel.tracking_number == tracking_number)
         )
@@ -216,8 +216,8 @@ class ParcelService:
             "fare": float(parcel.fare),
             "is_fragile": parcel.is_fragile,
             "trip": {
-                "from": trip.pickup_city if trip else "—",
-                "to": trip.destination_city if trip else "—",
+                "from": trip.pickup_city if trip else "",
+                "to": trip.destination_city if trip else "",
                 "departure_time": trip.departure_time.isoformat() if trip else None,
                 "status": trip.status.value if trip else "unknown",
             },

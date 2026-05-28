@@ -1,5 +1,5 @@
 """
-Alembic env.py — async SQLAlchemy migrations with PostGIS support.
+Alembic env.py  async SQLAlchemy migrations with PostGIS support.
 """
 import asyncio
 import os

@@ -1,5 +1,5 @@
 """
-Admin API — Phase 9. All admin endpoints.
+Admin API  Phase 9. All admin endpoints.
 """
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,7 +14,7 @@ from app.services.dashboard_service import AdminDashboardService
 router = APIRouter(dependencies=[Depends(require_role("admin"))])
 
 
-# ─── Dashboard ────────────────────────────────────────────────────────────────
+#  Dashboard 
 
 @router.get("/admin/dashboard", response_model=SuccessResponse, summary="Admin dashboard KPIs")
 async def dashboard(db: AsyncSession = Depends(get_db)):
@@ -30,7 +30,7 @@ async def revenue_chart(days: int = 30, db: AsyncSession = Depends(get_db)):
     return SuccessResponse(success=True, message="OK", data=data)
 
 
-# ─── Fleet Map ────────────────────────────────────────────────────────────────
+#  Fleet Map 
 
 @router.get("/admin/fleet/online-drivers", response_model=SuccessResponse, summary="Live fleet: all online drivers + GPS")
 async def online_drivers(db: AsyncSession = Depends(get_db)):
@@ -39,7 +39,7 @@ async def online_drivers(db: AsyncSession = Depends(get_db)):
     return SuccessResponse(success=True, message=f"{len(drivers)} online drivers", data=drivers)
 
 
-# ─── Trips ────────────────────────────────────────────────────────────────────
+#  Trips 
 
 @router.get("/admin/trips", response_model=SuccessResponse, summary="All trips with filters")
 async def list_trips(
@@ -98,7 +98,7 @@ async def cancel_trip(trip_id: str, db: AsyncSession = Depends(get_db)):
     return SuccessResponse(success=True, message="Trip cancelled", data={"trip_id": trip_id})
 
 
-# ─── Parcels ─────────────────────────────────────────────────────────────────
+#  Parcels 
 
 @router.get("/admin/parcels", response_model=SuccessResponse, summary="All parcels with filters")
 async def list_parcels(
@@ -137,7 +137,7 @@ async def list_parcels(
     ])
 
 
-# ─── KYC ─────────────────────────────────────────────────────────────────────
+#  KYC 
 
 @router.get("/admin/kyc", response_model=SuccessResponse, summary="Pending KYC documents")
 async def kyc_queue(page: int = 1, db: AsyncSession = Depends(get_db)):
@@ -163,7 +163,7 @@ async def kyc_decision(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-# ─── Complaints ───────────────────────────────────────────────────────────────
+#  Complaints 
 
 @router.get("/admin/complaints", response_model=SuccessResponse, summary="Support complaints")
 async def complaints(
@@ -176,7 +176,7 @@ async def complaints(
     return SuccessResponse(success=True, message="OK", data=data)
 
 
-# ─── Customers / Drivers ──────────────────────────────────────────────────────
+#  Customers / Drivers 
 
 @router.get("/admin/customers", response_model=SuccessResponse, summary="List customers")
 async def list_customers(

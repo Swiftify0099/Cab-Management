@@ -1,5 +1,5 @@
 """
-Booking model — extends/imports from common models.
+Booking model  extends/imports from common models.
 """
 from common.models.booking import Booking, BookingStatus
 

@@ -1,5 +1,5 @@
 """
-Parcel Service — FastAPI entrypoint. Phase 7.
+Parcel Service  FastAPI entrypoint. Phase 7.
 """
 from contextlib import asynccontextmanager
 
@@ -25,16 +25,16 @@ UPLOAD_DIR = "/var/www/uploads/parcels"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("📦 Parcel Service starting")
+    logger.info("[PKG] Parcel Service starting")
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     yield
-    logger.info("🛑 Parcel Service stopping")
+    logger.info(" Parcel Service stopping")
     await close_redis()
     await engine.dispose()
 
 
 app = FastAPI(
-    title="CabBooking — Parcel Service",
+    title="CabBooking  Parcel Service",
     description="Intercity parcel delivery on shared trips. Weight-based pricing, OTP delivery.",
     version="1.0.0",
     lifespan=lifespan,

@@ -1,5 +1,5 @@
 """
-Payment Service Tests — Phase 10.
+Payment Service Tests  Phase 10.
 Tests: Razorpay order creation, HMAC signature, wallet operations, coupon validation.
 """
 import pytest
@@ -14,7 +14,7 @@ from app.services.razorpay_service import RazorpayService
 from app.services.wallet_service import WalletService
 
 
-# ─── Razorpay Signature Verification ─────────────────────
+#  Razorpay Signature Verification 
 
 class TestRazorpaySignature:
     def test_valid_signature(self):
@@ -46,7 +46,7 @@ class TestRazorpaySignature:
         assert result is False
 
 
-# ─── Wallet Service ───────────────────────────────────────
+#  Wallet Service 
 
 class TestWalletService:
     @pytest.mark.anyio
@@ -68,7 +68,7 @@ class TestWalletService:
 
     @pytest.mark.anyio
     async def test_reward_points_conversion(self):
-        """100 points should convert to ₹10 (1pt = ₹0.10)."""
+        """100 points should convert to 10 (1pt = 0.10)."""
         mock_db = AsyncMock()
         mock_customer = MagicMock()
         mock_customer.reward_points = 100
@@ -82,7 +82,7 @@ class TestWalletService:
             customer_id="test-uuid",
             points=100,
         )
-        # Should credit ₹10 to wallet
+        # Should credit 10 to wallet
         assert result["credited_amount"] == 10.0
 
     @pytest.mark.anyio
@@ -98,7 +98,7 @@ class TestWalletService:
             await svc.redeem_points(customer_id="test-uuid", points=200)
 
 
-# ─── Payment API (integration) ────────────────────────────
+#  Payment API (integration) 
 
 @pytest_asyncio.fixture
 async def client():

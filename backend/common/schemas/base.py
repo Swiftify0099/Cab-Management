@@ -1,5 +1,5 @@
 """
-common/schemas/base.py — convenience aliases and SuccessResponse.
+common/schemas/base.py  convenience aliases and SuccessResponse.
 """
 from typing import Any, Optional
 from pydantic import BaseModel

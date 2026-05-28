@@ -9,7 +9,6 @@ export default function Index() {
 
   useEffect(() => {
     if (isLoading) return
-
     if (!isAuthenticated) {
       router.replace('/auth/phone')
     } else if (!user?.profileComplete) {
@@ -20,7 +19,7 @@ export default function Index() {
   }, [isAuthenticated, isLoading, user?.profileComplete])
 
   return (
-    <View className="flex-1 items-center justify-center bg-white dark:bg-slate-900">
+    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' }}>
       <ActivityIndicator size="large" color="#2563EB" />
     </View>
   )

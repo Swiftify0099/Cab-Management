@@ -31,9 +31,9 @@ from app.services.driver_service import (
 from common.database import get_db
 from common.middleware.auth import AuthenticatedUser, get_current_active_driver
 from common.models.all_models import (
-    DocType,
+    DocumentType,
     DriverDocument,
-    DriverProfile,
+    Driver,
     Vehicle,
 )
 from common.schemas.response import APIResponse, MessageResponse
@@ -85,7 +85,7 @@ async def get_driver_profile(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(DriverProfile).where(DriverProfile.user_id == current_user.id)
+        select(Driver).where(Driver.user_id == current_user.id)
     )
     profile = result.scalar_one_or_none()
     if not profile:
@@ -108,7 +108,7 @@ async def update_driver(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(DriverProfile).where(DriverProfile.user_id == current_user.id)
+        select(Driver).where(Driver.user_id == current_user.id)
     )
     profile = result.scalar_one_or_none()
     if not profile:
@@ -134,7 +134,7 @@ async def upload_driver_photo(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(DriverProfile).where(DriverProfile.user_id == current_user.id)
+        select(Driver).where(Driver.user_id == current_user.id)
     )
     profile = result.scalar_one_or_none()
     if not profile:
@@ -169,7 +169,7 @@ async def register_vehicle(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(DriverProfile).where(DriverProfile.user_id == current_user.id)
+        select(Driver).where(Driver.user_id == current_user.id)
     )
     profile = result.scalar_one_or_none()
     if not profile:
@@ -209,7 +209,7 @@ async def register_vehicle(
     summary="Upload KYC document (step 3 of onboarding)",
 )
 async def upload_document(
-    doc_type: DocType,
+    doc_type: DocumentType,
     file: UploadFile = File(...),
     current_user: AuthenticatedUser = Depends(get_current_active_driver),
     db: AsyncSession = Depends(get_db),
@@ -220,7 +220,7 @@ async def upload_document(
     Accepts images (JPEG/PNG/WebP) and PDF.
     """
     result = await db.execute(
-        select(DriverProfile).where(DriverProfile.user_id == current_user.id)
+        select(Driver).where(Driver.user_id == current_user.id)
     )
     profile = result.scalar_one_or_none()
     if not profile:
@@ -270,7 +270,7 @@ async def list_documents(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(DriverProfile).where(DriverProfile.user_id == current_user.id)
+        select(Driver).where(Driver.user_id == current_user.id)
     )
     profile = result.scalar_one_or_none()
     if not profile:
@@ -305,7 +305,7 @@ async def onboarding_status(
 ):
     """Returns which steps are complete for onboarding."""
     result = await db.execute(
-        select(DriverProfile).where(DriverProfile.user_id == current_user.id)
+        select(Driver).where(Driver.user_id == current_user.id)
     )
     profile = result.scalar_one_or_none()
 

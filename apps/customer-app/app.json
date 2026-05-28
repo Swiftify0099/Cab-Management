@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -47,13 +47,7 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
-      "expo-font",
-      [
-        "expo-status-bar",
-        {
-          "style": "auto"
-        }
-      ]
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true

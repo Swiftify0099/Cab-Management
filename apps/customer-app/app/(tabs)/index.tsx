@@ -1,86 +1,98 @@
-/**
- * Customer Home Tab — Book a Ride / Parcel
- * Phase 2 placeholder — booking map UI in Phase 3
- */
-import { View, Text, TouchableOpacity, ScrollView } from 'react-native'
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
 import { useAuthStore } from '../../src/store/auth.store'
 
 const QUICK_ACTIONS = [
-  { icon: '🚗', label: 'Book Cab', color: 'bg-blue-600', route: '/book/cab' },
-  { icon: '📦', label: 'Send Parcel', color: 'bg-purple-600', route: '/book/parcel' },
-  { icon: '🏨', label: 'Book Hotel', color: 'bg-emerald-600', route: '/hotels' },
-  { icon: '🗺️', label: 'My Trips', color: 'bg-amber-500', route: '/(tabs)/trips' },
+  { icon: '🚗', label: 'Book Cab', bgColor: '#2563EB', route: '/book/cab' },
+  { icon: '📦', label: 'Send Parcel', bgColor: '#7C3AED', route: '/book/parcel' },
+  { icon: '🏨', label: 'Book Hotel', bgColor: '#059669', route: '/hotels' },
+  { icon: '🗺️', label: 'My Trips', bgColor: '#F59E0B', route: '/(tabs)/trips' },
 ]
 
 export default function HomeTab() {
   const user = useAuthStore((s) => s.user)
 
   return (
-    <SafeAreaView className="flex-1 bg-slate-50 dark:bg-slate-900">
+    <SafeAreaView style={styles.container}>
       <ScrollView
-        className="flex-1 px-5"
+        style={styles.scroll}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 24 }}
       >
         {/* Greeting */}
-        <View className="mt-4 mb-6">
-          <Text className="text-2xl font-bold text-slate-900 dark:text-white">
-            Good morning! 👋
-          </Text>
-          <Text className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-            Where would you like to go today?
-          </Text>
+        <View style={styles.greeting}>
+          <Text style={styles.greetingTitle}>Good morning! 👋</Text>
+          <Text style={styles.greetingSubtitle}>Where would you like to go today?</Text>
         </View>
 
-        {/* Search / Destination Bar */}
+        {/* Search Bar */}
         <TouchableOpacity
-          className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4 mb-6 shadow-sm flex-row items-center gap-3"
+          style={styles.searchBar}
           onPress={() => router.push('/book/cab' as any)}
           activeOpacity={0.85}
         >
-          <View className="w-8 h-8 rounded-lg bg-blue-600 items-center justify-center">
-            <Text className="text-white text-lg">📍</Text>
+          <View style={styles.searchIcon}>
+            <Text style={{ fontSize: 18 }}>📍</Text>
           </View>
-          <Text className="text-slate-400 dark:text-slate-500 text-sm flex-1">
-            Where do you want to go?
-          </Text>
-          <Text className="text-blue-600 text-sm font-semibold">→</Text>
+          <Text style={styles.searchPlaceholder}>Where do you want to go?</Text>
+          <Text style={styles.searchArrow}>→</Text>
         </TouchableOpacity>
 
         {/* Quick Actions */}
-        <Text className="text-base font-bold text-slate-900 dark:text-white mb-3">
-          Quick Actions
-        </Text>
-        <View className="flex-row flex-wrap gap-3 mb-6">
+        <Text style={styles.sectionTitle}>Quick Actions</Text>
+        <View style={styles.actionsGrid}>
           {QUICK_ACTIONS.map((action) => (
             <TouchableOpacity
               key={action.label}
               onPress={() => router.push(action.route as any)}
-              className={`${action.color} rounded-2xl p-4 flex-1 min-w-36 items-start`}
+              style={[styles.actionCard, { backgroundColor: action.bgColor }]}
               activeOpacity={0.85}
             >
-              <Text className="text-3xl mb-2">{action.icon}</Text>
-              <Text className="text-white font-semibold text-sm">{action.label}</Text>
+              <Text style={{ fontSize: 28, marginBottom: 8 }}>{action.icon}</Text>
+              <Text style={styles.actionLabel}>{action.label}</Text>
             </TouchableOpacity>
           ))}
         </View>
 
-        {/* Upcoming Trip placeholder */}
-        <Text className="text-base font-bold text-slate-900 dark:text-white mb-3">
-          Upcoming Trips
-        </Text>
-        <View className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 items-center">
-          <Text className="text-4xl mb-3">🗺️</Text>
-          <Text className="text-slate-600 dark:text-slate-300 font-medium text-center">
-            No upcoming trips
-          </Text>
-          <Text className="text-slate-400 text-xs text-center mt-1">
-            Book a cab or parcel and it will appear here
-          </Text>
+        {/* Upcoming Trips */}
+        <Text style={styles.sectionTitle}>Upcoming Trips</Text>
+        <View style={styles.emptyCard}>
+          <Text style={{ fontSize: 40, marginBottom: 12 }}>🗺️</Text>
+          <Text style={styles.emptyText}>No upcoming trips</Text>
+          <Text style={styles.emptySubText}>Book a cab or parcel and it will appear here</Text>
         </View>
       </ScrollView>
     </SafeAreaView>
   )
 }
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  scroll: { flex: 1, paddingHorizontal: 20 },
+  greeting: { marginTop: 16, marginBottom: 24 },
+  greetingTitle: { fontSize: 24, fontWeight: '700', color: '#0F172A' },
+  greetingSubtitle: { fontSize: 14, color: '#64748B', marginTop: 2 },
+  searchBar: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: '#FFFFFF', borderRadius: 16, borderWidth: 1,
+    borderColor: '#E2E8F0', padding: 16, marginBottom: 24,
+    shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, elevation: 2,
+  },
+  searchIcon: {
+    width: 32, height: 32, borderRadius: 8,
+    backgroundColor: '#2563EB', alignItems: 'center', justifyContent: 'center',
+  },
+  searchPlaceholder: { flex: 1, fontSize: 14, color: '#94A3B8' },
+  searchArrow: { fontSize: 14, color: '#2563EB', fontWeight: '600' },
+  sectionTitle: { fontSize: 16, fontWeight: '700', color: '#0F172A', marginBottom: 12 },
+  actionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 24 },
+  actionCard: { borderRadius: 16, padding: 16, flex: 1, minWidth: 144, alignItems: 'flex-start' },
+  actionLabel: { color: '#FFFFFF', fontWeight: '600', fontSize: 14 },
+  emptyCard: {
+    backgroundColor: '#FFFFFF', borderRadius: 16, borderWidth: 1,
+    borderColor: '#E2E8F0', padding: 20, alignItems: 'center',
+  },
+  emptyText: { fontSize: 15, fontWeight: '600', color: '#475569' },
+  emptySubText: { fontSize: 12, color: '#94A3B8', textAlign: 'center', marginTop: 4 },
+})

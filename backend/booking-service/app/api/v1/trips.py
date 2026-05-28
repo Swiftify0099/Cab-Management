@@ -1,5 +1,5 @@
 """
-Trip API — Driver creates/manages trips, Customer searches trips.
+Trip API  Driver creates/manages trips, Customer searches trips.
 Phase 3
 """
 from datetime import datetime
@@ -21,7 +21,7 @@ from app.services.trip_service import TripService
 trip_router = APIRouter()
 
 
-# ─── Request schemas ─────────────────────────────────────────────────────────
+#  Request schemas 
 
 class CreateTripRequest(BaseModel):
     pickup_city: str
@@ -48,7 +48,7 @@ class CreateTripRequest(BaseModel):
     @classmethod
     def validate_seats(cls, v: int) -> int:
         if v < 1 or v > 40:
-            raise ValueError("Seats must be 1–40")
+            raise ValueError("Seats must be 140")
         return v
 
 
@@ -62,7 +62,7 @@ class SearchTripsRequest(BaseModel):
     with_parcel: bool = False
 
 
-# ─── Routes ──────────────────────────────────────────────────────────────────
+#  Routes 
 
 @trip_router.post(
     "/",
@@ -147,7 +147,7 @@ async def publish_trip(
     service = TripService(db)
     trip = await service.publish_trip(trip_id, current_user.user_id_str)
     if not trip:
-        raise HTTPException(status_code=400, detail="Cannot publish this trip — check status and ownership")
+        raise HTTPException(status_code=400, detail="Cannot publish this trip  check status and ownership")
     return SuccessResponse(success=True, message="Trip published", data=trip)
 
 
@@ -160,7 +160,7 @@ async def start_trip(
     service = TripService(db)
     trip = await service.start_trip(trip_id, current_user.user_id_str)
     if not trip:
-        raise HTTPException(status_code=400, detail="Cannot start this trip — must be PUBLISHED status")
+        raise HTTPException(status_code=400, detail="Cannot start this trip  must be PUBLISHED status")
     return SuccessResponse(success=True, message="Trip started", data=trip)
 
 
@@ -173,8 +173,8 @@ async def complete_trip(
     service = TripService(db)
     trip = await service.complete_trip(trip_id, current_user.user_id_str)
     if not trip:
-        raise HTTPException(status_code=400, detail="Cannot complete — trip must be IN_PROGRESS")
-    return SuccessResponse(success=True, message="Trip completed ✓", data=trip)
+        raise HTTPException(status_code=400, detail="Cannot complete  trip must be IN_PROGRESS")
+    return SuccessResponse(success=True, message="Trip completed ", data=trip)
 
 
 @trip_router.post("/{trip_id}/share", response_model=SuccessResponse, summary="Customer/Driver: Share live trip link")

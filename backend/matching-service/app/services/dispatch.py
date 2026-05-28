@@ -1,5 +1,5 @@
 """
-Driver Dispatch Service — Redis queue + WebSocket push + timeout + retry.
+Driver Dispatch Service  Redis queue + WebSocket push + timeout + retry.
 
 Flow:
   1. Customer creates a booking  
@@ -7,9 +7,9 @@ Flow:
   3. This service picks it up, finds nearest drivers via PostGIS
   4. Pushes INCOMING_TRIP_REQUEST to driver's Socket.IO room
   5. Waits DRIVER_ACCEPT_TIMEOUT_SEC for response
-  6. On timeout/reject → try next driver (up to MAX_RETRY_DRIVERS)
-  7. On 3rd consecutive rejection → suspend driver 1 hour
-  8. If no driver accepts → notify customer MATCHING_FAILED
+  6. On timeout/reject  try next driver (up to MAX_RETRY_DRIVERS)
+  7. On 3rd consecutive rejection  suspend driver 1 hour
+  8. If no driver accepts  notify customer MATCHING_FAILED
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from app.services.geo_search import GeoSearchService
 logger = structlog.get_logger(__name__)
 
 
-# ─── Redis key helpers ────────────────────────────────────────────────────────
+#  Redis key helpers 
 
 def _pending_key(booking_id: str) -> str:
     return f"dispatch:pending:{booking_id}"
@@ -47,7 +47,7 @@ class DispatchService:
 
     async def dispatch_booking(self, booking_id: str) -> bool:
         """
-        Main entry point — find drivers and dispatch the booking request.
+        Main entry point  find drivers and dispatch the booking request.
         Returns True if dispatched to at least one driver.
         """
         # Load booking
@@ -89,7 +89,7 @@ class DispatchService:
             tried_drivers.append(driver_id)
             attempt += 1
 
-            # Push request to driver via Redis pub/sub → WebSocket gateway
+            # Push request to driver via Redis pub/sub  WebSocket gateway
             request_payload = {
                 "event": "INCOMING_TRIP_REQUEST",
                 "booking_id": booking_id,
@@ -143,13 +143,13 @@ class DispatchService:
                 await self._on_driver_rejected(driver_id)
                 # Continue to next driver
             else:
-                # Timeout — notify driver (no penalty for timeout in this version)
+                # Timeout  notify driver (no penalty for timeout in this version)
                 await publish_event(f"driver:{driver_id}:events", {
                     "event": "BOOKING_EXPIRED",
                     "booking_id": booking_id,
                 })
 
-        # All retries exhausted — notify customer
+        # All retries exhausted  notify customer
         await self._on_matching_failed(booking_id)
         return False
 
@@ -203,7 +203,7 @@ class DispatchService:
             booking.driver_id = driver_id
             await self.db.commit()
 
-        # Notify customer via pub/sub → WebSocket
+        # Notify customer via pub/sub  WebSocket
         await publish_event(
             f"customer:{str(booking.customer_id)}:events",
             {
@@ -242,7 +242,7 @@ class DispatchService:
             logger.warning("Driver suspended for rejections", driver_id=driver_id)
 
     async def _on_matching_failed(self, booking_id: str) -> None:
-        """All retries failed — update booking and notify customer."""
+        """All retries failed  update booking and notify customer."""
         result = await self.db.execute(
             select(Booking).where(Booking.id == booking_id)
         )
@@ -260,7 +260,7 @@ class DispatchService:
                     "message": "No driver available right now. Please try again.",
                 },
             )
-        logger.warning("Matching failed — no driver accepted", booking_id=booking_id)
+        logger.warning("Matching failed  no driver accepted", booking_id=booking_id)
 
     async def _get_booking(self, booking_id: str) -> Optional[Booking]:
         result = await self.db.execute(

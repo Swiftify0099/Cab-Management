@@ -1,5 +1,5 @@
 """
-Trip Service — Driver creates and manages intercity trips.
+Trip Service  Driver creates and manages intercity trips.
 Phase 3 Core: Trip lifecycle state machine.
 """
 from __future__ import annotations
@@ -112,7 +112,7 @@ class TripService:
         return self._serialize(trip)
 
     async def publish_trip(self, trip_id: str, driver_user_id: str) -> Optional[dict]:
-        """Move trip from DRAFT → PUBLISHED."""
+        """Move trip from DRAFT  PUBLISHED."""
         trip = await self._get_driver_trip(trip_id, driver_user_id)
         if not trip or trip.status != TripStatus.DRAFT:
             return None
@@ -121,7 +121,7 @@ class TripService:
         return self._serialize(trip)
 
     async def start_trip(self, trip_id: str, driver_user_id: str) -> Optional[dict]:
-        """Move trip from PUBLISHED → IN_PROGRESS."""
+        """Move trip from PUBLISHED  IN_PROGRESS."""
         trip = await self._get_driver_trip(trip_id, driver_user_id)
         if not trip or trip.status != TripStatus.PUBLISHED:
             return None
@@ -131,7 +131,7 @@ class TripService:
         return self._serialize(trip)
 
     async def complete_trip(self, trip_id: str, driver_user_id: str) -> Optional[dict]:
-        """Move trip from IN_PROGRESS → COMPLETED."""
+        """Move trip from IN_PROGRESS  COMPLETED."""
         trip = await self._get_driver_trip(trip_id, driver_user_id)
         if not trip or trip.status != TripStatus.IN_PROGRESS:
             return None

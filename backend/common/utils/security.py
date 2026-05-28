@@ -1,5 +1,5 @@
 """
-Security utilities — password hashing, OTP generation.
+Security utilities  password hashing, OTP generation.
 """
 import random
 import secrets

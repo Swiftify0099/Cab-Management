@@ -1,5 +1,5 @@
 """
-Storage utility — local disk upload with S3/R2-ready interface.
+Storage utility  local disk upload with S3/R2-ready interface.
 Handles file saves for profile photos, documents, parcel images, etc.
 """
 import os

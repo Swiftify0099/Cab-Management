@@ -1,5 +1,5 @@
 """
-Parcel Service API — Phase 7.
+Parcel Service API  Phase 7.
 """
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form
@@ -14,7 +14,7 @@ from app.services.parcel_service import ParcelService
 router = APIRouter()
 
 
-# ─── Schemas ──────────────────────────────────────────────────────────────────
+#  Schemas 
 
 class CreateParcelRequest(BaseModel):
     trip_id: str
@@ -43,7 +43,7 @@ class FareEstimateRequest(BaseModel):
     urgent: bool = False
 
 
-# ─── Routes ───────────────────────────────────────────────────────────────────
+#  Routes 
 
 @router.post(
     "/parcels",
@@ -155,7 +155,7 @@ async def update_parcel_status(
             driver_id=current_user.user_id_str,
             delivery_otp=request.delivery_otp,
         )
-        return SuccessResponse(success=True, message=f"Parcel status → {request.status}", data=result)
+        return SuccessResponse(success=True, message=f"Parcel status  {request.status}", data=result)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

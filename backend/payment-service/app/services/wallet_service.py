@@ -1,5 +1,5 @@
 """
-Wallet Service — Phase 6.
+Wallet Service  Phase 6.
 Manages customer wallet: top-up via Razorpay, deduction, transaction history.
 Also handles reward points redemption and referral bonuses.
 """
@@ -30,7 +30,7 @@ class WalletService:
         self.db = db
 
     async def get_or_create_wallet(self, customer_id: str) -> dict:
-        """Get customer wallet; create with ₹0 if first time."""
+        """Get customer wallet; create with 0 if first time."""
         result = await self.db.execute(
             select(Customer).where(Customer.id == UUID(customer_id))
         )
@@ -52,12 +52,12 @@ class WalletService:
         Returns order details for frontend SDK.
         """
         if amount_rupees < payment_settings.WALLET_MIN_RECHARGE:
-            raise ValueError(f"Minimum recharge amount is ₹{payment_settings.WALLET_MIN_RECHARGE}")
+            raise ValueError(f"Minimum recharge amount is {payment_settings.WALLET_MIN_RECHARGE}")
 
         # Check wallet won't exceed max
         wallet = await self.get_or_create_wallet(customer_id)
         if wallet["balance"] + float(amount_rupees) > payment_settings.WALLET_MAX_BALANCE:
-            raise ValueError(f"Wallet balance cannot exceed ₹{payment_settings.WALLET_MAX_BALANCE}")
+            raise ValueError(f"Wallet balance cannot exceed {payment_settings.WALLET_MAX_BALANCE}")
 
         # Create Razorpay order for wallet top-up
         rp = RazorpayService(self.db)
@@ -117,7 +117,7 @@ class WalletService:
 
         balance = customer.wallet_balance or Decimal("0")
         if balance < amount:
-            raise ValueError(f"Insufficient wallet balance. Available: ₹{balance}")
+            raise ValueError(f"Insufficient wallet balance. Available: {balance}")
 
         new_balance = balance - amount
         customer.wallet_balance = new_balance
@@ -138,7 +138,7 @@ class WalletService:
     async def redeem_points(self, customer_id: str, points: int) -> dict:
         """
         Convert reward points to wallet balance.
-        Min 10 points = ₹1.
+        Min 10 points = 1.
         """
         if points < 10:
             raise ValueError("Minimum 10 points required for redemption")
@@ -218,7 +218,7 @@ class WalletService:
             raise ValueError("Coupon has expired")
 
         if coupon.min_booking_amount and booking_amount < coupon.min_booking_amount:
-            raise ValueError(f"Minimum booking amount ₹{coupon.min_booking_amount} required")
+            raise ValueError(f"Minimum booking amount {coupon.min_booking_amount} required")
 
         # Check usage limit
         usage_result = await self.db.execute(

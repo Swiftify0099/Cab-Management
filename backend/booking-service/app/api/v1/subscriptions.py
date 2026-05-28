@@ -1,5 +1,5 @@
 """
-Subscription Plans API — Phase 6.
+Subscription Plans API  Phase 6.
 Manage and purchase subscription plans for customers/drivers.
 """
 from typing import List, Optional

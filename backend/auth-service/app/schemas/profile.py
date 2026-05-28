@@ -8,7 +8,7 @@ import uuid
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from common.models.all_models import Gender
+from common.models.all_models import Gender, VehicleType
 
 
 # ============================================================
@@ -124,7 +124,7 @@ class AddressResponse(BaseModel):
 # ============================================================
 
 class DriverProfileCreate(BaseModel):
-    """Driver basic profile — first step of onboarding."""
+    """Driver basic profile  first step of onboarding."""
     full_name: str = Field(..., min_length=2, max_length=255)
     gender: Optional[Gender] = None
     home_city: Optional[str] = Field(None, max_length=100)
@@ -138,7 +138,6 @@ class DriverProfileUpdate(BaseModel):
 
 class VehicleCreate(BaseModel):
     """Vehicle details during driver onboarding."""
-    from common.models.all_models import VehicleType
     vehicle_type: VehicleType
     make: str = Field(..., min_length=2, max_length=100, description="e.g. Maruti, Toyota")
     model: str = Field(..., min_length=1, max_length=100, description="e.g. Swift, Innova")

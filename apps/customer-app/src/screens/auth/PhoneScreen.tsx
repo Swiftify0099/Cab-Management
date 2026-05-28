@@ -1,19 +1,12 @@
 /**
- * OTP Phone Entry Screen — Customer App Phase 2
- * NativeWind styling, animated entrance, country code picker
+ * OTP Phone Entry Screen — Customer App
+ * StyleSheet version (NativeWind removed — caused Metro 97% hang on dynamic classNames)
  */
 import React, { useState, useRef } from 'react'
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  KeyboardAvoidingView,
-  Platform,
-  ActivityIndicator,
-  Animated,
-  Alert,
-  ScrollView,
+  View, Text, TextInput, TouchableOpacity,
+  KeyboardAvoidingView, Platform, ActivityIndicator,
+  Animated, Alert, ScrollView, StyleSheet,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
@@ -41,11 +34,9 @@ export default function PhoneScreen() {
       shake()
       return
     }
-
     setError('')
     setLoading(true)
     const fullPhone = `+91${cleaned}`
-
     try {
       await authApi.sendOtp(fullPhone)
       router.push({ pathname: '/auth/otp', params: { phone: fullPhone } })
@@ -59,52 +50,32 @@ export default function PhoneScreen() {
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-white dark:bg-slate-900">
-      <KeyboardAvoidingView
-        className="flex-1"
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
+    <SafeAreaView style={styles.container}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView
-          className="flex-1 px-6"
+          style={styles.scroll}
           contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Header illustration area */}
-          <View className="items-center mb-10">
-            <View className="w-24 h-24 rounded-3xl bg-blue-600 items-center justify-center mb-6 shadow-lg">
-              <Text className="text-5xl">🚗</Text>
+          {/* Header */}
+          <View style={styles.header}>
+            <View style={styles.iconBox}>
+              <Text style={{ fontSize: 48 }}>🚗</Text>
             </View>
-            <Text className="text-3xl font-bold text-slate-900 dark:text-white text-center leading-tight">
-              CabBooking
-            </Text>
-            <Text className="text-base text-slate-500 dark:text-slate-400 text-center mt-2">
-              Enter your mobile number to continue
-            </Text>
+            <Text style={styles.title}>CabBooking</Text>
+            <Text style={styles.subtitle}>Enter your mobile number to continue</Text>
           </View>
 
           {/* Phone Input */}
-          <Animated.View
-            style={{ transform: [{ translateX: shakeAnim }] }}
-            className="mb-4"
-          >
-            <Text className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">
-              Mobile Number
-            </Text>
-            <View className={`flex-row items-center border-2 rounded-2xl px-4 h-14 ${
-              error
-                ? 'border-red-400 bg-red-50'
-                : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800'
-            }`}>
-              {/* Country code */}
-              <View className="flex-row items-center gap-2 pr-3 border-r border-slate-300 dark:border-slate-600">
-                <Text className="text-lg">🇮🇳</Text>
-                <Text className="text-base font-semibold text-slate-700 dark:text-slate-200">
-                  +91
-                </Text>
+          <Animated.View style={[styles.inputWrapper, { transform: [{ translateX: shakeAnim }] }]}>
+            <Text style={styles.label}>Mobile Number</Text>
+            <View style={[styles.inputRow, error ? styles.inputRowError : styles.inputRowNormal]}>
+              <View style={styles.countryCode}>
+                <Text style={{ fontSize: 18 }}>🇮🇳</Text>
+                <Text style={styles.countryText}>+91</Text>
               </View>
-
               <TextInput
-                className="flex-1 pl-3 text-base font-medium text-slate-900 dark:text-white"
+                style={styles.input}
                 placeholder="Enter mobile number"
                 placeholderTextColor="#94A3B8"
                 keyboardType="phone-pad"
@@ -118,21 +89,13 @@ export default function PhoneScreen() {
                 returnKeyType="done"
                 onSubmitEditing={handleSendOtp}
               />
-
-              {phone.length === 10 && (
-                <Text className="text-green-500 text-xl">✓</Text>
-              )}
+              {phone.length === 10 && <Text style={{ color: '#22C55E', fontSize: 20 }}>✓</Text>}
             </View>
-
-            {error ? (
-              <Text className="text-red-500 text-sm mt-2 ml-1">{error}</Text>
-            ) : null}
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
           </Animated.View>
 
-          {/* OTP Info */}
-          <Text className="text-xs text-slate-400 text-center mb-6">
-            We'll send a 6-digit OTP to verify your number.{'\n'}
-            Standard SMS rates may apply.
+          <Text style={styles.otpHint}>
+            We'll send a 6-digit OTP to verify your number.{'\n'}Standard SMS rates may apply.
           </Text>
 
           {/* Send OTP Button */}
@@ -140,31 +103,62 @@ export default function PhoneScreen() {
             onPress={handleSendOtp}
             disabled={loading || phone.length < 10}
             activeOpacity={0.85}
-            className={`h-14 rounded-2xl items-center justify-center ${
-              phone.length === 10 && !loading
-                ? 'bg-blue-600 shadow-lg shadow-blue-600/30'
-                : 'bg-slate-200 dark:bg-slate-700'
-            }`}
+            style={[styles.button, phone.length === 10 && !loading ? styles.buttonActive : styles.buttonDisabled]}
           >
             {loading ? (
               <ActivityIndicator color="white" />
             ) : (
-              <Text className={`text-base font-bold ${
-                phone.length === 10 ? 'text-white' : 'text-slate-400'
-              }`}>
+              <Text style={[styles.buttonText, { color: phone.length === 10 ? '#FFFFFF' : '#94A3B8' }]}>
                 Send OTP →
               </Text>
             )}
           </TouchableOpacity>
 
-          {/* Terms */}
-          <Text className="text-xs text-center text-slate-400 mt-6 px-4">
+          <Text style={styles.terms}>
             By continuing, you agree to our{' '}
-            <Text className="text-blue-500">Terms of Service</Text> and{' '}
-            <Text className="text-blue-500">Privacy Policy</Text>
+            <Text style={{ color: '#3B82F6' }}>Terms of Service</Text>
+            {' '}and{' '}
+            <Text style={{ color: '#3B82F6' }}>Privacy Policy</Text>
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   )
 }
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#FFFFFF' },
+  scroll: { flex: 1, paddingHorizontal: 24 },
+  header: { alignItems: 'center', marginBottom: 40 },
+  iconBox: {
+    width: 96, height: 96, borderRadius: 24, backgroundColor: '#2563EB',
+    alignItems: 'center', justifyContent: 'center', marginBottom: 24,
+    shadowColor: '#2563EB', shadowOpacity: 0.3, shadowRadius: 12, elevation: 6,
+  },
+  title: { fontSize: 28, fontWeight: '800', color: '#0F172A', textAlign: 'center' },
+  subtitle: { fontSize: 15, color: '#64748B', textAlign: 'center', marginTop: 8 },
+  inputWrapper: { marginBottom: 16 },
+  label: { fontSize: 14, fontWeight: '600', color: '#334155', marginBottom: 8 },
+  inputRow: {
+    flexDirection: 'row', alignItems: 'center', borderWidth: 2,
+    borderRadius: 16, paddingHorizontal: 16, height: 56,
+  },
+  inputRowNormal: { borderColor: '#E2E8F0', backgroundColor: '#F8FAFC' },
+  inputRowError: { borderColor: '#F87171', backgroundColor: '#FEF2F2' },
+  countryCode: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingRight: 12, borderRightWidth: 1, borderRightColor: '#CBD5E1',
+  },
+  countryText: { fontSize: 16, fontWeight: '600', color: '#334155' },
+  input: { flex: 1, paddingLeft: 12, fontSize: 16, fontWeight: '500', color: '#0F172A' },
+  errorText: { color: '#EF4444', fontSize: 14, marginTop: 8, marginLeft: 4 },
+  otpHint: { fontSize: 12, color: '#94A3B8', textAlign: 'center', marginBottom: 24, lineHeight: 18 },
+  button: { height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  buttonActive: {
+    backgroundColor: '#2563EB',
+    shadowColor: '#2563EB', shadowOpacity: 0.35, shadowRadius: 10, elevation: 4,
+  },
+  buttonDisabled: { backgroundColor: '#E2E8F0' },
+  buttonText: { fontSize: 16, fontWeight: '700' },
+  terms: { fontSize: 12, textAlign: 'center', color: '#94A3B8', marginTop: 24, paddingHorizontal: 16 },
+})

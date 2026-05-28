@@ -818,50 +818,6 @@ class FareRule(Base, UUIDMixin, TimestampMixin):
     effective_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
-# ============================================================
-# LIVE TRACKING  (Phase 5)
-# ============================================================
-
-class LiveTracking(Base, UUIDMixin):
-    """
-    1Hz GPS location updates from drivers during active trips.
-    Partitioned by trip_id for fast range queries.
-    Kept for 30 days then purged by Celery task.
-    """
-    __tablename__ = "live_tracking"
-
-    trip_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("trips.id"), nullable=False, index=True
-    )
-    driver_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("drivers.id"), nullable=False, index=True
-    )
-    booking_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("bookings.id"), nullable=True
-    )
-
-    # PostGIS point (driver's GPS position)
-    location: Mapped[Optional[object]] = mapped_column(
-        Geography(geometry_type="POINT", srid=4326), nullable=True
-    )
-    latitude: Mapped[float] = mapped_column(Float, nullable=False)
-    longitude: Mapped[float] = mapped_column(Float, nullable=False)
-    speed_kmh: Mapped[float] = mapped_column(Float, default=0.0)
-    heading: Mapped[float] = mapped_column(Float, default=0.0)     # degrees (0=N)
-    accuracy_m: Mapped[float] = mapped_column(Float, default=0.0)  # GPS accuracy
-    altitude_m: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-
-    # ETA fields (computed by matching-service)
-    eta_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    distance_remaining_km: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-
-    recorded_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
-    )
-
-    trip: Mapped["Trip"] = relationship("Trip", foreign_keys=[trip_id])
-    driver: Mapped["Driver"] = relationship("Driver", foreign_keys=[driver_id])
-
 
 class TripStop(Base, UUIDMixin, TimestampMixin):
     """Intermediate stops on a multi-city trip route."""

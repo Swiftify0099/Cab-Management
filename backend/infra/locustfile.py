@@ -1,5 +1,5 @@
 """
-Locust Load Tests — Phase 10.
+Locust Load Tests  Phase 10.
 Simulates realistic user behavior:
   - CustomerUser: Search trips, book seats, check wallet
   - DriverUser: Go online, update location
@@ -16,7 +16,7 @@ import random
 import json
 from locust import HttpUser, task, between, constant_pacing
 
-# ─── Shared test data ─────────────────────────────────────
+#  Shared test data 
 
 CITIES = ["Pune", "Mumbai", "Nashik", "Aurangabad", "Nagpur", "Kolhapur"]
 
@@ -32,11 +32,11 @@ def get_random_cities():
     return pickup, dest
 
 
-# ─── Customer User ────────────────────────────────────────
+#  Customer User 
 
 class CustomerUser(HttpUser):
     """
-    Simulates a customer: search → view trip → book → check wallet.
+    Simulates a customer: search  view trip  book  check wallet.
     Wait between 1-3 seconds between tasks.
     """
     wait_time = between(1, 3)
@@ -93,7 +93,7 @@ class CustomerUser(HttpUser):
         self.client.get("/health", name="/health")
 
 
-# ─── Driver User ──────────────────────────────────────────
+#  Driver User 
 
 class DriverUser(HttpUser):
     """
@@ -140,7 +140,7 @@ class DriverUser(HttpUser):
         )
 
 
-# ─── Admin User ───────────────────────────────────────────
+#  Admin User 
 
 class AdminUser(HttpUser):
     """

@@ -1,5 +1,5 @@
 """
-Theme Engine API — Phase 9
+Theme Engine API  Phase 9
 Manage JSONB theme configurations and publish live updates to Redis.
 """
 import json

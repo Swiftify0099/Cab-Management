@@ -1,13 +1,20 @@
-import { View, Text } from 'react-native'
+import { View, Text, StyleSheet } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 
 export default function WalletTab() {
   return (
-    <SafeAreaView className="flex-1 bg-slate-50 dark:bg-slate-900">
-      <View className="flex-1 items-center justify-center px-6">
-        <Text className="text-xl font-bold text-slate-900 dark:text-white mb-2">Wallet</Text>
-        <Text className="text-sm text-slate-400 text-center">Wallet and payments — Phase 6</Text>
+    <SafeAreaView style={styles.container}>
+      <View style={styles.center}>
+        <Text style={styles.title}>Wallet</Text>
+        <Text style={styles.subtitle}>Wallet and payments — Phase 6</Text>
       </View>
     </SafeAreaView>
   )
 }
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
+  title: { fontSize: 20, fontWeight: '700', color: '#0F172A', marginBottom: 8 },
+  subtitle: { fontSize: 14, color: '#94A3B8', textAlign: 'center' },
+})

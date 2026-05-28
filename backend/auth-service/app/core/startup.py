@@ -1,5 +1,5 @@
 """
-Auth Service startup tasks — seeding and directory creation.
+Auth Service startup tasks  seeding and directory creation.
 """
 import logging
 import os
@@ -35,7 +35,7 @@ async def create_upload_dirs() -> None:
     ]
     for d in dirs:
         os.makedirs(d, exist_ok=True)
-    logger.info("📁 Upload directories created.")
+    logger.info(" Upload directories created.")
 
 
 async def seed_admin_user() -> None:
@@ -46,7 +46,7 @@ async def seed_admin_user() -> None:
             select(User).where(User.email == auth_settings.ADMIN_DEFAULT_EMAIL)
         )
         if result.scalar_one_or_none():
-            logger.info("Admin user already exists — skipping seed.")
+            logger.info("Admin user already exists  skipping seed.")
             return
 
         # Create admin user
@@ -76,9 +76,9 @@ async def seed_admin_user() -> None:
         await session.commit()
 
         logger.info(
-            "✅ Default admin created.",
+            "[OK] Default admin created.",
             email=auth_settings.ADMIN_DEFAULT_EMAIL,
-            password="[DEFAULT — must change]",
+            password="[DEFAULT  must change]",
         )
 
 
@@ -137,7 +137,7 @@ async def seed_default_themes() -> None:
         },
         {
             "name": "diwali",
-            "display_name": "🪔 Diwali",
+            "display_name": " Diwali",
             "is_active": False,
             "is_festival": True,
             "config": {
@@ -152,7 +152,7 @@ async def seed_default_themes() -> None:
         },
         {
             "name": "holi",
-            "display_name": "🎨 Holi",
+            "display_name": " Holi",
             "is_active": False,
             "is_festival": True,
             "config": {
@@ -167,7 +167,7 @@ async def seed_default_themes() -> None:
         },
         {
             "name": "eid",
-            "display_name": "☪️ Eid",
+            "display_name": " Eid",
             "is_active": False,
             "is_festival": True,
             "config": {
@@ -182,7 +182,7 @@ async def seed_default_themes() -> None:
         },
         {
             "name": "christmas",
-            "display_name": "🎄 Christmas",
+            "display_name": " Christmas",
             "is_active": False,
             "is_festival": True,
             "config": {
@@ -197,7 +197,7 @@ async def seed_default_themes() -> None:
         },
         {
             "name": "premium",
-            "display_name": "👑 Premium Gold",
+            "display_name": " Premium Gold",
             "is_active": False,
             "is_festival": False,
             "config": {
@@ -212,7 +212,7 @@ async def seed_default_themes() -> None:
         },
         {
             "name": "neon",
-            "display_name": "⚡ Neon",
+            "display_name": " Neon",
             "is_active": False,
             "is_festival": False,
             "config": {
@@ -245,7 +245,7 @@ async def seed_default_themes() -> None:
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(Theme).limit(1))
         if result.scalar_one_or_none():
-            logger.info("Themes already seeded — skipping.")
+            logger.info("Themes already seeded  skipping.")
             return
 
         for theme_data in default_themes:
@@ -253,4 +253,4 @@ async def seed_default_themes() -> None:
             session.add(theme)
 
         await session.commit()
-        logger.info(f"✅ Seeded {len(default_themes)} default themes.")
+        logger.info(f"[OK] Seeded {len(default_themes)} default themes.")

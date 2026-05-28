@@ -1,5 +1,5 @@
 """
-Payment Service — FastAPI entrypoint. Phase 6.
+Payment Service  FastAPI entrypoint. Phase 6.
 """
 from contextlib import asynccontextmanager
 
@@ -22,15 +22,15 @@ limiter = Limiter(key_func=get_remote_address)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("💳 Payment Service starting", env=payment_settings.ENVIRONMENT)
+    logger.info("[CARD] Payment Service starting", env=payment_settings.ENVIRONMENT)
     yield
-    logger.info("🛑 Payment Service shutting down")
+    logger.info(" Payment Service shutting down")
     await close_redis()
     await engine.dispose()
 
 
 app = FastAPI(
-    title="CabBooking — Payment Service",
+    title="CabBooking  Payment Service",
     description="Razorpay integration, wallet, rewards, coupons, referrals",
     version="1.0.0",
     docs_url="/docs" if payment_settings.is_development else None,

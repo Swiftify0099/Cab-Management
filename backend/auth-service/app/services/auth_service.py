@@ -1,5 +1,5 @@
 """
-Auth service — core business logic for user creation, token issuance.
+Auth service  core business logic for user creation, token issuance.
 """
 import uuid
 from datetime import datetime, timedelta, timezone

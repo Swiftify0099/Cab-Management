@@ -1,5 +1,5 @@
 """
-Structured Logging Configuration — Phase 10.
+Structured Logging Configuration  Phase 10.
 Uses structlog with JSON output for production, pretty output for dev.
 Includes trace ID propagation via request context.
 """
@@ -13,7 +13,7 @@ from contextvars import ContextVar
 import structlog
 from fastapi import Request
 
-# ─── Context variable for trace ID ────────────────────────────────────────────
+#  Context variable for trace ID 
 
 _trace_id: ContextVar[str] = ContextVar("trace_id", default="")
 
@@ -26,7 +26,7 @@ def set_trace_id(trace_id: str) -> None:
     _trace_id.set(trace_id)
 
 
-# ─── Structlog processors ─────────────────────────────────────────────────────
+#  Structlog processors 
 
 def add_trace_id(logger, method, event_dict):
     """Inject current trace ID into every log record."""
@@ -42,7 +42,7 @@ def add_service_name(service: str):
     return processor
 
 
-# ─── Setup function ───────────────────────────────────────────────────────────
+#  Setup function 
 
 def setup_logging(service_name: str, level: str = "INFO", json_output: bool = True) -> None:
     """
@@ -98,7 +98,7 @@ def setup_logging(service_name: str, level: str = "INFO", json_output: bool = Tr
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
-# ─── FastAPI middleware for trace ID ──────────────────────────────────────────
+#  FastAPI middleware for trace ID 
 
 async def trace_id_middleware(request: Request, call_next):
     """

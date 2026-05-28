@@ -1,5 +1,5 @@
 """
-Booking Service Tests — Phase 10.
+Booking Service Tests  Phase 10.
 Tests: fare calculation, trip CRUD, seat booking, search.
 """
 import pytest
@@ -12,11 +12,11 @@ from app.main import app
 from app.services.fare_engine import FareEngine
 
 
-# ─── Fare Calculation (pure unit tests) ───────────────────
+#  Fare Calculation (pure unit tests) 
 
 class TestFareEngine:
     def test_base_fare_pune_mumbai(self):
-        """149km Pune→Mumbai should be ~₹480 for 1 seat."""
+        """149km PuneMumbai should be ~480 for 1 seat."""
         fare = FareEngine.calculate(
             pickup_city="Pune",
             destination_city="Mumbai",
@@ -25,10 +25,10 @@ class TestFareEngine:
             vehicle_type="sedan",
             night_departure=False,
         )
-        assert 400 <= fare <= 600, f"Expected ₹400-₹600, got ₹{fare}"
+        assert 400 <= fare <= 600, f"Expected 400-600, got {fare}"
 
     def test_night_surcharge(self):
-        """Night trips (10pm–5am) should cost ≥20% more."""
+        """Night trips (10pm5am) should cost 20% more."""
         day_fare = FareEngine.calculate(
             pickup_city="Pune", destination_city="Mumbai",
             distance_km=149, seat_count=1,
@@ -56,7 +56,7 @@ class TestFareEngine:
         assert suv_fare > sedan_fare, "SUV should cost more than sedan"
 
     def test_per_seat_pricing(self):
-        """2 seats should cost exactly 2× single seat."""
+        """2 seats should cost exactly 2 single seat."""
         fare_1 = FareEngine.calculate(
             pickup_city="Pune", destination_city="Aurangabad",
             distance_km=235, seat_count=1,
@@ -79,7 +79,7 @@ class TestFareEngine:
         assert fare >= 50, "Minimum fare not enforced"
 
 
-# ─── Trip API ─────────────────────────────────────────────
+#  Trip API 
 
 @pytest_asyncio.fixture
 async def auth_headers():
@@ -120,7 +120,7 @@ class TestTripSearch:
         assert res.json()["service"] == "booking-service"
 
 
-# ─── Seat Booking ─────────────────────────────────────────
+#  Seat Booking 
 
 class TestSeatBooking:
     @pytest.mark.anyio

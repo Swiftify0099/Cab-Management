@@ -1,6 +1,6 @@
 """
 Customer and Driver profile API endpoints.
-Phase 2 — Complete implementation.
+Phase 2  Complete implementation.
 """
 import uuid
 from typing import List

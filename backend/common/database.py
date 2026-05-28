@@ -63,7 +63,7 @@ AsyncSessionLocal = async_sessionmaker(
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    """FastAPI dependency — yields an async DB session."""
+    """FastAPI dependency  yields an async DB session."""
     async with AsyncSessionLocal() as session:
         try:
             yield session
@@ -93,11 +93,11 @@ async def create_all_tables() -> None:
     """Create all tables (use only in dev/test, use Alembic in prod)."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    logger.info("✅ Database tables created.")
+    logger.info("[OK] Database tables created.")
 
 
 async def drop_all_tables() -> None:
     """Drop all tables (use only in test environments)."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
-    logger.warning("⚠️  All database tables dropped.")
+    logger.warning("[WARN]  All database tables dropped.")

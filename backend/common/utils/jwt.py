@@ -1,5 +1,5 @@
 """
-JWT utility — token creation, verification, and management.
+JWT utility  token creation, verification, and management.
 """
 import hashlib
 import uuid
