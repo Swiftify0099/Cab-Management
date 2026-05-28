@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { View, Text, ScrollView, RefreshControl, TouchableOpacity } from 'react-native'
+import { View, Text, ScrollView, RefreshControl, TouchableOpacity, StyleSheet } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons'
 import { driverApi } from '../../api/client'
@@ -43,28 +43,28 @@ export default function EarningsScreen() {
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-slate-50">
-      <View className="px-5 py-4 bg-white border-b border-slate-100 flex-row justify-between items-center">
-        <Text className="text-xl font-bold text-slate-900">Earnings</Text>
-        <TouchableOpacity className="bg-slate-100 p-2 rounded-full">
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Earnings</Text>
+        <TouchableOpacity style={styles.headerBtn}>
           <Ionicons name="help-circle-outline" size={20} color="#64748b" />
         </TouchableOpacity>
       </View>
 
       <ScrollView 
-        className="flex-1"
+        style={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        <View className="p-5">
+        <View style={styles.content}>
           {/* Period Selector */}
-          <View className="flex-row bg-slate-100 rounded-xl p-1 mb-6">
+          <View style={styles.periodRow}>
             {(['today', 'weekly', 'monthly'] as const).map(p => (
               <TouchableOpacity
                 key={p}
-                className={`flex-1 py-2 rounded-lg items-center ${period === p ? 'bg-white shadow-sm' : ''}`}
+                style={[styles.periodBtn, period === p ? styles.periodBtnActive : null]}
                 onPress={() => setPeriod(p)}
               >
-                <Text className={`font-semibold capitalize ${period === p ? 'text-slate-900' : 'text-slate-500'}`}>
+                <Text style={[styles.periodText, period === p ? styles.periodTextActive : styles.periodTextInactive]}>
                   {p}
                 </Text>
               </TouchableOpacity>
@@ -72,61 +72,61 @@ export default function EarningsScreen() {
           </View>
 
           {/* Main Card */}
-          <View className="bg-emerald-600 rounded-3xl p-6 shadow-sm mb-6">
-            <Text className="text-emerald-100 font-semibold mb-1">Net Earnings</Text>
-            <Text className="text-white text-4xl font-black mb-4">₹{earnings.net_earnings.toLocaleString()}</Text>
+          <View style={styles.mainCard}>
+            <Text style={styles.mainCardTitle}>Net Earnings</Text>
+            <Text style={styles.mainCardValue}>₹{earnings.net_earnings.toLocaleString()}</Text>
             
-            <View className="h-px bg-emerald-500/50 mb-4" />
+            <View style={styles.divider} />
             
-            <View className="flex-row justify-between">
+            <View style={styles.mainCardRow}>
               <View>
-                <Text className="text-emerald-100 text-xs mb-1">Total Revenue</Text>
-                <Text className="text-white font-bold">₹{earnings.total_revenue.toLocaleString()}</Text>
+                <Text style={styles.subCardTitle}>Total Revenue</Text>
+                <Text style={styles.subCardValue}>₹{earnings.total_revenue.toLocaleString()}</Text>
               </View>
               <View>
-                <Text className="text-emerald-100 text-xs mb-1">Platform Fee (-10%)</Text>
-                <Text className="text-white font-bold text-right">-₹{earnings.commission_deducted.toLocaleString()}</Text>
+                <Text style={styles.subCardTitle}>Platform Fee (-10%)</Text>
+                <Text style={[styles.subCardValue, { textAlign: 'right' }]}>-₹{earnings.commission_deducted.toLocaleString()}</Text>
               </View>
             </View>
           </View>
 
           {/* Stats Grid */}
-          <View className="flex-row gap-4 mb-8">
-            <View className="flex-1 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
-              <Ionicons name="car-outline" size={24} color="#3b82f6" className="mb-2" />
-              <Text className="text-2xl font-black text-slate-900">{earnings.completed_trips}</Text>
-              <Text className="text-xs text-slate-400 font-medium mt-1">Completed Trips</Text>
+          <View style={styles.statsGrid}>
+            <View style={styles.statBox}>
+              <Ionicons name="car-outline" size={24} color="#3b82f6" style={{ marginBottom: 8 }} />
+              <Text style={styles.statValue}>{earnings.completed_trips}</Text>
+              <Text style={styles.statLabel}>Completed Trips</Text>
             </View>
-            <View className="flex-1 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
-              <Ionicons name="time-outline" size={24} color="#f59e0b" className="mb-2" />
-              <Text className="text-2xl font-black text-slate-900">{earnings.online_hours}h</Text>
-              <Text className="text-xs text-slate-400 font-medium mt-1">Online Hours</Text>
+            <View style={styles.statBox}>
+              <Ionicons name="time-outline" size={24} color="#f59e0b" style={{ marginBottom: 8 }} />
+              <Text style={styles.statValue}>{earnings.online_hours}h</Text>
+              <Text style={styles.statLabel}>Online Hours</Text>
             </View>
           </View>
 
           {/* Settlement History */}
-          <View className="mb-4 flex-row justify-between items-center">
-            <Text className="text-lg font-bold text-slate-900">Settlement History</Text>
+          <View style={styles.historyHeader}>
+            <Text style={styles.historyTitle}>Settlement History</Text>
             <TouchableOpacity>
-              <Text className="text-blue-600 font-semibold text-sm">View All</Text>
+              <Text style={styles.viewAllText}>View All</Text>
             </TouchableOpacity>
           </View>
 
-          <View className="bg-white rounded-2xl border border-slate-100 overflow-hidden mb-10">
+          <View style={styles.historyCard}>
             {history.map((item, index) => (
-              <View key={item.id} className={`p-4 flex-row justify-between items-center ${index !== history.length - 1 ? 'border-b border-slate-50' : ''}`}>
-                <View className="flex-row items-center gap-3">
-                  <View className="w-10 h-10 rounded-full bg-emerald-50 items-center justify-center">
+              <View key={item.id} style={[styles.historyRow, index !== history.length - 1 ? styles.historyBorder : null]}>
+                <View style={styles.historyLeft}>
+                  <View style={styles.historyIconBox}>
                     <Ionicons name="checkmark-done" size={18} color="#10b981" />
                   </View>
                   <View>
-                    <Text className="font-bold text-slate-900">{new Date(item.date).toLocaleDateString('en-IN', { weekday: 'short', month: 'short', day: 'numeric' })}</Text>
-                    <Text className="text-xs text-slate-400 mt-0.5">{item.trips} trips</Text>
+                    <Text style={styles.historyDate}>{new Date(item.date).toLocaleDateString('en-IN', { weekday: 'short', month: 'short', day: 'numeric' })}</Text>
+                    <Text style={styles.historyTrips}>{item.trips} trips</Text>
                   </View>
                 </View>
-                <View className="items-end">
-                  <Text className="font-black text-slate-900">₹{item.amount.toLocaleString()}</Text>
-                  <Text className="text-xs text-emerald-600 font-semibold mt-0.5 capitalize">{item.status}</Text>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={styles.historyAmount}>₹{item.amount.toLocaleString()}</Text>
+                  <Text style={styles.historyStatus}>{item.status}</Text>
                 </View>
               </View>
             ))}
@@ -136,3 +136,41 @@ export default function EarningsScreen() {
     </SafeAreaView>
   )
 }
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  header: { paddingHorizontal: 20, paddingVertical: 16, backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#F1F5F9', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  headerTitle: { fontSize: 20, fontWeight: 'bold', color: '#0F172A' },
+  headerBtn: { backgroundColor: '#F1F5F9', padding: 8, borderRadius: 20 },
+  scroll: { flex: 1 },
+  content: { padding: 20 },
+  periodRow: { flexDirection: 'row', backgroundColor: '#F1F5F9', borderRadius: 12, padding: 4, marginBottom: 24 },
+  periodBtn: { flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center' },
+  periodBtnActive: { backgroundColor: '#FFFFFF', elevation: 1, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 2 },
+  periodText: { fontWeight: '600', textTransform: 'capitalize' },
+  periodTextActive: { color: '#0F172A' },
+  periodTextInactive: { color: '#64748B' },
+  mainCard: { backgroundColor: '#059669', borderRadius: 24, padding: 24, elevation: 2, marginBottom: 24 },
+  mainCardTitle: { color: '#D1FAE5', fontWeight: '600', marginBottom: 4 },
+  mainCardValue: { color: '#FFFFFF', fontSize: 36, fontWeight: '900', marginBottom: 16 },
+  divider: { height: 1, backgroundColor: 'rgba(16, 185, 129, 0.5)', marginBottom: 16 },
+  mainCardRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  subCardTitle: { color: '#D1FAE5', fontSize: 12, marginBottom: 4 },
+  subCardValue: { color: '#FFFFFF', fontWeight: 'bold' },
+  statsGrid: { flexDirection: 'row', gap: 16, marginBottom: 32 },
+  statBox: { flex: 1, backgroundColor: '#FFFFFF', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#F1F5F9', elevation: 1 },
+  statValue: { fontSize: 24, fontWeight: '900', color: '#0F172A' },
+  statLabel: { fontSize: 12, color: '#94A3B8', fontWeight: '500', marginTop: 4 },
+  historyHeader: { marginBottom: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  historyTitle: { fontSize: 18, fontWeight: 'bold', color: '#0F172A' },
+  viewAllText: { color: '#2563EB', fontWeight: '600', fontSize: 14 },
+  historyCard: { backgroundColor: '#FFFFFF', borderRadius: 16, borderWidth: 1, borderColor: '#F1F5F9', overflow: 'hidden', marginBottom: 40 },
+  historyRow: { padding: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  historyBorder: { borderBottomWidth: 1, borderBottomColor: '#F8FAFC' },
+  historyLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  historyIconBox: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#ECFDF5', alignItems: 'center', justifyContent: 'center' },
+  historyDate: { fontWeight: 'bold', color: '#0F172A' },
+  historyTrips: { fontSize: 12, color: '#94A3B8', marginTop: 2 },
+  historyAmount: { fontWeight: '900', color: '#0F172A' },
+  historyStatus: { fontSize: 12, color: '#059669', fontWeight: '600', marginTop: 2, textTransform: 'capitalize' },
+})

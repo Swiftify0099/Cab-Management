@@ -1,5 +1,6 @@
 /**
  * Driver App — Phone entry screen for OTP login
+ * StyleSheet version (NativeWind removed — caused Metro 99.9% hang on dynamic classNames)
  */
 import React, { useState, useRef } from 'react'
 import {
@@ -12,6 +13,7 @@ import {
   ActivityIndicator,
   Animated,
   ScrollView,
+  StyleSheet,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
@@ -59,57 +61,44 @@ export default function DriverPhoneScreen() {
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-slate-900">
+    <SafeAreaView style={styles.container}>
       <KeyboardAvoidingView
-        className="flex-1"
+        style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <ScrollView
-          className="flex-1 px-6"
+          style={styles.scroll}
           contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
           keyboardShouldPersistTaps="handled"
         >
           {/* Logo */}
-          <View className="items-center mb-10">
-            <View className="w-24 h-24 rounded-3xl bg-amber-500 items-center justify-center mb-6 shadow-xl">
-              <Text className="text-5xl">🚗</Text>
+          <View style={styles.logoContainer}>
+            <View style={styles.logoBox}>
+              <Text style={{ fontSize: 48 }}>🚗</Text>
             </View>
-            <Text className="text-3xl font-bold text-white text-center">
-              CabBooking Driver
-            </Text>
-            <Text className="text-sm text-slate-400 text-center mt-2">
-              Start earning — enter your mobile number
-            </Text>
+            <Text style={styles.title}>CabBooking Driver</Text>
+            <Text style={styles.subtitle}>Start earning — enter your mobile number</Text>
           </View>
 
           {/* Badge row */}
-          <View className="flex-row justify-center gap-3 mb-8">
+          <View style={styles.badgeRow}>
             {['Flexible Hours', 'Daily Earnings', 'Safe & Secure'].map((b) => (
-              <View key={b} className="bg-slate-800 px-3 py-1.5 rounded-full">
-                <Text className="text-xs text-amber-400 font-medium">{b}</Text>
+              <View key={b} style={styles.badge}>
+                <Text style={styles.badgeText}>{b}</Text>
               </View>
             ))}
           </View>
 
           {/* Phone Input */}
-          <Animated.View
-            style={{ transform: [{ translateX: shakeAnim }] }}
-            className="mb-4"
-          >
-            <Text className="text-sm font-semibold text-slate-300 mb-2">
-              Mobile Number
-            </Text>
-            <View className={`flex-row items-center border-2 rounded-2xl px-4 h-14 ${
-              error
-                ? 'border-red-500 bg-red-900/20'
-                : 'border-slate-700 bg-slate-800'
-            }`}>
-              <View className="flex-row items-center gap-2 pr-3 border-r border-slate-600">
-                <Text className="text-lg">🇮🇳</Text>
-                <Text className="text-base font-semibold text-slate-200">+91</Text>
+          <Animated.View style={[styles.inputContainer, { transform: [{ translateX: shakeAnim }] }]}>
+            <Text style={styles.label}>Mobile Number</Text>
+            <View style={[styles.inputRow, error ? styles.inputRowError : styles.inputRowNormal]}>
+              <View style={styles.countryCode}>
+                <Text style={{ fontSize: 18 }}>🇮🇳</Text>
+                <Text style={styles.countryCodeText}>+91</Text>
               </View>
               <TextInput
-                className="flex-1 pl-3 text-base font-medium text-white"
+                style={styles.input}
                 placeholder="Enter mobile number"
                 placeholderTextColor="#64748B"
                 keyboardType="phone-pad"
@@ -123,43 +112,68 @@ export default function DriverPhoneScreen() {
                 returnKeyType="done"
                 onSubmitEditing={handleSend}
               />
-              {phone.length === 10 && (
-                <Text className="text-green-400 text-xl">✓</Text>
-              )}
+              {phone.length === 10 && <Text style={styles.checkIcon}>✓</Text>}
             </View>
-            {error ? (
-              <Text className="text-red-400 text-sm mt-2 ml-1">{error}</Text>
-            ) : null}
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
           </Animated.View>
 
           <TouchableOpacity
             onPress={handleSend}
             disabled={loading || phone.length < 10}
             activeOpacity={0.85}
-            className={`h-14 rounded-2xl items-center justify-center mt-2 ${
-              phone.length === 10 && !loading
-                ? 'bg-amber-500 shadow-lg'
-                : 'bg-slate-700'
-            }`}
+            style={[styles.button, phone.length === 10 && !loading ? styles.buttonActive : styles.buttonDisabled]}
           >
             {loading ? (
               <ActivityIndicator color="#0F172A" />
             ) : (
-              <Text className={`text-base font-bold ${
-                phone.length === 10 ? 'text-slate-900' : 'text-slate-500'
-              }`}>
+              <Text style={[styles.buttonText, { color: phone.length === 10 ? '#0F172A' : '#64748B' }]}>
                 Send OTP →
               </Text>
             )}
           </TouchableOpacity>
 
           {__DEV__ && (
-            <Text className="text-xs text-center text-amber-500 mt-4">
-              🔧 Dev mode — OTP: 123456
-            </Text>
+            <Text style={styles.devHint}>🔧 Dev mode — OTP: 123456</Text>
           )}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   )
 }
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#0F172A' },
+  scroll: { flex: 1, paddingHorizontal: 24 },
+  logoContainer: { alignItems: 'center', marginBottom: 40 },
+  logoBox: {
+    width: 96, height: 96, borderRadius: 24, backgroundColor: '#F59E0B',
+    alignItems: 'center', justifyContent: 'center', marginBottom: 24,
+    shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 10, elevation: 6,
+  },
+  title: { fontSize: 28, fontWeight: 'bold', color: '#FFFFFF', textAlign: 'center' },
+  subtitle: { fontSize: 14, color: '#94A3B8', textAlign: 'center', marginTop: 8 },
+  badgeRow: { flexDirection: 'row', justifyContent: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 32 },
+  badge: { backgroundColor: '#1E293B', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+  badgeText: { fontSize: 12, fontWeight: '500', color: '#FBBF24' },
+  inputContainer: { marginBottom: 16 },
+  label: { fontSize: 14, fontWeight: '600', color: '#CBD5E1', marginBottom: 8 },
+  inputRow: {
+    flexDirection: 'row', alignItems: 'center', borderWidth: 2,
+    borderRadius: 16, paddingHorizontal: 16, height: 56,
+  },
+  inputRowNormal: { borderColor: '#334155', backgroundColor: '#1E293B' },
+  inputRowError: { borderColor: '#EF4444', backgroundColor: 'rgba(127, 29, 29, 0.2)' },
+  countryCode: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingRight: 12, borderRightWidth: 1, borderRightColor: '#475569',
+  },
+  countryCodeText: { fontSize: 16, fontWeight: '600', color: '#E2E8F0' },
+  input: { flex: 1, paddingLeft: 12, fontSize: 16, fontWeight: '500', color: '#FFFFFF' },
+  checkIcon: { color: '#4ADE80', fontSize: 20 },
+  errorText: { color: '#F87171', fontSize: 14, marginTop: 8, marginLeft: 4 },
+  button: { height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
+  buttonActive: { backgroundColor: '#F59E0B', shadowColor: '#F59E0B', shadowOpacity: 0.3, shadowRadius: 10, elevation: 4 },
+  buttonDisabled: { backgroundColor: '#334155' },
+  buttonText: { fontSize: 16, fontWeight: 'bold' },
+  devHint: { fontSize: 12, textAlign: 'center', color: '#F59E0B', marginTop: 16 },
+})

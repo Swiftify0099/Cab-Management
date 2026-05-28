@@ -10,16 +10,16 @@ export default function DriverIndex() {
     const check = async () => {
       const token = await SecureStore.getItemAsync('access_token')
       if (token) {
-        router.replace('/(tabs)')
+        setTimeout(() => router.replace('/(tabs)'), 0)
       } else {
-        router.replace('/auth/phone')
+        setTimeout(() => router.replace('/auth/phone'), 0)
       }
     }
     check()
   }, [])
 
   return (
-    <View className="flex-1 items-center justify-center bg-slate-900">
+    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0F172A' }}>
       <ActivityIndicator size="large" color="#F59E0B" />
     </View>
   )

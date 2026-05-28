@@ -27,14 +27,14 @@ class BaseAppSettings(BaseSettings):
     SECRET_KEY: str = "change-me-in-production-min-32-chars"
 
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://cabooking_user:cabooking_pass@postgres:5432/cabooking"
+    DATABASE_URL: str = "postgresql+asyncpg://cabooking_user:cabooking_pass@localhost:5432/cabooking"
     DB_POOL_SIZE: int = 20
     DB_MAX_OVERFLOW: int = 40
     DB_POOL_TIMEOUT: int = 30
     DB_ECHO: bool = False
 
     # Redis
-    REDIS_URL: str = "redis://redis:6379/0"
+    REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_POOL_SIZE: int = 20
 
     # JWT
@@ -68,8 +68,8 @@ class BaseAppSettings(BaseSettings):
     DEFAULT_COMMISSION_PERCENT: float = 15.0
 
     # Celery
-    CELERY_BROKER_URL: str = "redis://redis:6379/1"
-    CELERY_RESULT_BACKEND: str = "redis://redis:6379/2"
+    CELERY_BROKER_URL: str = "redis://localhost:6379/1"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
 
     # Sentry
     SENTRY_DSN: Optional[str] = None
