@@ -77,8 +77,7 @@ export default function SelfieScreen() {
             
             <LinearGradient
               colors={['#10B981', '#059669']} // Green gradient for final step
-              style={styles.proceedBtn}
-              borderRadius={20}
+              style={[styles.proceedBtn, { borderRadius: 20 }]}
             >
               <Text style={styles.proceedText}>Submit Application</Text>
             </LinearGradient>

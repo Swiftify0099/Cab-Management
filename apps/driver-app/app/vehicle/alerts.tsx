@@ -52,8 +52,7 @@ export default function MaintenanceAlertsScreen() {
             {/* Glass Background Gradient */}
             <LinearGradient
               colors={['rgba(255, 255, 255, 0.15)', 'rgba(255, 255, 255, 0.02)']}
-              style={StyleSheet.absoluteFill}
-              borderRadius={20}
+              style={[StyleSheet.absoluteFill, { borderRadius: 20 }]}
             />
 
             {/* Title */}
@@ -112,8 +111,7 @@ export default function MaintenanceAlertsScreen() {
                 colors={['#F59E0B', '#D97706']}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 0, y: 1 }}
-                style={styles.primaryBtnGradient}
-                borderRadius={25}
+                style={[styles.primaryBtnGradient, { borderRadius: 25 }]}
               >
                 <Text style={styles.primaryBtnText}>BOOK SERVICE AT PARTNER GARAGE</Text>
               </LinearGradient>

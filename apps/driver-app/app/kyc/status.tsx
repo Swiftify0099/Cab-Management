@@ -80,8 +80,7 @@ export default function DocumentStatusScreen() {
                 {/* Background Glass */}
                 <LinearGradient
                   colors={['rgba(255, 255, 255, 0.08)', 'rgba(255, 255, 255, 0.02)']}
-                  style={StyleSheet.absoluteFill}
-                  borderRadius={16}
+                  style={[StyleSheet.absoluteFill, { borderRadius: 16 }]}
                 />
                 
                 <View style={styles.docIconBox}>
@@ -115,8 +114,7 @@ export default function DocumentStatusScreen() {
           >
             <LinearGradient
               colors={['rgba(255,255,255,0.15)', 'rgba(255,255,255,0.03)']}
-              style={styles.proceedBtn}
-              borderRadius={20}
+              style={[styles.proceedBtn, { borderRadius: 20 }]}
             >
               <Text style={styles.proceedText}>Return to Dashboard</Text>
             </LinearGradient>

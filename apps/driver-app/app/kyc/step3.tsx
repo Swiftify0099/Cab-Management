@@ -49,8 +49,7 @@ export default function Step3Screen() {
             <View style={styles.glassCard}>
               <LinearGradient
                 colors={['rgba(255, 255, 255, 0.12)', 'rgba(255, 255, 255, 0.03)']}
-                style={StyleSheet.absoluteFill}
-                borderRadius={20}
+                style={[StyleSheet.absoluteFill, { borderRadius: 20 }]}
               />
               
               <View style={styles.cardHeader}>
@@ -76,8 +75,7 @@ export default function Step3Screen() {
             <View style={styles.glassCard}>
               <LinearGradient
                 colors={['rgba(255, 255, 255, 0.12)', 'rgba(255, 255, 255, 0.03)']}
-                style={StyleSheet.absoluteFill}
-                borderRadius={20}
+                style={[StyleSheet.absoluteFill, { borderRadius: 20 }]}
               />
               
               <View style={styles.cardHeader}>
@@ -111,8 +109,7 @@ export default function Step3Screen() {
             
             <LinearGradient
               colors={['rgba(255,255,255,0.2)', 'rgba(255,255,255,0.05)']}
-              style={styles.proceedBtn}
-              borderRadius={20}
+              style={[styles.proceedBtn, { borderRadius: 20 }]}
             >
               <Text style={styles.proceedText}>Proceed to Live Selfie</Text>
             </LinearGradient>

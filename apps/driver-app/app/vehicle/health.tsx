@@ -59,8 +59,7 @@ export default function VehicleHealthScreen() {
             <View style={styles.statCard}>
               <LinearGradient
                 colors={['rgba(255,255,255,0.1)', 'rgba(255,255,255,0.03)']}
-                style={StyleSheet.absoluteFill}
-                borderRadius={16}
+                style={[StyleSheet.absoluteFill, { borderRadius: 16 }]}
               />
               <View style={styles.iconCircleGreen}>
                 <Feather name="check" size={16} color="#FFFFFF" />
@@ -73,8 +72,7 @@ export default function VehicleHealthScreen() {
             <View style={styles.statCard}>
               <LinearGradient
                 colors={['rgba(255,255,255,0.1)', 'rgba(255,255,255,0.03)']}
-                style={StyleSheet.absoluteFill}
-                borderRadius={16}
+                style={[StyleSheet.absoluteFill, { borderRadius: 16 }]}
               />
               <View style={styles.iconCircleBlue}>
                 <MaterialCommunityIcons name="car-battery" size={16} color="#FFFFFF" />
@@ -95,8 +93,7 @@ export default function VehicleHealthScreen() {
             <View style={styles.statCard}>
               <LinearGradient
                 colors={['rgba(255,255,255,0.1)', 'rgba(255,255,255,0.03)']}
-                style={StyleSheet.absoluteFill}
-                borderRadius={16}
+                style={[StyleSheet.absoluteFill, { borderRadius: 16 }]}
               />
               <View style={styles.iconCircleGray}>
                 <Feather name="calendar" size={14} color="#FFFFFF" />
@@ -115,8 +112,7 @@ export default function VehicleHealthScreen() {
           <View style={styles.alertsContainer}>
             <LinearGradient
               colors={['rgba(255,255,255,0.08)', 'rgba(255,255,255,0.02)']}
-              style={StyleSheet.absoluteFill}
-              borderRadius={16}
+              style={[StyleSheet.absoluteFill, { borderRadius: 16 }]}
             />
             
             <View style={[styles.alertRow, styles.borderBottom]}>
@@ -140,8 +136,7 @@ export default function VehicleHealthScreen() {
           <TouchableOpacity style={styles.manageBtn} activeOpacity={0.7}>
             <LinearGradient
               colors={['rgba(255,255,255,0.08)', 'rgba(255,255,255,0.02)']}
-              style={StyleSheet.absoluteFill}
-              borderRadius={16}
+              style={[StyleSheet.absoluteFill, { borderRadius: 16 }]}
             />
             <View style={styles.manageLeft}>
               <Feather name="settings" size={20} color="#60A5FA" />
