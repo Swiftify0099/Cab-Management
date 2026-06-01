@@ -15,11 +15,10 @@ import {
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router, useLocalSearchParams } from 'expo-router'
-import axios from 'axios'
+import { authApi, BASE_URL } from '../../api/client'
 import * as SecureStore from 'expo-secure-store'
 
 const OTP_LENGTH = 6
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:80/api/v1'
 
 export default function DriverOTPScreen() {
   const { phone } = useLocalSearchParams<{ phone: string }>()
@@ -61,11 +60,7 @@ export default function DriverOTPScreen() {
     setError('')
     setLoading(true)
     try {
-      const res = await axios.post(`${BASE_URL}/auth/otp/verify`, {
-        phone,
-        otp_code: otpCode,
-        role: 'driver',
-      })
+      const res = await authApi.verifyOtp(phone, otpCode)
       const { data } = res.data
       await SecureStore.setItemAsync('access_token', data.access_token)
       await SecureStore.setItemAsync('refresh_token', data.refresh_token)
@@ -164,7 +159,7 @@ export default function DriverOTPScreen() {
             {canResend
               ? <TouchableOpacity onPress={async () => {
                   setCanResend(false); setResendTimer(30)
-                  await axios.post(`${BASE_URL}/auth/otp/send`, { phone })
+                  await authApi.sendOtp(phone)
                 }}>
                   <Text style={styles.resendBtn}>Resend</Text>
                 </TouchableOpacity>

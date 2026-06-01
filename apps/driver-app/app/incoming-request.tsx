@@ -1,271 +1,159 @@
-/**
- * Incoming Trip Request Screen — Driver sees this when a booking is dispatched.
- * Shows: route, fare, customer info, countdown timer, accept/reject buttons.
- * Auto-dismisses on timeout.
- */
-import { useEffect, useState, useRef } from 'react'
+import React, { useEffect, useState } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet,
-  Animated, Vibration, Alert,
-} from 'react-native'
-import { router } from 'expo-router'
-import axios from 'axios'
-import AsyncStorage from '@react-native-async-storage/async-storage'
+  View,
+  Text,
+  TouchableOpacity,
+  SafeAreaView,
+  StatusBar,
+  StyleSheet,
+} from 'react-native';
+import { Feather, Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { router } from 'expo-router';
+import MapView from 'react-native-maps';
 
-const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1'
-const TIMEOUT_SEC = 45
-
-interface TripRequest {
-  booking_id: string
-  trip: {
-    from: string
-    to: string
-    departure_time: string
-    distance_km: number
-    seats: number
-    has_parcel: boolean
-    fare: number
-  }
-  customer: { id: string }
-  timeout_sec: number
-}
-
-interface IncomingRequestProps {
-  request: TripRequest
+interface Props {
+  request: any
   onDismiss: () => void
 }
 
-export default function IncomingRequestScreen({ request, onDismiss }: IncomingRequestProps) {
-  const [countdown, setCountdown] = useState(request.timeout_sec || TIMEOUT_SEC)
-  const [responding, setResponding] = useState(false)
-  const pulseAnim = useRef(new Animated.Value(1)).current
-  const progressAnim = useRef(new Animated.Value(1)).current
-  const total = request.timeout_sec || TIMEOUT_SEC
+export default function IncomingRequestScreen({ request, onDismiss }: Props) {
+  const timeoutLimit = request?.timeout_sec || 15;
+  const [timeLeft, setTimeLeft] = useState(timeoutLimit);
 
   useEffect(() => {
-    // Vibrate phone on incoming request
-    Vibration.vibrate([300, 200, 300, 200, 300])
-
-    // Countdown timer
-    const timer = setInterval(() => {
-      setCountdown(prev => {
-        if (prev <= 1) {
-          clearInterval(timer)
-          onDismiss()
-          return 0
-        }
-        return prev - 1
-      })
-    }, 1000)
-
-    // Pulse animation (accept button)
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.06, duration: 600, useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
-      ])
-    ).start()
-
-    // Progress bar animation
-    Animated.timing(progressAnim, {
-      toValue: 0,
-      duration: total * 1000,
-      useNativeDriver: false,
-    }).start()
-
-    return () => {
-      clearInterval(timer)
-      Vibration.cancel()
+    if (timeLeft <= 0) {
+      onDismiss();
+      return;
     }
-  }, [])
+    const timer = setInterval(() => setTimeLeft(t => t - 1), 1000);
+    return () => clearInterval(timer);
+  }, [timeLeft]);
 
-  const respond = async (accepted: boolean) => {
-    setResponding(true)
-    Vibration.cancel()
-    try {
-      const token = await AsyncStorage.getItem('access_token')
-      const headers = token ? { Authorization: `Bearer ${token}` } : {}
-      await axios.post(`${API}/matching/respond`, {
-        booking_id: request.booking_id,
-        accepted,
-      }, { headers })
-
-      if (accepted) {
-        onDismiss()
-        // Navigate to active trip screen
-        router.push({
-          pathname: '/active-trip',
-          params: { bookingId: request.booking_id },
-        } as any)
-      } else {
-        onDismiss()
-      }
-    } catch (e: any) {
-      Alert.alert('Error', e?.response?.data?.detail || 'Could not submit response')
-      setResponding(false)
-    }
-  }
-
-  const dep = new Date(request.trip.departure_time)
-  const progressWidth = progressAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0%', '100%'],
-  })
-  const urgentColor = countdown <= 10 ? '#EF4444' : countdown <= 20 ? '#F59E0B' : '#3B82F6'
+  const handleAccept = () => {
+    onDismiss();
+    router.push(`/active-trip?bookingId=${request?.booking_id || 'demo-1'}`);
+  };
 
   return (
-    <View style={styles.overlay}>
-      <View style={styles.card}>
-        {/* Header */}
-        <View style={styles.headerRow}>
-          <View style={styles.incomingBadge}>
-            <Text style={styles.incomingText}>🔔 INCOMING TRIP</Text>
-          </View>
-          <Text style={[styles.countdown, { color: urgentColor }]}>{countdown}s</Text>
-        </View>
+    <SafeAreaView style={styles.container}>
+      <StatusBar hidden />
 
-        {/* Progress bar */}
-        <View style={styles.progressBar}>
-          <Animated.View style={[styles.progressFill, { width: progressWidth, backgroundColor: urgentColor }]} />
-        </View>
-
-        {/* Route */}
-        <View style={styles.routeCard}>
-          <View style={styles.routeRow}>
-            <View style={styles.routeDot} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.routeLabel}>PICKUP</Text>
-              <Text style={styles.routeCity}>{request.trip.from}</Text>
-            </View>
-          </View>
-          <View style={styles.routeLine} />
-          <View style={styles.routeRow}>
-            <View style={[styles.routeDot, { backgroundColor: '#EF4444' }]} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.routeLabel}>DROP OFF</Text>
-              <Text style={styles.routeCity}>{request.trip.to}</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Trip Details */}
-        <View style={styles.detailsGrid}>
-          <DetailBox icon="💰" label="Earnings" value={`₹${Math.round(request.trip.fare * 0.9)}`} highlight />
-          <DetailBox icon="📍" label="Distance" value={`${request.trip.distance_km} km`} />
-          <DetailBox icon="💺" label="Seats" value={`${request.trip.seats} pax`} />
-          <DetailBox icon="📅" label="Departure" value={dep.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} />
-          {request.trip.has_parcel && <DetailBox icon="📦" label="Parcel" value="Yes" />}
-        </View>
-
-        {/* Earnings note */}
-        <View style={styles.earningsNote}>
-          <Text style={styles.earningsNoteText}>
-            💡 You earn 90% of fare after platform fee
-          </Text>
-        </View>
-
-        {/* Accept / Reject */}
-        <View style={styles.actions}>
-          <TouchableOpacity
-            style={[styles.rejectBtn, responding && { opacity: 0.5 }]}
-            onPress={() => respond(false)}
-            disabled={responding}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.rejectText}>✕ Reject</Text>
-          </TouchableOpacity>
-
-          <Animated.View style={[{ flex: 2 }, { transform: [{ scale: pulseAnim }] }]}>
-            <TouchableOpacity
-              style={[styles.acceptBtn, responding && { opacity: 0.5 }]}
-              onPress={() => respond(true)}
-              disabled={responding}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.acceptText}>
-                {responding ? '...' : '✓ Accept Trip'}
-              </Text>
-            </TouchableOpacity>
-          </Animated.View>
-        </View>
+      {/* Map Background */}
+      <View style={StyleSheet.absoluteFill}>
+        <MapView
+          style={StyleSheet.absoluteFill}
+          initialRegion={{
+            latitude: request?.trip?.pickup_lat || 19.0760,
+            longitude: request?.trip?.pickup_lon || 72.8777,
+            latitudeDelta: 0.1,
+            longitudeDelta: 0.1,
+          }}
+        >
+        </MapView>
       </View>
-    </View>
-  )
-}
 
-function DetailBox({ icon, label, value, highlight }: {
-  icon: string; label: string; value: string; highlight?: boolean
-}) {
-  return (
-    <View style={[styles.detailBox, highlight && { borderColor: '#2563EB', borderWidth: 1.5 }]}>
-      <Text style={styles.detailIcon}>{icon}</Text>
-      <Text style={styles.detailLabel}>{label}</Text>
-      <Text style={[styles.detailValue, highlight && { color: '#2563EB' }]}>{value}</Text>
-    </View>
-  )
+      {/* Alert Card overlay */}
+      <View style={styles.alertOverlay}>
+         
+         {/* Glassmorphic Container with glowing borders */}
+         <View style={styles.glassCard}>
+            
+            {/* Glowing red left, blue right edges mock */}
+            <LinearGradient colors={['rgba(239, 68, 68, 0.4)', 'transparent']} start={{x:0, y:0}} end={{x:0.5, y:0}} style={StyleSheet.absoluteFillObject} />
+            <LinearGradient colors={['transparent', 'rgba(59, 130, 246, 0.4)']} start={{x:0.5, y:0}} end={{x:1, y:0}} style={StyleSheet.absoluteFillObject} />
+
+            {/* Handle */}
+            <View style={styles.handle} />
+
+            {/* Title */}
+            <View style={styles.titleRow}>
+               <Text style={styles.title}>Incoming Ride Request 🚨</Text>
+               <View style={styles.exclamation}>
+                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>!</Text>
+               </View>
+            </View>
+
+            {/* Trip Details Card inside */}
+            <View style={styles.detailsCard}>
+               <Text style={styles.detailsTitle}>Intercity Trip: {request?.trip?.from || 'Mumbai'} to {request?.trip?.to || 'Pune'}</Text>
+               <Text style={styles.detailsText}>Estimated Payout: ₹{request?.trip?.fare || 450.00}</Text>
+               <Text style={styles.detailsText}>Distance to Pickup: {request?.trip?.distance_km || 2.4} km</Text>
+               {request?.trip?.has_parcel && (
+                 <Text style={styles.detailsText}>📦 Package included</Text>
+               )}
+            </View>
+
+            {/* Circular Timer Mock */}
+            <View style={styles.timerWrapper}>
+               <View style={styles.timerOuterRing}>
+                  <View style={styles.timerProgress} />
+               </View>
+               <View style={styles.timerInner}>
+                  <Text style={styles.timerText}>{timeLeft}</Text>
+               </View>
+            </View>
+            <Text style={styles.timerLabel}>s</Text>
+
+            {/* Action Buttons */}
+            <View style={styles.actionsRow}>
+               <TouchableOpacity style={styles.rejectBtn} onPress={onDismiss}>
+                  <Text style={styles.rejectText}>Reject</Text>
+               </TouchableOpacity>
+               
+               <TouchableOpacity style={styles.acceptBtn} onPress={handleAccept}>
+                  <Text style={styles.acceptText}>Accept</Text>
+               </TouchableOpacity>
+            </View>
+
+         </View>
+      </View>
+
+    </SafeAreaView>
+  );
 }
 
 const styles = StyleSheet.create({
-  overlay: {
-    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'flex-end',
-    zIndex: 1000,
-  },
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    padding: 20,
-    paddingBottom: 32,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  incomingBadge: {
-    backgroundColor: '#FEF3C7',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  incomingText: { color: '#92400E', fontWeight: '800', fontSize: 12, letterSpacing: 1 },
-  countdown: { fontSize: 28, fontWeight: '800', fontVariant: ['tabular-nums'] },
-  progressBar: { height: 4, backgroundColor: '#E2E8F0', borderRadius: 2, marginBottom: 16, overflow: 'hidden' },
-  progressFill: { height: 4, borderRadius: 2 },
-  routeCard: {
-    backgroundColor: '#F8FAFC', borderRadius: 16, padding: 14, marginBottom: 14,
-    borderWidth: 1, borderColor: '#E2E8F0',
-  },
-  routeRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  routeDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#10B981' },
-  routeLine: { height: 20, width: 1.5, backgroundColor: '#E2E8F0', marginLeft: 4, marginVertical: 4 },
-  routeLabel: { fontSize: 10, fontWeight: '700', color: '#94A3B8', letterSpacing: 0.5 },
-  routeCity: { fontSize: 16, fontWeight: '700', color: '#0F172A' },
-  detailsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
-  detailBox: {
-    flex: 1, minWidth: '28%', backgroundColor: '#F8FAFC', borderRadius: 12, padding: 10,
-    alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0',
-  },
-  detailIcon: { fontSize: 18, marginBottom: 3 },
-  detailLabel: { fontSize: 10, color: '#94A3B8', fontWeight: '600', marginBottom: 2 },
-  detailValue: { fontSize: 13, fontWeight: '800', color: '#0F172A' },
-  earningsNote: {
-    backgroundColor: '#EFF6FF', borderRadius: 10, padding: 10, marginBottom: 16,
-  },
-  earningsNoteText: { color: '#1D4ED8', fontSize: 12, textAlign: 'center', fontWeight: '500' },
-  actions: { flexDirection: 'row', gap: 10 },
-  rejectBtn: {
-    flex: 1, borderWidth: 2, borderColor: '#FCA5A5', borderRadius: 16,
-    padding: 16, alignItems: 'center', backgroundColor: '#FEF2F2',
-  },
-  rejectText: { color: '#EF4444', fontWeight: '700', fontSize: 15 },
-  acceptBtn: {
-    borderRadius: 16, padding: 16, alignItems: 'center',
-    backgroundColor: '#2563EB',
-    shadowColor: '#2563EB', shadowOpacity: 0.4, shadowRadius: 10, elevation: 6,
-  },
-  acceptText: { color: '#FFFFFF', fontWeight: '800', fontSize: 16 },
-})
+  container: { ...StyleSheet.absoluteFillObject, backgroundColor: '#111827', zIndex: 999 },
+  
+  mapBg: { ...StyleSheet.absoluteFillObject, zIndex: 0 },
+  mapInner: { width: '100%', height: '100%', backgroundColor: '#1E293B', position: 'relative', overflow: 'hidden' },
+  road1: { position: 'absolute', top: 80, left: 40, width: 192, height: 192, borderWidth: 3, borderColor: '#334155', borderRadius: 96, opacity: 0.5 },
+  road2: { position: 'absolute', top: 160, right: -20, width: 256, height: 256, borderWidth: 3, borderColor: '#334155', borderRadius: 128, opacity: 0.5 },
+  
+  routeHighlight: { position: 'absolute', top: 128, left: 64, width: 128, height: 128, borderLeftWidth: 4, borderBottomWidth: 4, borderColor: '#3B82F6', borderBottomLeftRadius: 24, opacity: 0.8, shadowColor: '#3B82F6', shadowOpacity: 1, shadowRadius: 10 },
+  
+  marker1: { position: 'absolute', top: 128, left: 64, width: 16, height: 16, borderRadius: 8, backgroundColor: '#fff', borderWidth: 4, borderColor: '#3B82F6', shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 5 },
+  markerText1: { position: 'absolute', top: 144, left: 48, color: '#D1D5DB', fontWeight: 'bold', fontSize: 18 },
+  
+  marker2: { position: 'absolute', top: 250, left: 250, width: 16, height: 16, borderRadius: 8, backgroundColor: '#3B82F6', borderWidth: 2, borderColor: '#fff', shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 5 },
+  marker2Glow: { position: 'absolute', top: 240, left: 240, width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(59,130,246,0.2)' },
+  markerText2: { position: 'absolute', top: 260, left: 240, color: '#D1D5DB', fontWeight: 'bold', fontSize: 18 },
+  
+  alertOverlay: { flex: 1, justifyContent: 'flex-end', paddingHorizontal: 16, paddingBottom: 32, zIndex: 10 },
+  
+  glassCard: { width: '100%', backgroundColor: 'rgba(30, 41, 59, 0.8)', borderRadius: 30, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)', padding: 24, shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 20, elevation: 15, position: 'relative', overflow: 'hidden' },
+  
+  handle: { width: 48, height: 6, backgroundColor: 'rgba(255,255,255,0.3)', borderRadius: 3, alignSelf: 'center', marginBottom: 24 },
+  
+  titleRow: { flexDirection: 'row', items: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  title: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
+  exclamation: { width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(107,114,128,0.5)', alignItems: 'center', justifyContent: 'center' },
+  
+  detailsCard: { backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 16, padding: 16, marginBottom: 32, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  detailsTitle: { color: '#fff', fontSize: 18, fontWeight: 'bold', marginBottom: 8 },
+  detailsText: { color: '#D1D5DB', fontSize: 16, marginBottom: 4 },
+  
+  timerWrapper: { alignItems: 'center', justifyContent: 'center', marginBottom: 8, position: 'relative' },
+  timerOuterRing: { width: 112, height: 112, borderRadius: 56, borderWidth: 4, borderColor: 'rgba(75,85,99,0.5)', alignItems: 'center', justifyContent: 'center', position: 'absolute' },
+  timerProgress: { width: '100%', height: '100%', borderRadius: 56, borderWidth: 4, borderLeftColor: 'transparent', borderTopColor: 'transparent', borderColor: '#22C55E', position: 'absolute', transform: [{ rotate: '45deg' }] },
+  timerInner: { width: 96, height: 96, backgroundColor: 'rgba(17,24,39,0.8)', borderRadius: 48, alignItems: 'center', justifyContent: 'center' },
+  timerText: { color: '#fff', fontSize: 36, fontWeight: 'bold' },
+  timerLabel: { color: '#9CA3AF', textAlign: 'center', fontSize: 14, fontWeight: '500', marginBottom: 32 },
+  
+  actionsRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
+  rejectBtn: { flex: 1, paddingVertical: 16, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.4)', alignItems: 'center', justifyContent: 'center', marginRight: 12, backgroundColor: 'rgba(255,255,255,0.05)' },
+  rejectText: { color: '#fff', fontSize: 18, fontWeight: '500' },
+  acceptBtn: { flex: 1, paddingVertical: 16, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#4ADE80', shadowColor: '#22C55E', shadowOpacity: 0.3, shadowRadius: 10, elevation: 5 },
+  acceptText: { color: '#064E3B', fontSize: 18, fontWeight: 'bold' },
+});

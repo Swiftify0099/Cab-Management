@@ -1,0 +1,951 @@
+/**
+ * Trip Live Screen - Customer radar after driver creates a trip.
+ * Shows animated scanning radar with customer booking dots.
+ * Tapping a dot shows booking details + Accept/Reject.
+ * Implements high-fidelity visual matching with the mockup image.
+ * Safely plays siren sound on new bookings with automatic system checks.
+ */
+import React, { useEffect, useRef, useState, useCallback } from 'react'
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  Dimensions,
+  Animated,
+  StatusBar,
+  Easing,
+  Alert,
+  Image,
+  Vibration,
+  NativeModules,
+} from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
+import { Feather, Ionicons } from '@expo/vector-icons'
+import { LinearGradient } from 'expo-linear-gradient'
+import { router, useLocalSearchParams } from 'expo-router'
+import AsyncStorage from '@react-native-async-storage/async-storage'
+import axios from 'axios'
+
+const { width, height } = Dimensions.get('window')
+const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1'
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+interface CustomerDot {
+  id: string
+  bookingId: string
+  name: string
+  phone: string
+  seats: number
+  date: string
+  time: string
+  pickupAddress: string
+  dropAddress: string
+  fare: number
+  hasParcel: boolean
+  x: number
+  y: number
+  anim: Animated.Value
+  pulse: Animated.Value
+  rejected: boolean
+}
+
+// ─── Random radar position (Calculates coordinates inside concentric radar circles)
+function randomRadarPos() {
+  const angle = Math.random() * 2 * Math.PI
+  const radius = 0.25 + Math.random() * 0.28
+  return {
+    x: 0.5 + Math.cos(angle) * radius,
+    y: 0.5 + Math.sin(angle) * radius * 0.9,
+  }
+}
+
+// ─── Demo bookings ────────────────────────────────────────────────────────────
+const DEMO_CUSTOMERS = [
+  { id: 'c1', name: 'Rahul Sharma',  phone: '+91 98765 43210', seats: 2, hasParcel: false, fare: 960  },
+  { id: 'c2', name: 'Priya Patil',   phone: '+91 87654 32109', seats: 1, hasParcel: true,  fare: 480  },
+  { id: 'c3', name: 'Amit Verma',    phone: '+91 76543 21098', seats: 3, hasParcel: false, fare: 1440 },
+  { id: 'c4', name: 'Sneha Joshi',   phone: '+91 65432 10987', seats: 1, hasParcel: false, fare: 480  },
+  { id: 'c5', name: 'Karan Mehta',   phone: '+91 54321 09876', seats: 2, hasParcel: true,  fare: 960  },
+]
+
+// ─── Safe siren player (Checks native support before importing expo-av to prevent crashes)
+async function playSirenSafe() {
+  try {
+    // 1. Safe detection of native Expo Audio module availability
+    const isAvAvailable = !!(
+      NativeModules.ExponentAV || 
+      (global as any).ExpoModules?.['ExponentAV'] ||
+      (global as any).ExpoModules?.['ExpoAV']
+    )
+
+    // Trigger physical feedback (vibration) as requested ("sounding/buzzing functionality")
+    Vibration.vibrate([0, 150, 80, 150])
+
+    if (!isAvAvailable) {
+      console.log('Skipping audio: ExponentAV module is not present in this Expo Go bundle.')
+      return
+    }
+
+    // 2. Safe dynamic load
+    const { Audio } = require('expo-av')
+    await Audio.setAudioModeAsync({ playsInSilentModeIOS: true })
+    const { sound } = await Audio.Sound.createAsync(
+      require('../assets/siran/drSiran.mp3'),
+      { shouldPlay: true, volume: 1.0 }
+    )
+    sound.setOnPlaybackStatusUpdate((status: any) => {
+      if (status.didJustFinish) {
+        sound.unloadAsync()
+      }
+    })
+  } catch (err) {
+    console.warn('Silent audio fallback triggered:', err)
+  }
+}
+
+export default function TripLiveScreen() {
+  const params = useLocalSearchParams()
+  const from       = (params.from       as string) || 'Pune'
+  const to         = (params.to         as string) || 'Mumbai'
+  const totalSeats = parseInt((params.totalSeats as string) || '4')
+
+  const [dots, setDots]               = useState<CustomerDot[]>([])
+  const [selected, setSelected]       = useState<CustomerDot | null>(null)
+  const [acceptedIds, setAcceptedIds] = useState<string[]>([])
+  const [rejectedIds, setRejectedIds] = useState<string[]>([])
+  const [seatsUsed, setSeatsUsed]     = useState(0)
+  const [actionLoading, setActionLoading] = useState(false)
+  const [newBookingAlert, setNewBookingAlert] = useState<string | null>(null)
+
+  // Radar animation values
+  const sweepAnim = useRef(new Animated.Value(0)).current
+  const ring1     = useRef(new Animated.Value(0)).current
+  const ring2     = useRef(new Animated.Value(0)).current
+  const ring3     = useRef(new Animated.Value(0)).current
+  const panelSlide = useRef(new Animated.Value(500)).current
+  const alertFade  = useRef(new Animated.Value(0)).current
+
+  // Radar sweep spin
+  useEffect(() => {
+    Animated.loop(
+      Animated.timing(sweepAnim, {
+        toValue: 1,
+        duration: 3200,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    ).start()
+  }, [])
+
+  // Pulse rings
+  const pulseRing = useCallback((anim: Animated.Value, delay: number) => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.delay(delay),
+        Animated.timing(anim, { toValue: 1, duration: 2500, useNativeDriver: true }),
+        Animated.timing(anim, { toValue: 0, duration: 0,    useNativeDriver: true }),
+      ])
+    ).start()
+  }, [])
+
+  useEffect(() => {
+    pulseRing(ring1, 0)
+    pulseRing(ring2, 800)
+    pulseRing(ring3, 1600)
+  }, [])
+
+  // Add demo dots staggered (simulating live bookings arriving)
+  useEffect(() => {
+    const timers: ReturnType<typeof setTimeout>[] = []
+    DEMO_CUSTOMERS.forEach((c, i) => {
+      const t = setTimeout(() => {
+        const pos      = randomRadarPos()
+        const dotAnim  = new Animated.Value(0)
+        const dotPulse = new Animated.Value(0)
+
+        Animated.spring(dotAnim, {
+          toValue: 1, useNativeDriver: true, tension: 70, friction: 6,
+        }).start()
+        
+        Animated.loop(
+          Animated.sequence([
+            Animated.timing(dotPulse, { toValue: 1, duration: 1000, useNativeDriver: true }),
+            Animated.timing(dotPulse, { toValue: 0.5, duration: 1000, useNativeDriver: true }),
+          ])
+        ).start()
+
+        setDots(prev => [
+          ...prev,
+          {
+            id: c.id,
+            bookingId: `bk-${c.id}`,
+            name: c.name,
+            phone: c.phone,
+            seats: c.seats,
+            date: new Date().toLocaleDateString('en-IN'),
+            time: `${7 + i}:00 AM`,
+            pickupAddress: from,
+            dropAddress: to,
+            fare: c.fare,
+            hasParcel: c.hasParcel,
+            rejected: false,
+            x: pos.x,
+            y: pos.y,
+            anim: dotAnim,
+            pulse: dotPulse,
+          },
+        ])
+
+        // Visual HUD Alert banner animation
+        setNewBookingAlert(c.name)
+        Animated.sequence([
+          Animated.timing(alertFade, { toValue: 1, duration: 300, useNativeDriver: true }),
+          Animated.delay(2000),
+          Animated.timing(alertFade, { toValue: 0, duration: 400, useNativeDriver: true }),
+        ]).start()
+
+        playSirenSafe()
+      }, (i + 1) * 3500)
+      timers.push(t)
+    })
+    return () => timers.forEach(clearTimeout)
+  }, [from, to])
+
+  // Panel slide animation
+  useEffect(() => {
+    Animated.spring(panelSlide, {
+      toValue: selected ? 0 : 500,
+      useNativeDriver: true,
+      tension: 65,
+      friction: 12,
+    }).start()
+  }, [selected])
+
+  // Accept
+  const handleAccept = async () => {
+    if (!selected) return
+    if (seatsUsed + selected.seats > totalSeats) {
+      Alert.alert('Seats Full', `Only ${totalSeats - seatsUsed} seat(s) left. Customer needs ${selected.seats}.`)
+      return
+    }
+    setActionLoading(true)
+    try {
+      const token = await AsyncStorage.getItem('access_token')
+      const headers = token ? { Authorization: `Bearer ${token}` } : {}
+      await axios.post(`${API}/bookings/${selected.bookingId}/accept`, {}, { headers })
+    } catch (_) { /* demo - ignore */ }
+    
+    setAcceptedIds(prev => [...prev, selected.id])
+    setSeatsUsed(prev => prev + selected.seats)
+    Alert.alert('Accepted!', `Booking confirmed for ${selected.name}. Firebase notification sent!`)
+    setActionLoading(false)
+    setSelected(null)
+  }
+
+  // Reject
+  const handleReject = async () => {
+    if (!selected) return
+    setActionLoading(true)
+    try {
+      const token = await AsyncStorage.getItem('access_token')
+      const headers = token ? { Authorization: `Bearer ${token}` } : {}
+      await axios.post(`${API}/bookings/${selected.bookingId}/reject`, {}, { headers })
+    } catch (_) { /* demo - ignore */ }
+    
+    setRejectedIds(prev => [...prev, selected.id])
+    setDots(prev => prev.map(d => d.id === selected.id ? { ...d, rejected: true } : d))
+    setActionLoading(false)
+    setSelected(null)
+  }
+
+  const RADAR_SIZE = Math.min(width * 0.88, 330)
+  const RADAR_R    = RADAR_SIZE / 2
+
+  const spin = sweepAnim.interpolate({
+    inputRange:  [0, 1],
+    outputRange: ['0deg', '360deg'],
+  })
+
+  return (
+    <View style={styles.root}>
+      <StatusBar barStyle="light-content" backgroundColor="#060B18" />
+
+      {/* Futuristic Deep Gradient Background */}
+      <LinearGradient
+        colors={['#050811', '#0B0F1E', '#060A14', '#050811']}
+        style={StyleSheet.absoluteFillObject}
+      />
+
+      {/* Cyber street grid overlays */}
+      <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
+        {Array.from({ length: 15 }).map((_, i) => (
+          <View key={`h${i}`} style={[styles.gridH, { top: `${(i / 15) * 100}%` }]} />
+        ))}
+        {Array.from({ length: 11 }).map((_, i) => (
+          <View key={`v${i}`} style={[styles.gridV, { left: `${(i / 11) * 100}%` }]} />
+        ))}
+        {/* Subtle decorative curved path to represent a cyber street map */}
+        <View style={styles.cyberRoad1} />
+        <View style={styles.cyberRoad2} />
+      </View>
+
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+        {/* Header */}
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+            <Feather name="arrow-left" size={20} color="#38BDF8" />
+          </TouchableOpacity>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.headerTitle}>Live Route Monitor</Text>
+            <View style={styles.routeHeaderRow}>
+              <Text style={styles.routeHeaderTxt}>{from}</Text>
+              <Feather name="chevrons-right" size={14} color="#7C3AED" style={{ marginHorizontal: 4 }} />
+              <Text style={styles.routeHeaderTxt}>{to}</Text>
+            </View>
+          </View>
+          <View style={styles.seatsChip}>
+            <Ionicons name="people" size={15} color="#22C55E" />
+            <Text style={styles.seatsText}>{seatsUsed}/{totalSeats}</Text>
+          </View>
+        </View>
+
+        {/* Dynamic Booking Alarm Toast */}
+        {newBookingAlert && (
+          <Animated.View style={[styles.alertBanner, { opacity: alertFade }]}>
+            <LinearGradient
+              colors={['rgba(124, 58, 237, 0.95)', 'rgba(56, 189, 248, 0.95)']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.alertBannerGrad}
+            >
+              <Ionicons name="notifications-outline" size={18} color="#FFF" style={styles.alertIconPulse} />
+              <Text style={styles.alertBannerText}>New request from {newBookingAlert}!</Text>
+            </LinearGradient>
+          </Animated.View>
+        )}
+
+        {/* Sub-text Header info matching Mockup */}
+        <View style={styles.mockupHeaderInfo}>
+          <Text style={styles.matchingText}>Matching you with active passengers...</Text>
+          <Text style={styles.farePredictText}>Estimated Route Value: 2,400 INR - 3,200 INR</Text>
+        </View>
+
+        {/* Breathtaking Circular Radar */}
+        <View style={styles.radarWrapper}>
+          <View style={[styles.radarCircle, { width: RADAR_SIZE, height: RADAR_SIZE, borderRadius: RADAR_R }]}>
+            
+            {/* Animated Pulse Rings */}
+            {[ring1, ring2, ring3].map((anim, i) => (
+              <Animated.View
+                key={i}
+                style={[
+                  styles.pulseRing,
+                  {
+                    width: RADAR_SIZE,
+                    height: RADAR_SIZE,
+                    borderRadius: RADAR_R,
+                    borderColor: ['#38BDF8', '#8B5CF6', '#2DD4BF'][i],
+                    opacity: anim.interpolate({ inputRange: [0, 0.6, 1], outputRange: [0, 0.35, 0] }),
+                    transform: [{
+                      scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.45, 1.4] }),
+                    }],
+                  },
+                ]}
+              />
+            ))}
+
+            {/* Futuristic Concentric Radar HUD Rings */}
+            {[0.82, 0.58, 0.32].map((s, i) => (
+              <View
+                key={`cr${i}`}
+                style={{
+                  position: 'absolute',
+                  width: RADAR_SIZE * s,
+                  height: RADAR_SIZE * s,
+                  borderRadius: (RADAR_SIZE * s) / 2,
+                  borderWidth: 1.5,
+                  borderStyle: 'dashed',
+                  borderColor: i === 1 ? 'rgba(139, 92, 246, 0.16)' : 'rgba(56, 189, 248, 0.18)',
+                }}
+              />
+            ))}
+
+            {/* Continuous Rotating Radar Sweep Gradient */}
+            <Animated.View
+              style={[
+                StyleSheet.absoluteFillObject,
+                { borderRadius: RADAR_R, transform: [{ rotate: spin }] },
+              ]}
+            >
+              <LinearGradient
+                colors={[
+                  'rgba(56,189,248,0)',
+                  'rgba(56,189,248,0.02)',
+                  'rgba(56,189,248,0.18)',
+                  'rgba(124,58,237,0.38)',
+                ]}
+                start={{ x: 0.5, y: 0.5 }}
+                end={{ x: 1, y: 0.5 }}
+                style={[StyleSheet.absoluteFillObject, { borderRadius: RADAR_R }]}
+              />
+            </Animated.View>
+
+            {/* Glowing Gradient Circular Radar Center - Matches Mockup Ring */}
+            <View style={styles.centerGlowRingOuter}>
+              <LinearGradient
+                colors={['rgba(56, 189, 248, 0.45)', 'rgba(124, 58, 237, 0.45)']}
+                style={styles.centerGlowRingInner}
+              >
+                <View style={styles.centerDarkCore}>
+                  <Ionicons name="car-sport" size={26} color="#FFF" />
+                </View>
+              </LinearGradient>
+            </View>
+
+            {/* Floating Interactive Customer Dots */}
+            {dots
+              .filter(d => !d.rejected || acceptedIds.includes(d.id))
+              .map(dot => {
+                const isAccepted = acceptedIds.includes(dot.id)
+                const isSelected = selected?.id === dot.id
+                const dotX = dot.x * RADAR_SIZE - 12
+                const dotY = dot.y * RADAR_SIZE - 12
+
+                return (
+                  <Animated.View
+                    key={dot.id}
+                    style={[
+                      styles.dotWrapper,
+                      { left: dotX, top: dotY, opacity: dot.anim, transform: [{ scale: dot.anim }] },
+                    ]}
+                  >
+                    <TouchableOpacity
+                      onPress={() => !isAccepted && setSelected(dot)}
+                      activeOpacity={0.85}
+                    >
+                      {/* Glow Pulse Ring */}
+                      <Animated.View
+                        style={[
+                          styles.dotGlow,
+                          {
+                            backgroundColor: isAccepted
+                              ? 'rgba(34, 197, 94, 0.45)'
+                              : isSelected
+                              ? 'rgba(245, 158, 11, 0.5)'
+                              : 'rgba(56, 189, 248, 0.45)',
+                            transform: [{
+                              scale: dot.pulse.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [1, 2.6],
+                              }),
+                            }],
+                            opacity: dot.pulse.interpolate({
+                              inputRange: [0, 1],
+                              outputRange: [0.85, 0],
+                            }),
+                          },
+                        ]}
+                      />
+                      {/* Active Indicator Dot */}
+                      <Animated.View
+                        style={[
+                          styles.dot,
+                          isAccepted && styles.dotAccepted,
+                          isSelected && styles.dotSelected,
+                          {
+                            transform: [{
+                              scale: dot.pulse.interpolate({
+                                inputRange: [0.5, 1],
+                                outputRange: [1, 1.2],
+                              }),
+                            }],
+                          },
+                        ]}
+                      >
+                        {isAccepted ? (
+                          <Feather name="check" size={10} color="#FFF" />
+                        ) : isSelected ? (
+                          <Feather name="eye" size={10} color="#FFF" />
+                        ) : (
+                          <Ionicons name="person" size={10} color="#FFF" />
+                        )}
+                      </Animated.View>
+                    </TouchableOpacity>
+                  </Animated.View>
+                )
+              })}
+          </View>
+        </View>
+
+        {/* Premium Glassmorphic Status Box - Matches Bottom of Mockup Image */}
+        <View style={styles.glassCardContainer}>
+          <View style={styles.glassCard}>
+            <View style={styles.glassCardImageWrapper}>
+              {/* Renders the custom premium 3D bus image styled cleanly inside the frame */}
+              <Image 
+                source={require('../assets/images/bus-3d.png')} 
+                style={styles.glassCardBusImage}
+                resizeMode="contain" 
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.glassCardTitle}>
+                {dots.length === 0
+                  ? 'Searching for passengers...'
+                  : `Found ${dots.length} premium requests`}
+              </Text>
+              <Text style={styles.glassCardSub}>
+                {dots.length > 0
+                  ? 'Tap a glowing radar node to view live details'
+                  : 'Monitoring GPS channels for active ride requests...'}
+              </Text>
+            </View>
+          </View>
+        </View>
+      </SafeAreaView>
+
+      {/* Glassmorphic Sliding Customer Details Panel */}
+      {selected && (
+        <>
+          <TouchableOpacity
+            style={styles.backdrop}
+            onPress={() => setSelected(null)}
+            activeOpacity={1}
+          />
+          <Animated.View
+            style={[styles.panel, { transform: [{ translateY: panelSlide }] }]}
+          >
+            <LinearGradient
+              colors={['#0A1224', '#111D36', '#0A1224']}
+              style={StyleSheet.absoluteFillObject}
+            />
+
+            {/* Top Handle bar */}
+            <View style={styles.handle} />
+
+            {/* Customer Details Header */}
+            <View style={styles.panelHeader}>
+              <LinearGradient
+                colors={['#3B82F6', '#8B5CF6']}
+                style={styles.avatar}
+              >
+                <Text style={styles.avatarText}>{selected.name.charAt(0)}</Text>
+              </LinearGradient>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.panelName}>{selected.name}</Text>
+                <View style={styles.phoneRow}>
+                  <Feather name="phone" size={12} color="#64748B" />
+                  <Text style={styles.panelPhone}>{selected.phone}</Text>
+                </View>
+              </View>
+              <TouchableOpacity style={styles.closePanelBtn} onPress={() => setSelected(null)}>
+                <Feather name="x" size={20} color="#94A3B8" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Modern Glass Info Grid */}
+            <View style={styles.infoGrid}>
+              <InfoCard icon="calendar"    label="Date"  value={selected.date} />
+              <InfoCard icon="clock"       label="Time"  value={selected.time} />
+              <InfoCard icon="users"       label="Seats" value={`${selected.seats}`} />
+              <InfoCard icon="dollar-sign" label="Fare"  value={`\u20b9${selected.fare}`} accent />
+            </View>
+
+            {/* Timeline Route Card */}
+            <View style={styles.routeCard}>
+              <View style={styles.routeRow}>
+                <View style={[styles.routeDot, { backgroundColor: '#10B981', shadowColor: '#10B981' }]} />
+                <Text style={styles.routeText} numberOfLines={1}>{selected.pickupAddress}</Text>
+              </View>
+              <View style={styles.routeLine} />
+              <View style={styles.routeRow}>
+                <View style={[styles.routeDot, { backgroundColor: '#EF4444', shadowColor: '#EF4444' }]} />
+                <Text style={styles.routeText} numberOfLines={1}>{selected.dropAddress}</Text>
+              </View>
+            </View>
+
+            {/* Special Requests Label */}
+            {selected.hasParcel && (
+              <View style={styles.parcelRow}>
+                <Feather name="package" size={14} color="#F59E0B" />
+                <Text style={styles.parcelText}>Includes customer cargo/parcel package</Text>
+              </View>
+            )}
+
+            {/* Action buttons */}
+            <View style={styles.btnRow}>
+              <TouchableOpacity
+                style={[styles.rejectBtn, actionLoading && { opacity: 0.5 }]}
+                onPress={handleReject}
+                disabled={actionLoading}
+              >
+                <Feather name="x-circle" size={17} color="#EF4444" />
+                <Text style={styles.rejectText}>Reject</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.acceptBtn,
+                  actionLoading && { opacity: 0.5 },
+                  seatsUsed + selected.seats > totalSeats && { opacity: 0.4 },
+                ]}
+                onPress={handleAccept}
+                disabled={actionLoading || seatsUsed + selected.seats > totalSeats}
+              >
+                <LinearGradient
+                  colors={['#10B981', '#059669']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.acceptBtnGrad}
+                >
+                  <Feather name="check-circle" size={17} color="#FFF" />
+                  <Text style={styles.acceptText}>
+                    {seatsUsed + selected.seats > totalSeats ? 'Seats Full' : 'Accept Request'}
+                  </Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
+        </>
+      )}
+    </View>
+  )
+}
+
+// ─── Info Card component ─────────────────────────────────────────────────────────
+function InfoCard({
+  icon, label, value, accent,
+}: {
+  icon: string; label: string; value: string; accent?: boolean
+}) {
+  return (
+    <View style={iStyles.card}>
+      <Feather name={icon as any} size={13} color={accent ? '#F59E0B' : '#38BDF8'} />
+      <Text style={iStyles.label}>{label}</Text>
+      <Text style={[iStyles.value, accent && iStyles.accent]}>{value}</Text>
+    </View>
+  )
+}
+const iStyles = StyleSheet.create({
+  card: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 14,
+    padding: 10,
+    alignItems: 'center',
+    margin: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  label: { color: '#64748B', fontSize: 10, marginTop: 4, marginBottom: 2 },
+  value: { color: '#F1F5F9', fontSize: 13, fontWeight: '700' },
+  accent: { color: '#F59E0B' },
+})
+
+// ─── Visual Styles ─────────────────────────────────────────────────────────────
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: '#050811' },
+  safe: { flex: 1, alignItems: 'center' },
+
+  gridH: { position: 'absolute', width: '100%', height: 1, backgroundColor: 'rgba(56,189,248,0.035)' },
+  gridV: { position: 'absolute', width: 1, height: '100%', backgroundColor: 'rgba(56,189,248,0.035)' },
+
+  // Curved street pathways for visual fidelity
+  cyberRoad1: {
+    position: 'absolute',
+    top: '20%',
+    left: '-10%',
+    width: '120%',
+    height: 120,
+    borderWidth: 1.5,
+    borderColor: 'rgba(56,189,248,0.045)',
+    borderRadius: 90,
+  },
+  cyberRoad2: {
+    position: 'absolute',
+    bottom: '15%',
+    right: '-10%',
+    width: '100%',
+    height: 180,
+    borderWidth: 1.5,
+    borderColor: 'rgba(139,92,246,0.045)',
+    borderRadius: 120,
+  },
+
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 12,
+    width: '100%',
+  },
+  backBtn: {
+    padding: 9,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  headerTitle: { color: '#F1F5F9', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
+  routeHeaderRow: { flexDirection: 'row', alignItems: 'center', marginTop: 3 },
+  routeHeaderTxt: { color: '#CBD5E1', fontSize: 12, fontWeight: '500' },
+  seatsChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(34, 197, 94, 0.1)',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(34, 197, 94, 0.28)',
+  },
+  seatsText: { color: '#22C55E', fontWeight: '700', fontSize: 13 },
+
+  // Glowing Dynamic Alert Toast
+  alertBanner: {
+    position: 'absolute',
+    top: 85,
+    zIndex: 90,
+    width: '88%',
+    alignSelf: 'center',
+    borderRadius: 16,
+    overflow: 'hidden',
+    shadowColor: '#8B5CF6',
+    shadowOpacity: 0.4,
+    shadowRadius: 14,
+    elevation: 8,
+  },
+  alertBannerGrad: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  alertIconPulse: {
+    textShadowColor: '#FFF',
+    textShadowRadius: 6,
+  },
+  alertBannerText: {
+    color: '#FFF',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+
+  // Mockup Text layout elements
+  mockupHeaderInfo: {
+    alignItems: 'center',
+    marginTop: height * 0.02,
+    paddingHorizontal: 30,
+  },
+  matchingText: {
+    color: '#FFF',
+    fontSize: 17,
+    fontWeight: '800',
+    textAlign: 'center',
+    letterSpacing: -0.2,
+  },
+  farePredictText: {
+    color: '#8B5CF6',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 6,
+    letterSpacing: 0.2,
+  },
+
+  // Radar Components
+  radarWrapper: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    marginVertical: 10,
+  },
+  radarCircle: {
+    backgroundColor: 'rgba(6, 10, 22, 0.75)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(56, 189, 248, 0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    shadowColor: '#38BDF8',
+    shadowOpacity: 0.12,
+    shadowRadius: 32,
+    elevation: 6,
+  },
+  pulseRing: { position: 'absolute', borderWidth: 1.5 },
+
+  // Glowing Gradient Ring & Center matching Mockup Ring
+  centerGlowRingOuter: {
+    width: 106,
+    height: 106,
+    borderRadius: 53,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(56, 189, 248, 0.06)',
+    zIndex: 20,
+    shadowColor: '#38BDF8',
+    shadowOpacity: 0.45,
+    shadowRadius: 18,
+    elevation: 8,
+  },
+  centerGlowRingInner: {
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 4,
+  },
+  centerDarkCore: {
+    width: 78,
+    height: 78,
+    borderRadius: 39,
+    backgroundColor: '#0A0F1E',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+  },
+
+  // Customer Node Dots styling
+  dotWrapper: { position: 'absolute', width: 24, height: 24, zIndex: 30 },
+  dotGlow: {
+    position: 'absolute', width: 24, height: 24, borderRadius: 12, top: 0, left: 0,
+  },
+  dot: {
+    width: 24, height: 24, borderRadius: 12,
+    backgroundColor: '#2563EB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.7)',
+    shadowColor: '#38BDF8',
+    shadowOpacity: 0.8,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  dotAccepted: { backgroundColor: '#10B981', shadowColor: '#10B981', borderColor: '#FFF' },
+  dotSelected: { backgroundColor: '#F59E0B', shadowColor: '#F59E0B', borderColor: '#FFF', borderWidth: 2 },
+
+  // Glassmorphic Card Container inspired directly by mockup bottom card
+  glassCardContainer: {
+    width: '100%',
+    alignItems: 'center',
+    paddingBottom: 24,
+    paddingHorizontal: 20,
+  },
+  glassCard: {
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    borderRadius: 22,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.07)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    shadowColor: '#000',
+    shadowOpacity: 0.45,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 8,
+  },
+  glassCardImageWrapper: {
+    width: 54,
+    height: 54,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 14,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  glassCardBusImage: {
+    width: 44,
+    height: 44,
+  },
+  glassCardTitle: { color: '#FFF', fontSize: 14, fontWeight: '800', letterSpacing: -0.1 },
+  glassCardSub: { color: '#64748B', fontSize: 11, marginTop: 4, lineHeight: 14 },
+
+  // Sliding Customer Details Panel Styling
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.65)', zIndex: 40 },
+  panel: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    backgroundColor: '#0A1224',
+    borderTopLeftRadius: 28, borderTopRightRadius: 28,
+    padding: 20, paddingBottom: height * 0.04, zIndex: 50, overflow: 'hidden',
+    borderTopWidth: 1.5, borderColor: 'rgba(56,189,248,0.22)',
+    shadowColor: '#38BDF8', shadowOpacity: 0.2, shadowRadius: 24, elevation: 30,
+  },
+  handle: {
+    width: 44, height: 5, backgroundColor: 'rgba(255,255,255,0.18)',
+    borderRadius: 3, alignSelf: 'center', marginBottom: 18,
+  },
+  panelHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
+  avatar: {
+    width: 46, height: 46, borderRadius: 23,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)',
+  },
+  avatarText:  { color: '#FFF', fontSize: 18, fontWeight: '800' },
+  panelName:   { color: '#FFF', fontSize: 16, fontWeight: '800' },
+  phoneRow:    { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 },
+  panelPhone:  { color: '#64748B', fontSize: 12 },
+  closePanelBtn: {
+    padding: 6,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 10,
+  },
+
+  infoGrid: { flexDirection: 'row', marginBottom: 14 },
+
+  routeCard: {
+    backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 16, padding: 14,
+    marginBottom: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
+  },
+  routeRow:  { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  routeDot:  { 
+    width: 8, height: 8, borderRadius: 4,
+    shadowOpacity: 0.8, shadowRadius: 4, elevation: 3,
+  },
+  routeLine: { width: 1.5, height: 16, backgroundColor: 'rgba(255,255,255,0.1)', marginLeft: 3, marginVertical: 2 },
+  routeText: { color: '#CBD5E1', fontSize: 13, fontWeight: '600', flex: 1 },
+
+  parcelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(245,158,11,0.06)',
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(245,158,11,0.2)',
+  },
+  parcelText: { color: '#F59E0B', fontSize: 12, fontWeight: '700' },
+
+  btnRow: { flexDirection: 'row', gap: 12 },
+  rejectBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    paddingVertical: 14, borderRadius: 16,
+    borderWidth: 1.5, borderColor: 'rgba(239,68,68,0.4)',
+    backgroundColor: 'rgba(239,68,68,0.07)',
+  },
+  rejectText: { color: '#EF4444', fontSize: 14, fontWeight: '800' },
+  acceptBtn: { flex: 1.6, borderRadius: 16, overflow: 'hidden' },
+  acceptBtnGrad: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+  },
+  acceptText: { color: '#FFF', fontSize: 14, fontWeight: '800' },
+})

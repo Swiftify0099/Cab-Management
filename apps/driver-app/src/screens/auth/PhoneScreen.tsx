@@ -17,9 +17,7 @@ import {
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
-import axios from 'axios'
-
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:80/api/v1'
+import { authApi } from '../../api/client'
 
 export default function DriverPhoneScreen() {
   const [phone, setPhone] = useState('')
@@ -49,7 +47,7 @@ export default function DriverPhoneScreen() {
     const fullPhone = `+91${cleaned}`
 
     try {
-      await axios.post(`${BASE_URL}/auth/otp/send`, { phone: fullPhone })
+      await authApi.sendOtp(fullPhone)
       router.push({ pathname: '/auth/otp', params: { phone: fullPhone } })
     } catch (e: any) {
       const msg = e?.response?.data?.detail || 'Failed to send OTP'

@@ -32,7 +32,7 @@ const DOTS_ANIMATION = ['●○○', '○●○', '○○●', '○●○']
 export function WaitingScreen() {
   const { bookingId } = useParams<{ bookingId: string }>()
   const navigate = useNavigate()
-  const { on, off, connected } = useSocket()
+  const { on, off, connected, joinTrip } = useSocket()
   const [state, setState] = useState<MatchState>('searching')
   const [driver, setDriver] = useState<DriverInfo | null>(null)
   const [elapsed, setElapsed] = useState(0)
@@ -66,7 +66,9 @@ export function WaitingScreen() {
   }, [])
 
   useEffect(() => {
-    if (!connected) return
+    if (!connected || !bookingId) return
+
+    joinTrip(bookingId)
 
     const handleAccepted = (data: any) => {
       if (data.booking_id !== bookingId) return
@@ -90,7 +92,7 @@ export function WaitingScreen() {
       off('DRIVER_ACCEPTED', handleAccepted)
       off('MATCHING_FAILED', handleFailed)
     }
-  }, [connected, bookingId, on, off])
+  }, [connected, bookingId, on, off, joinTrip])
 
   const handleCancel = async () => {
     try {

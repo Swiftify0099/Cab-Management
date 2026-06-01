@@ -319,7 +319,11 @@ export function BookCabPage() {
                   <motion.div key={fare.vehicle_type} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: i * 0.06 }}
                     className="card p-5 cursor-pointer hover:border-blue-400 hover:shadow-md transition-all group"
-                    onClick={() => toast.success('Driver matching coming in Phase 3+!')}
+                    onClick={() => {
+                      // Generate a temporary booking ID until backend is fully wired
+                      const tempBookingId = 'req_' + Math.random().toString(36).substring(2, 9);
+                      navigate(`/booking/${tempBookingId}/waiting`)
+                    }}
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-4">

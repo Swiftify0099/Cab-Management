@@ -1,15 +1,18 @@
 /**
  * OTP Phone Entry Screen — Customer App
- * StyleSheet version (NativeWind removed — caused Metro 97% hang on dynamic classNames)
+ * Pixel-perfect UI from stitch: mobile_otp_login
+ * All auth logic preserved.
  */
 import React, { useState, useRef } from 'react'
 import {
   View, Text, TextInput, TouchableOpacity,
   KeyboardAvoidingView, Platform, ActivityIndicator,
-  Animated, Alert, ScrollView, StyleSheet,
+  Animated, StyleSheet, StatusBar,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
+import { Feather, FontAwesome5 } from '@expo/vector-icons'
+import { LinearGradient } from 'expo-linear-gradient'
 import { authApi } from '../../api/client'
 
 export default function PhoneScreen() {
@@ -50,115 +53,167 @@ export default function PhoneScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* Header */}
-          <View style={styles.header}>
-            <View style={styles.iconBox}>
-              <Text style={{ fontSize: 48 }}>🚗</Text>
-            </View>
-            <Text style={styles.title}>CabBooking</Text>
-            <Text style={styles.subtitle}>Enter your mobile number to continue</Text>
-          </View>
+    <View style={styles.root}>
+      <StatusBar barStyle="light-content" />
 
-          {/* Phone Input */}
-          <Animated.View style={[styles.inputWrapper, { transform: [{ translateX: shakeAnim }] }]}>
-            <Text style={styles.label}>Mobile Number</Text>
-            <View style={[styles.inputRow, error ? styles.inputRowError : styles.inputRowNormal]}>
-              <View style={styles.countryCode}>
-                <Text style={{ fontSize: 18 }}>🇮🇳</Text>
-                <Text style={styles.countryText}>+91</Text>
+      {/* Abstract gradient background */}
+      <LinearGradient colors={['#0A0D1A', '#0F172A', '#1E1B4B']} style={StyleSheet.absoluteFill} />
+
+      {/* Glowing blurs */}
+      <View style={[styles.glow, { top: '20%', left: -60, backgroundColor: 'rgba(6,182,212,0.18)' }]} />
+      <View style={[styles.glow, { bottom: '25%', right: -60, backgroundColor: 'rgba(168,85,247,0.18)' }]} />
+
+      <SafeAreaView style={styles.safeArea}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <View style={styles.content}>
+
+            {/* Logo */}
+            <View style={styles.logoRow}>
+              <View style={styles.logoLetters}>
+                <Text style={styles.logoI}>i</Text>
+                <Text style={styles.logoM}>M</Text>
               </View>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter mobile number"
-                placeholderTextColor="#94A3B8"
-                keyboardType="phone-pad"
-                value={phone}
-                onChangeText={(t) => {
-                  setError('')
-                  setPhone(t.replace(/\D/g, '').slice(0, 10))
-                }}
-                maxLength={10}
-                autoFocus
-                returnKeyType="done"
-                onSubmitEditing={handleSendOtp}
-              />
-              {phone.length === 10 && <Text style={{ color: '#22C55E', fontSize: 20 }}>✓</Text>}
+              <View style={styles.logoText}>
+                <Text style={styles.logoLine}>Intercity</Text>
+                <Text style={styles.logoLine}>Mobility</Text>
+              </View>
             </View>
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
-          </Animated.View>
 
-          <Text style={styles.otpHint}>
-            We'll send a 6-digit OTP to verify your number.{'\n'}Standard SMS rates may apply.
-          </Text>
+            {/* Welcome Text */}
+            <Text style={styles.welcomeTitle}>
+              Welcome Back!{'\n'}Log in to continue{'\n'}your journey.
+            </Text>
 
-          {/* Send OTP Button */}
-          <TouchableOpacity
-            onPress={handleSendOtp}
-            disabled={loading || phone.length < 10}
-            activeOpacity={0.85}
-            style={[styles.button, phone.length === 10 && !loading ? styles.buttonActive : styles.buttonDisabled]}
-          >
-            {loading ? (
-              <ActivityIndicator color="white" />
-            ) : (
-              <Text style={[styles.buttonText, { color: phone.length === 10 ? '#FFFFFF' : '#94A3B8' }]}>
-                Send OTP →
-              </Text>
-            )}
-          </TouchableOpacity>
+            {/* Phone Input */}
+            <Animated.View style={[styles.inputWrap, { transform: [{ translateX: shakeAnim }] }]}>
+              <View style={[styles.inputBox, error ? styles.inputBoxError : null]}>
+                <Feather name="phone" size={22} color="#94A3B8" />
+                <View style={styles.inputDivider} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter Mobile Number"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="phone-pad"
+                  value={phone}
+                  onChangeText={(t) => {
+                    setError('')
+                    setPhone(t.replace(/\D/g, '').slice(0, 10))
+                  }}
+                  maxLength={10}
+                  autoFocus
+                  returnKeyType="done"
+                  onSubmitEditing={handleSendOtp}
+                />
+                {phone.length === 10 && <Text style={{ color: '#22C55E', fontSize: 18 }}>✓</Text>}
+              </View>
+              {error ? <Text style={styles.errorText}>{error}</Text> : null}
+            </Animated.View>
 
-          <Text style={styles.terms}>
-            By continuing, you agree to our{' '}
-            <Text style={{ color: '#3B82F6' }}>Terms of Service</Text>
-            {' '}and{' '}
-            <Text style={{ color: '#3B82F6' }}>Privacy Policy</Text>
-          </Text>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+            {/* Get OTP Button */}
+            <TouchableOpacity
+              style={[styles.otpBtn, (loading || phone.length < 10) && { opacity: 0.7 }]}
+              onPress={handleSendOtp}
+              disabled={loading || phone.length < 10}
+              activeOpacity={0.85}
+            >
+              <LinearGradient
+                colors={['#0EA5E9', '#A855F7']}
+                start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                style={styles.otpGradient}
+              >
+                {loading ? (
+                  <ActivityIndicator color="white" />
+                ) : (
+                  <Text style={styles.otpBtnText}>Get OTP</Text>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
+
+            {/* Social Login */}
+            <Text style={styles.orText}>Or continue with social media</Text>
+
+            <View style={styles.socialRow}>
+              <TouchableOpacity style={[styles.socialBtn, { backgroundColor: '#FFFFFF' }]}>
+                <FontAwesome5 name="apple" size={28} color="black" />
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.socialBtn, { backgroundColor: '#FFFFFF' }]}>
+                <Text style={styles.googleG}>G</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.socialBtn, { backgroundColor: '#1877F2', borderColor: '#FFFFFF', borderWidth: 2 }]}>
+                <FontAwesome5 name="facebook-f" size={26} color="white" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Terms */}
+            <Text style={styles.terms}>
+              By continuing, you agree to our{' '}
+              <Text style={{ color: '#FFFFFF', fontWeight: '500' }}>Terms and Privacy Policy</Text>.
+            </Text>
+          </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </View>
   )
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#FFFFFF' },
-  scroll: { flex: 1, paddingHorizontal: 24 },
-  header: { alignItems: 'center', marginBottom: 40 },
-  iconBox: {
-    width: 96, height: 96, borderRadius: 24, backgroundColor: '#2563EB',
-    alignItems: 'center', justifyContent: 'center', marginBottom: 24,
-    shadowColor: '#2563EB', shadowOpacity: 0.3, shadowRadius: 12, elevation: 6,
+  root: { flex: 1, backgroundColor: '#0F172A' },
+  safeArea: { flex: 1 },
+  glow: {
+    position: 'absolute', width: 280, height: 280, borderRadius: 140,
+    shadowColor: 'transparent',
   },
-  title: { fontSize: 28, fontWeight: '800', color: '#0F172A', textAlign: 'center' },
-  subtitle: { fontSize: 15, color: '#64748B', textAlign: 'center', marginTop: 8 },
-  inputWrapper: { marginBottom: 16 },
-  label: { fontSize: 14, fontWeight: '600', color: '#334155', marginBottom: 8 },
-  inputRow: {
-    flexDirection: 'row', alignItems: 'center', borderWidth: 2,
-    borderRadius: 16, paddingHorizontal: 16, height: 56,
+  content: {
+    flex: 1, paddingHorizontal: 24, paddingTop: 60,
+    alignItems: 'center', justifyContent: 'center',
   },
-  inputRowNormal: { borderColor: '#E2E8F0', backgroundColor: '#F8FAFC' },
-  inputRowError: { borderColor: '#F87171', backgroundColor: '#FEF2F2' },
-  countryCode: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingRight: 12, borderRightWidth: 1, borderRightColor: '#CBD5E1',
+
+  // Logo
+  logoRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 56 },
+  logoLetters: { flexDirection: 'row', alignItems: 'flex-end' },
+  logoI: { color: '#FFFFFF', fontSize: 46, fontWeight: '900', letterSpacing: -2 },
+  logoM: { color: '#3B82F6', fontSize: 46, fontWeight: '900', letterSpacing: -2, marginLeft: -4 },
+  logoText: { marginLeft: 12, marginTop: 4 },
+  logoLine: { color: '#FFFFFF', fontSize: 19, fontWeight: '700', lineHeight: 22 },
+
+  // Welcome
+  welcomeTitle: {
+    color: '#FFFFFF', fontSize: 31, fontWeight: '700',
+    textAlign: 'center', lineHeight: 40, marginBottom: 40,
   },
-  countryText: { fontSize: 16, fontWeight: '600', color: '#334155' },
-  input: { flex: 1, paddingLeft: 12, fontSize: 16, fontWeight: '500', color: '#0F172A' },
-  errorText: { color: '#EF4444', fontSize: 14, marginTop: 8, marginLeft: 4 },
-  otpHint: { fontSize: 12, color: '#94A3B8', textAlign: 'center', marginBottom: 24, lineHeight: 18 },
-  button: { height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  buttonActive: {
-    backgroundColor: '#2563EB',
-    shadowColor: '#2563EB', shadowOpacity: 0.35, shadowRadius: 10, elevation: 4,
+
+  // Input
+  inputWrap: { width: '100%', marginBottom: 20 },
+  inputBox: {
+    width: '100%', height: 60, flexDirection: 'row', alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 20,
+    paddingHorizontal: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
   },
-  buttonDisabled: { backgroundColor: '#E2E8F0' },
-  buttonText: { fontSize: 16, fontWeight: '700' },
-  terms: { fontSize: 12, textAlign: 'center', color: '#94A3B8', marginTop: 24, paddingHorizontal: 16 },
+  inputBoxError: { borderColor: '#F87171' },
+  inputDivider: { width: 1, height: 24, backgroundColor: '#4B5563', marginHorizontal: 12 },
+  input: { flex: 1, color: '#FFFFFF', fontSize: 17 },
+  errorText: { color: '#F87171', fontSize: 13, marginTop: 8, marginLeft: 4 },
+
+  // OTP Button
+  otpBtn: {
+    width: '100%', borderRadius: 50, overflow: 'hidden', marginBottom: 36,
+    shadowColor: '#A855F7', shadowOpacity: 0.35, shadowRadius: 12, elevation: 6,
+  },
+  otpGradient: { height: 60, alignItems: 'center', justifyContent: 'center' },
+  otpBtnText: { color: '#FFFFFF', fontSize: 20, fontWeight: '700' },
+
+  orText: { color: '#9CA3AF', fontSize: 15, marginBottom: 24 },
+
+  socialRow: { flexDirection: 'row', gap: 20, marginBottom: 'auto' as any },
+  socialBtn: {
+    width: 64, height: 64, borderRadius: 32,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 8, elevation: 5,
+  },
+  googleG: { color: '#3B82F6', fontSize: 28, fontWeight: '900' },
+
+  terms: {
+    color: '#6B7280', textAlign: 'center', fontSize: 13, lineHeight: 20,
+    paddingHorizontal: 20, marginTop: 32,
+  },
 })

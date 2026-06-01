@@ -79,6 +79,9 @@ class BaseAppSettings(BaseSettings):
         "http://localhost:3000",
         "http://localhost:5173",
         "http://localhost:5174",
+        "http://172.28.162.223:8001",
+        "http://172.28.162.223:3000",
+        "http://172.28.162.223:5173",
     ]
 
     # Rate Limiting

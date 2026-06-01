@@ -47,11 +47,19 @@
       "expo-router",
       "expo-secure-store",
       "expo-font",
-      "expo-status-bar"
+      "expo-status-bar",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "CabBooking needs your location to track your trip and show customers your position in real-time.",
+          "locationAlwaysPermission": "Background location lets us track your trip even when the app is in the background.",
+          "locationWhenInUsePermission": "CabBooking needs your location to match you with nearby passengers."
+        }
+      ]
     ],
     "extra": {
-      "apiUrl": "http://localhost:80/api/v1",
-      "wsUrl": "http://localhost:8010"
+      "apiUrl": "http://172.28.162.223:8001/api/v1",
+      "wsUrl": "http://172.28.162.223:8010"
     }
   }
 }

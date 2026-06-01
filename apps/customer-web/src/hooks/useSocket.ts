@@ -30,7 +30,7 @@ export interface UseSocketReturn {
 
 export function useSocket(): UseSocketReturn {
   const { accessToken } = useAuthStore()
-  const socketRef = useRef<Socket | null>(null)
+  const [socketObj, setSocketObj] = useState<Socket | null>(null)
   const [connected, setConnected] = useState(false)
 
   useEffect(() => {
@@ -45,6 +45,7 @@ export function useSocket(): UseSocketReturn {
       reconnectionAttempts: 10,
     })
 
+    setSocketObj(socket)
     socketRef.current = socket
 
     socket.on('connect', () => {
@@ -64,6 +65,7 @@ export function useSocket(): UseSocketReturn {
     return () => {
       socket.disconnect()
       socketRef.current = null
+      setSocketObj(null)
       setConnected(false)
     }
   }, [accessToken])
@@ -89,7 +91,7 @@ export function useSocket(): UseSocketReturn {
   }, [])
 
   return {
-    socket: socketRef.current,
+    socket: socketObj,
     connected,
     joinTrip,
     leaveTrip,

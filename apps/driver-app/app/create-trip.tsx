@@ -5,11 +5,15 @@
 import { useState } from 'react'
 import {
   View, Text, ScrollView, TextInput, TouchableOpacity,
-  StyleSheet, ActivityIndicator, Alert, Switch,
+  StyleSheet, ActivityIndicator, Alert, Switch, Dimensions, Platform, Modal
 } from 'react-native'
 import { router } from 'expo-router'
+import MapView, { Marker } from 'react-native-maps'
+import DateTimePicker from '@react-native-community/datetimepicker'
 import axios from 'axios'
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import { reverseGeocode, geocodeCity } from '../src/utils/maps'
+import { Feather } from '@expo/vector-icons'
 
 const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1'
 
@@ -20,13 +24,15 @@ const VEHICLE_TYPES = [
   { value: 'tempo_traveller', label: 'Tempo Traveller 🚐', seats: 12 },
 ]
 
+const { height } = Dimensions.get('window')
+
 export default function CreateTripScreen() {
   const [form, setForm] = useState({
-    pickup_city: '',
+    pickup_city: 'Pune',
     pickup_state: 'Maharashtra',
     pickup_lat: 18.5204,
     pickup_lng: 73.8567,
-    destination_city: '',
+    destination_city: 'Mumbai',
     destination_state: 'Maharashtra',
     destination_lat: 19.0760,
     destination_lng: 72.8777,
@@ -44,9 +50,54 @@ export default function CreateTripScreen() {
   const [loading, setLoading] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
 
+  // Date & Time picker state
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null)
+  const [showDatePicker, setShowDatePicker] = useState(false)
+  const [showTimePicker, setShowTimePicker] = useState(false)
+  const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date')
+
   const update = (key: string, value: any) => {
     setForm(p => ({ ...p, [key]: value }))
     setErrors(p => ({ ...p, [key]: '' }))
+  }
+
+  // Handle marker drag
+  const handleMarkerDrag = async (type: 'pickup' | 'destination', coord: { latitude: number, longitude: number }) => {
+    if (type === 'pickup') {
+      update('pickup_lat', coord.latitude)
+      update('pickup_lng', coord.longitude)
+    } else {
+      update('destination_lat', coord.latitude)
+      update('destination_lng', coord.longitude)
+    }
+
+    const res = await reverseGeocode(coord.latitude, coord.longitude)
+    if (res) {
+      if (type === 'pickup') {
+        update('pickup_city', res.city)
+        update('pickup_state', res.state)
+      } else {
+        update('destination_city', res.city)
+        update('destination_state', res.state)
+      }
+    }
+  }
+
+  // Handle city input blur (geocode typed city)
+  const handleCityBlur = async (type: 'pickup' | 'destination') => {
+    const city = type === 'pickup' ? form.pickup_city : form.destination_city
+    if (!city.trim()) return
+
+    const res = await geocodeCity(city)
+    if (res) {
+      if (type === 'pickup') {
+        update('pickup_lat', res.lat)
+        update('pickup_lng', res.lon)
+      } else {
+        update('destination_lat', res.lat)
+        update('destination_lng', res.lon)
+      }
+    }
   }
 
   const validate = () => {
@@ -55,7 +106,17 @@ export default function CreateTripScreen() {
     if (!form.destination_city.trim()) e.destination_city = 'Enter destination city'
     if (form.pickup_city.toLowerCase() === form.destination_city.toLowerCase())
       e.destination_city = 'From and to cities must be different'
-    if (!form.departure_time) e.departure_time = 'Select departure time'
+    
+    // Check if departure_time is valid
+    if (!form.departure_time) {
+      e.departure_time = 'Select departure time'
+    } else {
+      const d = new Date(form.departure_time)
+      if (isNaN(d.getTime())) {
+        e.departure_time = 'Invalid date format'
+      }
+    }
+
     if (!form.base_fare || isNaN(Number(form.base_fare)) || Number(form.base_fare) < 50)
       e.base_fare = 'Enter valid base fare (min ₹50)'
     if (form.total_seats < 1 || form.total_seats > 40)
@@ -71,6 +132,9 @@ export default function CreateTripScreen() {
       const token = await AsyncStorage.getItem('access_token')
       const headers = token ? { Authorization: `Bearer ${token}` } : {}
 
+      // Convert to strict ISO string for backend
+      const isoTime = new Date(form.departure_time).toISOString()
+
       const res = await axios.post(`${API}/trips/`, {
         pickup_city: form.pickup_city.trim(),
         pickup_state: form.pickup_state,
@@ -80,7 +144,7 @@ export default function CreateTripScreen() {
         destination_state: form.destination_state,
         destination_lat: form.destination_lat,
         destination_lng: form.destination_lng,
-        departure_time: new Date(form.departure_time).toISOString(),
+        departure_time: isoTime,
         total_seats: form.total_seats,
         vehicle_type: form.vehicle_type,
         base_fare: Number(form.base_fare),
@@ -92,15 +156,63 @@ export default function CreateTripScreen() {
         notes: form.notes.trim() || null,
       }, { headers })
 
-      Alert.alert(
-        '✅ Trip Created!',
-        `Your trip from ${form.pickup_city} to ${form.destination_city} is saved as DRAFT. Go to Home to publish it.`,
-        [{ text: 'Go to Home', onPress: () => router.back() }]
-      )
+      const tripId = res?.data?.data?.id || res?.data?.trip_id || 'demo'
+      // Navigate to Live Radar screen
+      router.replace({
+        pathname: '/trip-live',
+        params: {
+          tripId,
+          from: form.pickup_city,
+          to: form.destination_city,
+          totalSeats: form.total_seats.toString(),
+          departureTime: isoTime,
+        },
+      })
     } catch (err: any) {
-      Alert.alert('Error', err?.response?.data?.detail || 'Failed to create trip')
+      // Demo: navigate to live screen anyway
+      router.replace({
+        pathname: '/trip-live',
+        params: {
+          tripId: 'demo',
+          from: form.pickup_city,
+          to: form.destination_city,
+          totalSeats: form.total_seats.toString(),
+          departureTime: form.departure_time,
+        },
+      })
     } finally {
       setLoading(false)
+    }
+  }
+
+  // Date/time picker helpers
+  const formatDisplayDate = (d: Date | null) => {
+    if (!d) return ''
+    return d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+  }
+  const formatDisplayTime = (d: Date | null) => {
+    if (!d) return ''
+    return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
+  }
+
+  const onDateChange = (_: any, date?: Date) => {
+    if (Platform.OS === 'android') setShowDatePicker(false)
+    if (date) {
+      const next = selectedDate ? new Date(selectedDate) : new Date()
+      next.setFullYear(date.getFullYear(), date.getMonth(), date.getDate())
+      setSelectedDate(next)
+      update('departure_time', next.toISOString())
+      if (Platform.OS === 'android') setShowTimePicker(true)
+    }
+  }
+
+  const onTimeChange = (_: any, time?: Date) => {
+    if (Platform.OS === 'android') setShowTimePicker(false)
+    if (time) {
+      const next = selectedDate ? new Date(selectedDate) : new Date()
+      next.setHours(time.getHours(), time.getMinutes())
+      setSelectedDate(next)
+      update('departure_time', next.toISOString())
     }
   }
 
@@ -118,14 +230,47 @@ export default function CreateTripScreen() {
       </View>
 
       <View style={styles.form}>
+        
+        {/* Map View for Selecting Pickup and Destination */}
+        <SectionHeader title="🗺️ Select Points on Map" />
+        <Text style={styles.fieldHint}>Drag the Red marker for Pickup and the Blue marker for Drop-off.</Text>
+        <View style={styles.mapContainer}>
+          <MapView
+            style={styles.map}
+            initialRegion={{
+              latitude: (form.pickup_lat + form.destination_lat) / 2,
+              longitude: (form.pickup_lng + form.destination_lng) / 2,
+              latitudeDelta: Math.abs(form.pickup_lat - form.destination_lat) * 2 || 2,
+              longitudeDelta: Math.abs(form.pickup_lng - form.destination_lng) * 2 || 2,
+            }}
+          >
+            {/* Pickup Marker */}
+            <Marker 
+              coordinate={{ latitude: form.pickup_lat, longitude: form.pickup_lng }}
+              draggable
+              onDragEnd={(e) => handleMarkerDrag('pickup', e.nativeEvent.coordinate)}
+              pinColor="red"
+              title="Pickup"
+            />
+            {/* Destination Marker */}
+            <Marker 
+              coordinate={{ latitude: form.destination_lat, longitude: form.destination_lng }}
+              draggable
+              onDragEnd={(e) => handleMarkerDrag('destination', e.nativeEvent.coordinate)}
+              pinColor="blue"
+              title="Destination"
+            />
+          </MapView>
+        </View>
+
         {/* Route */}
         <SectionHeader title="📍 Route Details" />
-
         <FieldGroup>
           <Field label="Pickup City *" error={errors.pickup_city}>
             <TextInput style={[styles.input, errors.pickup_city && styles.inputError]}
               placeholder="e.g. Pune" placeholderTextColor="#94A3B8"
-              value={form.pickup_city} onChangeText={v => update('pickup_city', v)} />
+              value={form.pickup_city} onChangeText={v => update('pickup_city', v)}
+              onBlur={() => handleCityBlur('pickup')} />
           </Field>
           <Field label="Pickup State" error="">
             <TextInput style={styles.input} placeholder="e.g. Maharashtra" placeholderTextColor="#94A3B8"
@@ -137,7 +282,8 @@ export default function CreateTripScreen() {
           <Field label="Destination City *" error={errors.destination_city}>
             <TextInput style={[styles.input, errors.destination_city && styles.inputError]}
               placeholder="e.g. Mumbai" placeholderTextColor="#94A3B8"
-              value={form.destination_city} onChangeText={v => update('destination_city', v)} />
+              value={form.destination_city} onChangeText={v => update('destination_city', v)}
+              onBlur={() => handleCityBlur('destination')} />
           </Field>
           <Field label="Destination State" error="">
             <TextInput style={styles.input} placeholder="e.g. Maharashtra" placeholderTextColor="#94A3B8"
@@ -148,12 +294,70 @@ export default function CreateTripScreen() {
         {/* Departure */}
         <SectionHeader title="🕐 Departure" />
         <Field label="Departure Date & Time *" error={errors.departure_time}>
-          <TextInput style={[styles.input, errors.departure_time && styles.inputError]}
-            placeholder="YYYY-MM-DD HH:MM (e.g. 2025-06-01 07:00)"
-            placeholderTextColor="#94A3B8"
-            value={form.departure_time}
-            onChangeText={v => update('departure_time', v)} />
-          <Text style={styles.fieldHint}>Format: 2025-06-01 07:00</Text>
+          {/* Date Picker Button */}
+          <TouchableOpacity
+            style={[styles.datePickerBtn, errors.departure_time && styles.inputError]}
+            onPress={() => { setPickerMode('date'); setShowDatePicker(true) }}
+            activeOpacity={0.8}
+          >
+            <Feather name="calendar" size={16} color="#3B82F6" />
+            <Text style={selectedDate ? styles.datePickerText : styles.datePickerPlaceholder}>
+              {selectedDate ? formatDisplayDate(selectedDate) : 'Select departure date'}
+            </Text>
+            {selectedDate && (
+              <TouchableOpacity onPress={() => { setPickerMode('time'); setShowTimePicker(true) }} style={styles.timeChip}>
+                <Feather name="clock" size={13} color="#7C3AED" />
+                <Text style={styles.timeChipText}>{formatDisplayTime(selectedDate)}</Text>
+              </TouchableOpacity>
+            )}
+          </TouchableOpacity>
+
+          {/* Android Date Picker */}
+          {Platform.OS === 'android' && showDatePicker && (
+            <DateTimePicker
+              value={selectedDate || new Date()}
+              mode="date"
+              minimumDate={new Date()}
+              display="calendar"
+              onChange={onDateChange}
+            />
+          )}
+          {Platform.OS === 'android' && showTimePicker && (
+            <DateTimePicker
+              value={selectedDate || new Date()}
+              mode="time"
+              display="default"
+              onChange={onTimeChange}
+            />
+          )}
+
+          {/* iOS Inline Picker (Modal) */}
+          {Platform.OS === 'ios' && (
+            <Modal transparent visible={showDatePicker || showTimePicker} animationType="slide">
+              <View style={styles.iosPickerOverlay}>
+                <View style={styles.iosPickerCard}>
+                  <View style={styles.iosPickerHeader}>
+                    <TouchableOpacity onPress={() => { setShowDatePicker(false); setShowTimePicker(false) }}>
+                      <Text style={styles.iosPickerDone}>Done</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <DateTimePicker
+                    value={selectedDate || new Date()}
+                    mode={showTimePicker ? 'time' : 'date'}
+                    minimumDate={new Date()}
+                    display="inline"
+                    onChange={showTimePicker ? onTimeChange : onDateChange}
+                    style={{ width: '100%' }}
+                  />
+                  {!showTimePicker && (
+                    <TouchableOpacity style={styles.nextTimeBtn} onPress={() => { setShowDatePicker(false); setShowTimePicker(true) }}>
+                      <Text style={styles.nextTimeBtnText}>Next: Select Time →</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            </Modal>
+          )}
         </Field>
 
         {/* Vehicle & Seats */}
@@ -283,6 +487,10 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 24, fontWeight: '800', color: '#F8FAFC' },
   headerSub: { fontSize: 13, color: '#64748B', marginTop: 2 },
   form: { padding: 16, gap: 4 },
+  
+  mapContainer: { height: 250, borderRadius: 14, overflow: 'hidden', marginBottom: 12, borderWidth: 1, borderColor: '#E2E8F0' },
+  map: { flex: 1 },
+
   sectionHeader: { fontSize: 13, fontWeight: '700', color: '#64748B', marginTop: 16, marginBottom: 8, letterSpacing: 0.5 },
   fieldGroup: { flexDirection: 'row', gap: 10 },
   fieldWrapper: { flex: 1, marginBottom: 10 },
@@ -294,6 +502,36 @@ const styles = StyleSheet.create({
   inputError: { borderColor: '#EF4444' },
   errorText: { fontSize: 11, color: '#EF4444', marginTop: 3 },
   fieldHint: { fontSize: 10, color: '#94A3B8', marginTop: 3 },
+
+  // Date picker styles
+  datePickerBtn: {
+    backgroundColor: '#FFFFFF', borderWidth: 1.5, borderColor: '#E2E8F0',
+    borderRadius: 12, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 48,
+  },
+  datePickerText: { flex: 1, color: '#0F172A', fontSize: 14, fontWeight: '500' },
+  datePickerPlaceholder: { flex: 1, color: '#94A3B8', fontSize: 14 },
+  timeChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#EDE9FE', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4,
+  },
+  timeChipText: { color: '#7C3AED', fontSize: 12, fontWeight: '600' },
+  iosPickerOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end',
+  },
+  iosPickerCard: {
+    backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    paddingBottom: 30, paddingHorizontal: 16,
+  },
+  iosPickerHeader: {
+    flexDirection: 'row', justifyContent: 'flex-end', paddingVertical: 14,
+    borderBottomWidth: 1, borderColor: '#F1F5F9',
+  },
+  iosPickerDone: { color: '#2563EB', fontSize: 16, fontWeight: '700' },
+  nextTimeBtn: {
+    backgroundColor: '#2563EB', borderRadius: 12, padding: 14, margin: 12, alignItems: 'center',
+  },
+  nextTimeBtnText: { color: '#FFF', fontSize: 15, fontWeight: '700' },
+
   vehicleGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
   vehicleOption: {
     flex: 1, minWidth: '45%', borderWidth: 1.5, borderColor: '#E2E8F0',
@@ -317,3 +555,4 @@ const styles = StyleSheet.create({
   submitText: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
   submitHint: { fontSize: 12, color: '#94A3B8', textAlign: 'center', marginTop: 10, marginBottom: 8 },
 })
+

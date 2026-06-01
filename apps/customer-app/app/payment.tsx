@@ -1,15 +1,17 @@
 /**
- * Payment Screen — Customer App (Phase 6)
- * Razorpay WebView-based checkout with coupon + wallet toggle.
+ * Payment Screen — Customer App
+ * Pixel-perfect UI from stitch: detailed_trip_fare_breakdown
+ * All Razorpay/wallet/coupon logic preserved.
  */
 import { useState, useEffect } from 'react'
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  ScrollView, Alert, Switch, TextInput, ActivityIndicator,
+  ScrollView, Alert, Switch, TextInput, ActivityIndicator, StatusBar,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router, useLocalSearchParams } from 'expo-router'
 import * as WebBrowser from 'expo-web-browser'
+import { Feather, MaterialCommunityIcons } from '@expo/vector-icons'
 import axios from 'axios'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 
@@ -138,6 +140,7 @@ export default function PaymentScreen() {
 
   if (loading) return (
     <SafeAreaView style={styles.center}>
+      <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
       <ActivityIndicator size="large" color="#2563EB" />
     </SafeAreaView>
   )
@@ -149,18 +152,104 @@ export default function PaymentScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
       <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Header */}
+        {/* Header — stitch style: white bg, blue back arrow, centered bold title */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-            <Text style={styles.backText}>← Back</Text>
+            <Feather name="chevron-left" size={28} color="#1E3A8A" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Complete Payment</Text>
+          <Text style={styles.headerTitle}>Trip Breakdown</Text>
+          <View style={styles.backBtn} />
         </View>
 
-        {/* Booking summary */}
+        {/* Trip meta info bar */}
+        <Text style={styles.tripMeta}>
+          Trip ID: #{bookingId?.toString().slice(0,5) || '40928'} | {booking?.trip?.pickup_city} - {booking?.trip?.destination_city} | {new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+        </Text>
+
+        {/* Fare Breakdown Card — stitch design */}
+        <View style={styles.breakdownCard}>
+          <Text style={styles.breakdownTitle}>Commission & Tax Breakdown</Text>
+
+          {/* Gross Fare */}
+          <View style={styles.fareRow}>
+            <View style={{ flex: 1 }}>
+              <View style={styles.fareRowLabel}>
+                <Text style={styles.fareLabel}>Gross Fare</Text>
+                <Feather name="info" size={15} color="#9CA3AF" style={{ marginLeft: 6 }} />
+              </View>
+              <Text style={styles.fareSub}>(Total collected from passenger)</Text>
+            </View>
+            <Text style={styles.fareAmountBold}>₹{totalFare.toLocaleString()}</Text>
+          </View>
+
+          <View style={styles.fareDivider} />
+
+          {/* Platform Fee */}
+          <View style={styles.fareRow}>
+            <View style={{ flex: 1 }}>
+              <View style={styles.fareRowLabel}>
+                <Text style={styles.fareLabel}>Platform Fee (SaaS)</Text>
+                <Feather name="info" size={15} color="#9CA3AF" style={{ marginLeft: 6 }} />
+              </View>
+            </View>
+            <View style={{ alignItems: 'flex-end' }}>
+              <Text style={[styles.fareAmountBold, { color: '#DC2626' }]}>-₹{Math.round(totalFare * 0.15).toLocaleString()}</Text>
+              <Text style={styles.fareSub}>(15%)</Text>
+            </View>
+          </View>
+
+          <View style={[styles.fareDivider, { borderStyle: 'dashed' }]} />
+
+          {/* Tax */}
+          <View style={styles.fareRow}>
+            <View style={{ flex: 1 }}>
+              <View style={styles.fareRowLabel}>
+                <Text style={styles.fareLabel}>Tax Deducted (TDS)</Text>
+                <Feather name="info" size={15} color="#9CA3AF" style={{ marginLeft: 6 }} />
+              </View>
+            </View>
+            <View style={{ alignItems: 'flex-end' }}>
+              <Text style={[styles.fareAmountBold, { color: '#DC2626' }]}>-₹{Math.round(totalFare * 0.02).toLocaleString()}</Text>
+              <Text style={styles.fareSub}>(2%)</Text>
+            </View>
+          </View>
+
+          <View style={[styles.fareDivider, { borderStyle: 'dashed' }]} />
+
+          {/* Toll Reimbursement */}
+          {discount > 0 && (
+            <View style={styles.fareRow}>
+              <View style={styles.fareRowLabel}>
+                <Text style={styles.fareLabel}>Coupon Discount</Text>
+                <Feather name="info" size={15} color="#9CA3AF" style={{ marginLeft: 6 }} />
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <MaterialCommunityIcons name="tag" size={20} color="#10B981" />
+                <Text style={[styles.fareAmountBold, { color: '#10B981', marginLeft: 4 }]}>+₹{discount}</Text>
+              </View>
+            </View>
+          )}
+
+          <View style={styles.fareThickDivider} />
+
+          {/* Net Payout / Total */}
+          <View style={styles.fareRow}>
+            <View>
+              <View style={styles.fareRowLabel}>
+                <Text style={[styles.fareAmountBold, { fontSize: 20 }]}>Total Fare</Text>
+                <Feather name="info" size={15} color="#9CA3AF" style={{ marginLeft: 6 }} />
+              </View>
+              <Text style={styles.fareSub}>(Amount due from you)</Text>
+            </View>
+            <Text style={[styles.fareAmountBold, { color: '#10B981', fontSize: 26 }]}>₹{finalAmount.toFixed(2)}</Text>
+          </View>
+        </View>
+
+        {/* Booking source summary */}
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>📋 Booking Summary</Text>
+          <Text style={styles.cardTitle}>📋 Booking Details</Text>
           <View style={styles.row}>
             <Text style={styles.rowLabel}>{booking?.trip?.pickup_city} → {booking?.trip?.destination_city}</Text>
             <Text style={styles.rowValue}>₹{totalFare}</Text>
@@ -261,15 +350,40 @@ function BillRow({ label, value, green, bold }: { label: string; value: string; 
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' },
-  header: { flexDirection: 'row', alignItems: 'center', padding: 16, gap: 12 },
-  backBtn: { padding: 4 },
-  backText: { fontSize: 14, color: '#2563EB', fontWeight: '600' },
-  headerTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A' },
+  container: { flex: 1, backgroundColor: '#F9FAFB' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F9FAFB' },
+
+  // Header — stitch style
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF', paddingHorizontal: 16, paddingVertical: 14,
+    shadowColor: '#94A3B8', shadowOpacity: 0.08, shadowRadius: 4, elevation: 2,
+    borderBottomWidth: 1, borderBottomColor: '#F1F5F9',
+  },
+  backBtn: { width: 40, alignItems: 'flex-start' },
+  headerTitle: { fontSize: 20, fontWeight: '700', color: '#1E3A8A', textAlign: 'center' },
+
+  tripMeta: { fontSize: 15, color: '#0F172A', lineHeight: 24, paddingHorizontal: 20, paddingVertical: 16 },
+
+  // Stitch breakdown card
+  breakdownCard: {
+    backgroundColor: '#FFFFFF', marginHorizontal: 16, marginBottom: 16, borderRadius: 20,
+    padding: 20, shadowColor: '#94A3B8', shadowOpacity: 0.12, shadowRadius: 10, elevation: 3,
+    borderWidth: 1, borderColor: '#F1F5F9',
+  },
+  breakdownTitle: { fontSize: 20, fontWeight: '700', color: '#000', marginBottom: 24 },
+  fareRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 },
+  fareRowLabel: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
+  fareLabel: { fontSize: 16, color: '#000' },
+  fareSub: { fontSize: 13, color: '#6B7280' },
+  fareAmountBold: { fontSize: 22, fontWeight: '900', color: '#000' },
+  fareDivider: { height: 1, backgroundColor: '#E5E7EB', marginBottom: 20 },
+  fareThickDivider: { height: 4, backgroundColor: '#E5E7EB', borderRadius: 2, marginBottom: 20 },
+
+  // Cards
   card: {
     backgroundColor: '#FFFFFF', marginHorizontal: 16, marginBottom: 12, borderRadius: 16,
-    padding: 16, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 8, elevation: 2,
+    padding: 16, shadowColor: '#94A3B8', shadowOpacity: 0.06, shadowRadius: 8, elevation: 2,
   },
   cardTitle: { fontSize: 13, fontWeight: '700', color: '#475569', marginBottom: 10, letterSpacing: 0.3 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
@@ -298,12 +412,11 @@ const styles = StyleSheet.create({
   secureNote: { textAlign: 'center', fontSize: 11, color: '#94A3B8', marginTop: 4, marginBottom: 12 },
   payBtnContainer: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
-    backgroundColor: '#FFFFFF', paddingHorizontal: 16, paddingBottom: 28, paddingTop: 12,
-    borderTopWidth: 1, borderTopColor: '#F1F5F9',
+    backgroundColor: '#F9FAFB', paddingHorizontal: 20, paddingBottom: 28, paddingTop: 12,
   },
   payBtn: {
-    backgroundColor: '#2563EB', borderRadius: 16, padding: 16, alignItems: 'center',
-    shadowColor: '#2563EB', shadowOpacity: 0.3, shadowRadius: 10, elevation: 5,
+    backgroundColor: '#3B82F6', borderRadius: 50, padding: 16, alignItems: 'center',
+    shadowColor: '#3B82F6', shadowOpacity: 0.3, shadowRadius: 10, elevation: 5,
   },
-  payBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 16 },
+  payBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 16 },
 })

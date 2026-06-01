@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router'
-import { Text } from 'react-native'
+import { MaterialCommunityIcons, Feather, Ionicons } from '@expo/vector-icons'
 
 export default function DriverTabsLayout() {
   return (
@@ -7,31 +7,33 @@ export default function DriverTabsLayout() {
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: '#1E293B',
-          borderTopColor: '#334155',
-          height: 64,
-          paddingBottom: 10,
+          backgroundColor: '#090C15',
+          borderTopWidth: 1,
+          borderTopColor: 'rgba(255,255,255,0.08)',
+          height: 68,
+          paddingBottom: 12,
+          paddingTop: 6,
         },
-        tabBarActiveTintColor: '#F59E0B',
-        tabBarInactiveTintColor: '#64748B',
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
+        tabBarActiveTintColor: '#3B82F6',
+        tabBarInactiveTintColor: '#6B7280',
+        tabBarLabelStyle: { fontSize: 10, fontWeight: '600', marginTop: 2 },
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Home',
-          tabBarIcon: ({ color, focused }) => (
-            <Text style={{ fontSize: 20, opacity: focused ? 1 : 0.5 }}>🏠</Text>
+          title: 'Dashboard',
+          tabBarIcon: ({ color }) => (
+            <MaterialCommunityIcons name="view-dashboard" size={24} color={color} />
           ),
         }}
       />
       <Tabs.Screen
         name="earnings"
         options={{
-          title: 'Earnings',
-          tabBarIcon: ({ color, focused }) => (
-            <Text style={{ fontSize: 20, opacity: focused ? 1 : 0.5 }}>💰</Text>
+          title: 'Wallet',
+          tabBarIcon: ({ color }) => (
+            <Ionicons name="wallet-outline" size={24} color={color} />
           ),
         }}
       />
@@ -39,8 +41,8 @@ export default function DriverTabsLayout() {
         name="profile"
         options={{
           title: 'Profile',
-          tabBarIcon: ({ color, focused }) => (
-            <Text style={{ fontSize: 20, opacity: focused ? 1 : 0.5 }}>👤</Text>
+          tabBarIcon: ({ color }) => (
+            <Feather name="user" size={22} color={color} />
           ),
         }}
       />

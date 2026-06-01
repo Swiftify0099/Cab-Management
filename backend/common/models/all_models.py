@@ -417,6 +417,7 @@ class Trip(Base, UUIDMixin, TimestampMixin):
     base_fare: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     per_km_rate: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False)
     distance_km: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    vehicle_type: Mapped[str] = mapped_column(String(50), nullable=False, server_default="sedan")
     polyline: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Encoded Google Maps polyline
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

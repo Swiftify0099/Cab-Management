@@ -10,6 +10,9 @@ import { Phone, Star, Clock, Navigation, X } from 'lucide-react'
 import { useSocket } from '../../hooks/useSocket'
 import { bookingApi } from '../../api/client'
 import toast from 'react-hot-toast'
+import Map, { Marker } from 'react-map-gl'
+import maplibregl from 'maplibre-gl'
+import 'maplibre-gl/dist/maplibre-gl.css'
 
 interface LocationData {
   latitude: number
@@ -130,9 +133,7 @@ export function LiveTrackPage() {
     toast.error('🆘 SOS sent! Help is on the way.')
   }, [sendSOS, bookingId, location])
 
-  const mapUrl = location
-    ? `https://maps.google.com/maps?q=${location.latitude},${location.longitude}&z=15&output=embed`
-    : `https://maps.google.com/maps?q=18.5204,73.8567&z=12&output=embed`
+
 
   if (loading) return (
     <div className="min-h-screen bg-slate-900 flex items-center justify-center">
@@ -147,14 +148,22 @@ export function LiveTrackPage() {
     <div className="min-h-screen bg-slate-900 flex flex-col">
       {/* Map */}
       <div className="flex-1 relative min-h-[55vh]">
-        <iframe
-          ref={mapIframeRef}
-          src={mapUrl}
-          className="w-full h-full border-0"
-          title="Live Driver Location"
-          allowFullScreen
-          loading="lazy"
-        />
+        <Map
+          mapLib={maplibregl}
+          initialViewState={{
+            longitude: location?.longitude || booking?.trip?.pickup_lon || 73.8567,
+            latitude: location?.latitude || booking?.trip?.pickup_lat || 18.5204,
+            zoom: 14
+          }}
+          style={{width: '100%', height: '100%'}}
+          mapStyle="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+        >
+          {location && (
+            <Marker longitude={location.longitude} latitude={location.latitude}>
+              <div className="w-4 h-4 bg-blue-600 rounded-full border-2 border-white shadow-lg animate-pulse" />
+            </Marker>
+          )}
+        </Map>
 
         {/* Map overlay controls */}
         <div className="absolute top-4 left-4 right-4 flex items-center justify-between z-10">

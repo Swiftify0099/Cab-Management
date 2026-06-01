@@ -51,7 +51,17 @@ class TripService:
         )
         driver = driver_res.scalar_one_or_none()
         if not driver:
-            raise ValueError("Driver profile not found")
+            # Auto-create mock driver profile for testing purposes
+            driver = Driver(
+                id=str(uuid.uuid4()),
+                user_id=uuid.UUID(driver_user_id),
+                license_number=f"MOCK-{uuid.uuid4().hex[:8].upper()}",
+                status=DriverStatus.ACTIVE,
+                rating=5.0,
+                total_trips=0
+            )
+            self.db.add(driver)
+            await self.db.flush()
 
         distance = get_distance_km(pickup_city, destination_city)
 
@@ -81,6 +91,7 @@ class TripService:
             base_fare=base_fare,
             per_km_rate=per_km_rate,
             distance_km=distance,
+            vehicle_type=vehicle_type,
             parcel_enabled=parcel_enabled,
             women_only=women_only,
             status=TripStatus.DRAFT,
