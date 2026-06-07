@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Request, status
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -96,6 +97,68 @@ async def capture_payment(
 
 
 @router.post(
+    "/payments/wallet-pay",
+    response_model=SuccessResponse,
+    summary="Pay for booking using only wallet balance",
+)
+async def wallet_pay(
+    request: CreateOrderRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    from app.services.wallet_service import WalletService
+    wallet_service = WalletService(db)
+    
+    try:
+        # Deduct wallet
+        await wallet_service.deduct_wallet(
+            customer_id=current_user.user_id_str,
+            amount=Decimal(str(request.amount)),
+            description=f"Payment for booking {request.booking_id}",
+            reference_id=request.booking_id
+        )
+        
+        # Update booking status to PAID
+        from common.models.all_models import Booking, BookingStatus
+        from sqlalchemy import select
+        result = await db.execute(select(Booking).where(Booking.id == request.booking_id))
+        booking = result.scalar_one_or_none()
+        if booking:
+            booking.status = BookingStatus.PAID
+            await db.commit()
+            
+        return SuccessResponse(success=True, message="Payment done via wallet", data={})
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get(
+    "/payments/status/{order_id}",
+    response_model=SuccessResponse,
+    summary="Check status of a payment order",
+)
+async def get_payment_status(
+    order_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    from common.models.all_models import Transaction
+    from sqlalchemy import select
+    result = await db.execute(
+        select(Transaction).where(Transaction.gateway_order_id == order_id)
+    )
+    tx = result.scalar_one_or_none()
+    if not tx:
+        raise HTTPException(status_code=404, detail="Order not found")
+        
+    return SuccessResponse(
+        success=True, 
+        message="OK", 
+        data={"status": tx.status.value.lower(), "amount": float(tx.amount)}
+    )
+
+
+@router.post(
     "/payments/webhook",
     summary="Razorpay webhook endpoint (no auth required)",
     include_in_schema=False,  # Don't expose in docs
@@ -111,6 +174,113 @@ async def razorpay_webhook(
     if not success:
         raise HTTPException(status_code=400, detail="Invalid webhook signature")
     return {"status": "ok"}
+
+
+@router.post(
+    "/payments/payment-success",
+    response_class=HTMLResponse,
+    summary="Razorpay callback endpoint",
+    include_in_schema=False,
+)
+async def payment_success(
+    request: Request,
+    booking_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        form_data = await request.form()
+        razorpay_payment_id = form_data.get("razorpay_payment_id")
+        razorpay_order_id = form_data.get("razorpay_order_id")
+        razorpay_signature = form_data.get("razorpay_signature")
+        
+        if razorpay_payment_id and razorpay_order_id and razorpay_signature:
+            rp = RazorpayService(db)
+            await rp.capture_payment(razorpay_order_id, razorpay_payment_id, razorpay_signature)
+                
+            html = """
+            <html><body style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;text-align:center;background:#f0f9ff;color:#0369a1;">
+            <div>
+                <h1 style="font-size:3rem;margin-bottom:10px;">✅</h1>
+                <h2>Payment Successful!</h2>
+                <p>Your payment has been captured.<br>You can safely close this window to return to the app.</p>
+            </div>
+            </body></html>
+            """
+            return HTMLResponse(content=html)
+    except Exception as e:
+        print(f"[PAYMENT CALLBACK ERR] {e}")
+        
+    html = """
+    <html><body style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;text-align:center;background:#fff1f2;color:#be123c;">
+    <div>
+        <h1 style="font-size:3rem;margin-bottom:10px;">❌</h1>
+        <h2>Payment Failed</h2>
+        <p>There was an issue processing your payment.<br>Please close this window and try again.</p>
+    </div>
+    </body></html>
+    """
+    return HTMLResponse(content=html)
+
+
+@router.get(
+    "/payments/checkout.html",
+    response_class=HTMLResponse,
+    summary="Razorpay checkout page for WebView",
+    include_in_schema=False,
+)
+async def razorpay_checkout_page(
+    order_id: str,
+    key_id: str,
+    amount: str,
+    currency: str = "INR",
+    name: str = "CabBooking",
+    description: str = "",
+    callback_url: str = "",
+):
+    """Serves the Razorpay checkout form for mobile WebBrowser."""
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Razorpay Checkout</title>
+        <style>
+            body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background-color: #f4f4f4; }}
+            .loader {{ border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }}
+            @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
+        </style>
+    </head>
+    <body>
+        <div class="loader"></div>
+        <form action="{callback_url}" method="POST" id="razorpay-form">
+            <script
+                src="https://checkout.razorpay.com/v1/checkout.js"
+                data-key="{key_id}"
+                data-amount="{amount}"
+                data-currency="{currency}"
+                data-order_id="{order_id}"
+                data-name="{name}"
+                data-description="{description}"
+                data-image="https://cdn-icons-png.flaticon.com/512/3202/3202926.png"
+                data-theme.color="#000000">
+            </script>
+            <input type="hidden" custom="Hidden Element" name="hidden">
+        </form>
+        <script>
+            // Automatically click the Razorpay button
+            window.onload = function() {{
+                const rzpButton = document.querySelector('.razorpay-payment-button');
+                if (rzpButton) {{
+                    rzpButton.style.display = 'none';
+                    rzpButton.click();
+                }}
+            }};
+        </script>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
 
 
 #  Wallet Routes 

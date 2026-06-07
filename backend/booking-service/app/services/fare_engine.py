@@ -54,10 +54,14 @@ CITY_DISTANCES: dict[frozenset, float] = {
 }
 
 
-def get_distance_km(from_city: str, to_city: str) -> float:
-    """Returns estimated distance or defaults to 100 km."""
-    key = frozenset({from_city.lower().strip(), to_city.lower().strip()})
-    return CITY_DISTANCES.get(key, 100.0)
+def get_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Returns estimated distance using Haversine formula in km."""
+    R = 6371.0 # Earth radius in km
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return max(R * c, 1.0) # minimum 1 km
 
 
 def is_night_trip(departure_time: datetime) -> bool:
@@ -99,8 +103,10 @@ class FareBreakdown:
 
 
 def calculate_fare(
-    from_city: str,
-    to_city: str,
+    from_lat: float,
+    from_lng: float,
+    to_lat: float,
+    to_lng: float,
     departure_time: datetime,
     vehicle_type: str = "sedan",
     seats_required: int = 1,
@@ -110,7 +116,7 @@ def calculate_fare(
     """
     Calculate fare for a single vehicle type.
     """
-    distance = get_distance_km(from_city, to_city)
+    distance = get_distance_km(from_lat, from_lng, to_lat, to_lng)
     rate = VEHICLE_RATES.get(vehicle_type, 3.5)
 
     base_fare = distance * rate
@@ -149,8 +155,10 @@ def calculate_fare(
 
 
 def calculate_all_fares(
-    from_city: str,
-    to_city: str,
+    from_lat: float,
+    from_lng: float,
+    to_lat: float,
+    to_lng: float,
     departure_time: datetime,
     seats_required: int = 1,
     with_parcel: bool = False,
@@ -159,7 +167,7 @@ def calculate_all_fares(
     """Returns fare estimates for all vehicle types."""
     return [
         calculate_fare(
-            from_city, to_city, departure_time,
+            from_lat, from_lng, to_lat, to_lng, departure_time,
             vehicle_type=vt,
             seats_required=seats_required,
             with_parcel=with_parcel,

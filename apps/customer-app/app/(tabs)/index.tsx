@@ -16,7 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
 import { Feather, Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
-import MapView from 'react-native-maps'
+import MapView, { PROVIDER_GOOGLE } from 'react-native-maps'
 import { useAuthStore } from '../../src/store/auth.store'
 
 const RECOMMENDED = [
@@ -35,6 +35,7 @@ export default function HomeTab() {
       {/* Map Background */}
       <View style={styles.mapBg}>
         <MapView
+          provider={PROVIDER_GOOGLE}
           style={StyleSheet.absoluteFill}
           initialRegion={{
             latitude: 19.0760,
@@ -174,7 +175,7 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#0A0D1A' },
   safeArea: { flex: 1 },
   flex: { flex: 1, justifyContent: 'space-between' },
-  mapBg: { ...StyleSheet.absoluteFillObject, zIndex: 0 },
+  mapBg: { ...(StyleSheet.absoluteFill as any), zIndex: 0 },
   routeLine: {
     position: 'absolute', height: 2, borderRadius: 4,
   },

@@ -17,11 +17,12 @@ const BASE = {
   directions:  'https://maps.googleapis.com/maps/api/directions/json',
   geocode:     'https://maps.googleapis.com/maps/api/geocode/json',
   places:      'https://maps.googleapis.com/maps/api/place/nearbysearch/json',
+  autocomplete: 'https://maps.googleapis.com/maps/api/place/autocomplete/json',
   matrix:      'https://maps.googleapis.com/maps/api/distancematrix/json',
   roads:       'https://roads.googleapis.com/v1/snapToRoads',
 }
 
-const key = () => process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || ''
+const key = () => process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || 'AIzaSyCZw4DVNyJwP85ZeDG1y_x8DLQ7bF8J0EU'
 
 // ─── Types ────────────────────────────────────────────────────
 export interface Coordinate { lat: number; lng: number }
@@ -64,6 +65,13 @@ export interface Place {
   rating: number
   isOpen: boolean
   type: PlaceType
+}
+
+export interface AutocompletePrediction {
+  placeId: string
+  description: string
+  mainText: string
+  secondaryText: string
 }
 
 export type PlaceType =
@@ -316,6 +324,36 @@ export async function searchNearbyPlaces(
     }))
   } catch (err) {
     console.error('[GoogleMaps] Places error:', err)
+    return []
+  }
+}
+
+/**
+ * Get place predictions as the user types.
+ */
+export async function getPlaceAutocomplete(
+  input: string,
+  sessionToken?: string
+): Promise<AutocompletePrediction[]> {
+  try {
+    const params: Record<string, string> = {
+      input,
+      components: 'country:in', // Bias to India
+      key: key(),
+    }
+    if (sessionToken) params.sessiontoken = sessionToken
+
+    const res = await axios.get(BASE.autocomplete, { params })
+    if (res.data.status !== 'OK') return []
+
+    return (res.data.predictions as any[]).slice(0, 5).map(p => ({
+      placeId: p.place_id,
+      description: p.description,
+      mainText: p.structured_formatting?.main_text || p.description,
+      secondaryText: p.structured_formatting?.secondary_text || '',
+    }))
+  } catch (err) {
+    console.error('[GoogleMaps] Autocomplete error:', err)
     return []
   }
 }

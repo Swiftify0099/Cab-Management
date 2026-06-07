@@ -12,7 +12,7 @@ import { Feather } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { router, useLocalSearchParams } from 'expo-router'
 import axios from 'axios'
-import AsyncStorage from '@react-native-async-storage/async-storage'
+import * as SecureStore from 'expo-secure-store'
 
 const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1'
 
@@ -60,15 +60,38 @@ export default function DriverOtpScreen() {
     if (code.length < 6) return
     setLoading(true)
     try {
+      const rawPhone = typeof phone === 'string' ? phone.replace(/\s/g, '') : displayPhone.replace(/\s/g, '')
       const res = await axios.post(`${API}/auth/otp/verify`, {
-        phone: displayPhone.replace(/\s/g, ''), code
+        phone:    rawPhone,
+        otp_code: code,     // ← backend expects otp_code not code
+        role:     'driver', // ← required for driver login
       })
-      await AsyncStorage.setItem('access_token', res.data.access_token)
+      // APIResponse wrapper: { data: { access_token, ... } }
+      const tokenData = res.data?.data || res.data
+      const accessToken = tokenData.access_token || tokenData.access
+      if (accessToken) {
+        await SecureStore.setItemAsync('access_token', accessToken)
+        // Also store in AsyncStorage for hooks that use it
+        const { default: AsyncStorage } = await import('@react-native-async-storage/async-storage')
+        await AsyncStorage.setItem('access_token', accessToken)
+        if (tokenData.refresh_token) {
+          await AsyncStorage.setItem('refresh_token', tokenData.refresh_token)
+        }
+        if (tokenData.user_id) {
+          await AsyncStorage.setItem('user_id', tokenData.user_id)
+          await AsyncStorage.setItem('user_role', tokenData.role || 'driver')
+        }
+      }
       router.replace('/(tabs)/' as any)
-    } catch {
-      // Demo fallback
-      await AsyncStorage.setItem('access_token', 'demo_token')
-      router.replace('/(tabs)/' as any)
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail
+      if (detail && typeof detail === 'string') {
+        Alert.alert('Login Failed', detail)
+      } else {
+        // Demo fallback — store a demo token and proceed
+        await SecureStore.setItemAsync('access_token', 'demo_token')
+        router.replace('/(tabs)/' as any)
+      }
     } finally {
       setLoading(false)
     }

@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 from uuid import UUID
@@ -23,9 +23,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.models.all_models import (
-    Booking, BookingStatus, Driver, LedgerEntry,
-    Payment, PaymentStatus, Transaction, TransactionType,
-    Wallet, WalletTransaction,
+    Booking, BookingStatus, Driver,
+    PaymentStatus, Transaction, PaymentMethod, LedgerType,
+    CustomerProfile
 )
 from common.utils.redis_client import publish_event
 from app.core.config import payment_settings
@@ -68,18 +68,28 @@ class RazorpayService:
             },
         })
 
-        # Persist the pending payment record
-        payment = Payment(
-            booking_id=UUID(booking_id),
-            customer_id=UUID(customer_id),
-            razorpay_order_id=order_data["id"],
+        # Safely parse booking_id (to allow frontend mock IDs like 'req_zbw36oe')
+        parsed_booking_id = None
+        if booking_id and not booking_id.startswith("wallet_"):
+            try:
+                parsed_booking_id = UUID(booking_id)
+            except ValueError:
+                pass  # Keep as None for mocked/dummy IDs
+
+        # Persist the pending transaction record
+        tx = Transaction(
+            booking_id=parsed_booking_id,
+            user_id=UUID(customer_id),
+            gateway_order_id=order_data["id"],
             amount=amount_rupees,
             currency="INR",
             status=PaymentStatus.PENDING,
+            payment_method=PaymentMethod.RAZORPAY,
+            ledger_type=LedgerType.BOOKING if not booking_id.startswith("wallet_") else LedgerType.WALLET_CREDIT
         )
-        self.db.add(payment)
+        self.db.add(tx)
         await self.db.commit()
-        await self.db.refresh(payment)
+        await self.db.refresh(tx)
 
         logger.info(
             "Razorpay order created",
@@ -93,7 +103,7 @@ class RazorpayService:
             "amount_paise": amount_paise,
             "currency": "INR",
             "key_id": payment_settings.RAZORPAY_KEY_ID,
-            "payment_id": str(payment.id),
+            "payment_id": str(tx.id),
             "booking_id": booking_id,
         }
 
@@ -136,58 +146,58 @@ class RazorpayService:
 
         # Load payment record
         result = await self.db.execute(
-            select(Payment).where(Payment.razorpay_order_id == razorpay_order_id)
+            select(Transaction).where(Transaction.gateway_order_id == razorpay_order_id)
         )
-        payment = result.scalar_one_or_none()
-        if not payment:
-            raise ValueError(f"Payment not found for order {razorpay_order_id}")
+        tx = result.scalar_one_or_none()
+        if not tx:
+            raise ValueError(f"Transaction not found for order {razorpay_order_id}")
 
         # Update payment
-        payment.razorpay_payment_id = razorpay_payment_id
-        payment.razorpay_signature = razorpay_signature
-        payment.status = PaymentStatus.CAPTURED
-        payment.captured_at = datetime.utcnow()
+        tx.gateway_ref = razorpay_payment_id
+        tx.tx_metadata = {"signature": razorpay_signature}
+        tx.status = PaymentStatus.CAPTURED
         await self.db.commit()
 
-        # Update booking status
-        booking_result = await self.db.execute(
-            select(Booking).where(Booking.id == payment.booking_id)
-        )
-        booking = booking_result.scalar_one_or_none()
-        if booking:
-            booking.status = BookingStatus.PAID
-            await self.db.commit()
-
-            # Credit driver wallet (90%)
-            await self._credit_driver(booking, payment)
-
-            # Award reward points to customer
-            await self._award_reward_points(str(payment.customer_id), payment.amount)
-
-            # Notify customer
-            await publish_event(
-                f"customer:{payment.customer_id}:events",
-                {
-                    "event": "PAYMENT_CAPTURED",
-                    "booking_id": str(payment.booking_id),
-                    "amount": str(payment.amount),
-                    "points_earned": int(float(payment.amount) * payment_settings.REWARD_POINTS_PER_RUPEE),
-                },
+        if tx.booking_id:
+            # Update booking status
+            booking_result = await self.db.execute(
+                select(Booking).where(Booking.id == tx.booking_id)
             )
+            booking = booking_result.scalar_one_or_none()
+            if booking:
+                booking.status = BookingStatus.PAID
+                await self.db.commit()
+
+                # Credit driver wallet (90%)
+                await self._credit_driver(booking, tx)
+
+                # Award reward points to customer
+                await self._award_reward_points(str(tx.user_id), tx.amount)
+
+                # Notify customer
+                await publish_event(
+                    f"customer:{tx.user_id}:events",
+                    {
+                        "event": "PAYMENT_CAPTURED",
+                        "booking_id": str(tx.booking_id),
+                        "amount": str(tx.amount),
+                        "points_earned": int(float(tx.amount) * payment_settings.REWARD_POINTS_PER_RUPEE),
+                    },
+                )
 
         logger.info(
             "Payment captured",
             payment_id=razorpay_payment_id,
-            booking_id=str(payment.booking_id),
-            amount=str(payment.amount),
+            booking_id=str(tx.booking_id),
+            amount=str(tx.amount),
         )
 
         return {
-            "payment_id": str(payment.id),
+            "payment_id": str(tx.id),
             "razorpay_payment_id": razorpay_payment_id,
             "status": "captured",
-            "amount": str(payment.amount),
-            "booking_id": str(payment.booking_id),
+            "amount": str(tx.amount),
+            "booking_id": str(tx.booking_id),
         }
 
     async def process_webhook(self, payload: dict, signature: str) -> bool:
@@ -218,11 +228,11 @@ class RazorpayService:
         elif event == "payment.failed":
             order_id = entity.get("order_id")
             result = await self.db.execute(
-                select(Payment).where(Payment.razorpay_order_id == order_id)
+                select(Transaction).where(Transaction.gateway_order_id == order_id)
             )
-            payment = result.scalar_one_or_none()
-            if payment:
-                payment.status = PaymentStatus.FAILED
+            tx = result.scalar_one_or_none()
+            if tx:
+                tx.status = PaymentStatus.FAILED
                 await self.db.commit()
             logger.warning("Webhook: payment failed", order_id=order_id)
 
@@ -233,57 +243,65 @@ class RazorpayService:
 
         return True
 
-    async def _credit_driver(self, booking: Booking, payment: Payment) -> None:
+    async def _credit_driver(self, booking: Booking, tx: Transaction) -> None:
         """Credit 90% of booking fare to driver's wallet."""
-        if not booking.driver_id:
+        from common.models.all_models import Trip
+        
+        # We need the driver_id which is in the Trip
+        trip_result = await self.db.execute(
+            select(Trip).where(Trip.id == booking.trip_id)
+        )
+        trip = trip_result.scalar_one_or_none()
+        if not trip or not trip.driver_id:
             return
 
-        driver_earning = Decimal(str(payment.amount)) * Decimal("0.90")
-        platform_fee = Decimal(str(payment.amount)) - driver_earning
+        driver_earning = Decimal(str(tx.amount)) * Decimal("0.90")
+        platform_fee = Decimal(str(tx.amount)) - driver_earning
 
-        # Find or create driver wallet
+        # Find driver
         result = await self.db.execute(
-            select(Wallet).where(Wallet.driver_id == booking.driver_id)
+            select(Driver).where(Driver.user_id == trip.driver_id)
         )
-        wallet = result.scalar_one_or_none()
+        driver = result.scalar_one_or_none()
 
-        if wallet:
-            wallet.balance += driver_earning
-            wallet.pending_settlement += driver_earning
-        else:
-            wallet = Wallet(
-                driver_id=booking.driver_id,
-                balance=driver_earning,
-                pending_settlement=driver_earning,
+        if driver:
+            driver.wallet_balance = (driver.wallet_balance or Decimal("0")) + driver_earning
+            # Add transaction record
+            from common.models.all_models import WalletTransaction
+            wtx = WalletTransaction(
+                user_id=driver.user_id,
+                amount=driver_earning,
+                transaction_type=LedgerType.WALLET_CREDIT,
+                balance_after=driver.wallet_balance,
+                ref_id=tx.id,
+                description=f"Earning from booking {booking.id}"
             )
-            self.db.add(wallet)
+            self.db.add(wtx)
+            await self.db.commit()
 
-        await self.db.commit()
-
-        # Notify driver
-        await publish_event(
-            f"driver:{booking.driver_id}:events",
-            {
-                "event": "EARNING_CREDITED",
-                "booking_id": str(booking.id),
-                "amount": str(driver_earning),
-                "platform_fee": str(platform_fee),
-            },
-        )
-        logger.info(
-            "Driver earning credited",
-            driver_id=str(booking.driver_id),
-            amount=str(driver_earning),
-        )
+            # Notify driver
+            await publish_event(
+                f"driver:{driver.user_id}:events",
+                {
+                    "event": "EARNING_CREDITED",
+                    "booking_id": str(booking.id),
+                    "amount": str(driver_earning),
+                    "platform_fee": str(platform_fee),
+                },
+            )
+            logger.info(
+                "Driver earning credited",
+                driver_id=str(driver.user_id),
+                amount=str(driver_earning),
+            )
 
     async def _award_reward_points(self, customer_id: str, amount: Decimal) -> None:
         """Award reward points to customer (1 point per 1 spent)."""
         points = int(float(amount) * payment_settings.REWARD_POINTS_PER_RUPEE)
-        from common.models.all_models import Customer
         result = await self.db.execute(
-            select(Customer).where(Customer.id == UUID(customer_id))
+            select(CustomerProfile).where(CustomerProfile.user_id == UUID(customer_id))
         )
         customer = result.scalar_one_or_none()
-        if customer and hasattr(customer, "reward_points"):
+        if customer:
             customer.reward_points = (customer.reward_points or 0) + points
             await self.db.commit()

@@ -9,10 +9,10 @@ import {
 } from 'react-native';
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
-import MapView, { Marker } from 'react-native-maps';
+import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { useCustomerSocket } from '../src/hooks/useCustomerSocket';
 import axios from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 
 const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1';
 
@@ -20,7 +20,7 @@ export default function TrackTripScreen() {
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
   const [booking, setBooking] = useState<any>(null);
   
-  const { connected, joinTrip, sendSOS } = useCustomerSocket();
+  const { connected, joinTrip } = useCustomerSocket();
 
   useEffect(() => {
     if (connected && bookingId) {
@@ -31,7 +31,7 @@ export default function TrackTripScreen() {
 
   const fetchBooking = async () => {
     try {
-      const token = await AsyncStorage.getItem('access_token');
+      const token = await SecureStore.getItemAsync('access_token');
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const res = await axios.get(`${API}/bookings/${bookingId || 'demo-1'}`, { headers });
       setBooking(res.data.data);
@@ -51,6 +51,7 @@ export default function TrackTripScreen() {
       {/* Map Background */}
       <View style={StyleSheet.absoluteFill}>
         <MapView
+          provider={PROVIDER_GOOGLE}
           style={StyleSheet.absoluteFill}
           initialRegion={{
             latitude: booking?.pickup_lat || 19.0760,
@@ -141,7 +142,7 @@ export default function TrackTripScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F0F9FF' },
-  mapBg: { ...StyleSheet.absoluteFillObject, backgroundColor: '#E0F2FE' },
+  mapBg: { ...(StyleSheet.absoluteFill as any), backgroundColor: '#E0F2FE' },
   mapLine: { position: 'absolute' },
   
   routeLine1: { position: 'absolute', top: '25%', left: 40, width: 256, height: 256, borderBottomWidth: 4, borderLeftWidth: 4, borderColor: '#3B82F6', borderBottomLeftRadius: 100, transform: [{ rotate: '45deg' }] },

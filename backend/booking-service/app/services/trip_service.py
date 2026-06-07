@@ -24,12 +24,8 @@ class TripService:
     async def create_trip(
         self,
         driver_user_id: str,
-        pickup_city: str,
-        pickup_state: str,
         pickup_lat: float,
         pickup_lng: float,
-        destination_city: str,
-        destination_state: str,
         destination_lat: float,
         destination_lng: float,
         departure_time: datetime,
@@ -63,7 +59,7 @@ class TripService:
             self.db.add(driver)
             await self.db.flush()
 
-        distance = get_distance_km(pickup_city, destination_city)
+        distance = get_distance_km(pickup_lat, pickup_lng, destination_lat, destination_lng)
 
         from geoalchemy2.elements import WKTElement
         pickup_point = WKTElement(f"POINT({pickup_lng} {pickup_lat})", srid=4326)
@@ -75,13 +71,9 @@ class TripService:
             pickup_location=pickup_point,
             pickup_latitude=pickup_lat,
             pickup_longitude=pickup_lng,
-            pickup_city=pickup_city,
-            pickup_state=pickup_state,
             destination_location=dest_point,
             destination_latitude=destination_lat,
             destination_longitude=destination_lng,
-            destination_city=destination_city,
-            destination_state=destination_state,
             departure_time=departure_time,
             total_seats=total_seats,
             available_seats=total_seats,
@@ -123,13 +115,39 @@ class TripService:
         return self._serialize(trip)
 
     async def publish_trip(self, trip_id: str, driver_user_id: str) -> Optional[dict]:
-        """Move trip from DRAFT  PUBLISHED."""
+        """Move trip from DRAFT → PUBLISHED, then trigger forward matching."""
         trip = await self._get_driver_trip(trip_id, driver_user_id)
         if not trip or trip.status != TripStatus.DRAFT:
             return None
         trip.status = TripStatus.PUBLISHED
         await self.db.commit()
-        return self._serialize(trip)
+        serialized = self._serialize(trip)
+
+        # Trigger forward match — notify waiting customers via matching-service
+        import asyncio
+        asyncio.create_task(self._trigger_forward_match(trip_id))
+
+        return serialized
+
+    async def _trigger_forward_match(self, trip_id: str) -> None:
+        """Call matching-service to scan pending_bookings for this newly published trip."""
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(
+                    f"http://matching-service:8003/internal/match-trip/{trip_id}"
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    import structlog
+                    structlog.get_logger(__name__).info(
+                        "Forward match completed",
+                        trip_id=trip_id,
+                        matches=data.get("matches", 0),
+                    )
+        except Exception as e:
+            import structlog
+            structlog.get_logger(__name__).warning("Forward match trigger failed", exc_info=e)
 
     async def start_trip(self, trip_id: str, driver_user_id: str) -> Optional[dict]:
         """Move trip from PUBLISHED  IN_PROGRESS."""
@@ -164,22 +182,33 @@ class TripService:
 
     async def search_trips(
         self,
-        from_city: str,
-        to_city: str,
+        from_lat: float,
+        from_lng: float,
+        to_lat: float,
+        to_lng: float,
         departure_date: datetime,
         seats_needed: int = 1,
         vehicle_type: Optional[str] = None,
         women_only: bool = False,
         with_parcel: bool = False,
     ) -> list[dict]:
-        """Search available published trips."""
+        """Search available published trips using PostGIS."""
         date_start = departure_date.replace(hour=0, minute=0, second=0)
         date_end = departure_date.replace(hour=23, minute=59, second=59)
 
+        from geoalchemy2.elements import WKTElement
+        from geoalchemy2.functions import ST_DWithin
+        from sqlalchemy import cast
+        from geoalchemy2.types import Geography
+
+        search_pickup = WKTElement(f"POINT({from_lng} {from_lat})", srid=4326)
+        search_dropoff = WKTElement(f"POINT({to_lng} {to_lat})", srid=4326)
+
+        # Allow 50km radius for pickup and dropoff
         filters = [
             Trip.status == TripStatus.PUBLISHED,
-            func.lower(Trip.pickup_city) == from_city.lower().strip(),
-            func.lower(Trip.destination_city) == to_city.lower().strip(),
+            ST_DWithin(Trip.pickup_location, cast(search_pickup, Geography), 50000),
+            ST_DWithin(Trip.destination_location, cast(search_dropoff, Geography), 50000),
             Trip.departure_time >= date_start,
             Trip.departure_time <= date_end,
             Trip.available_seats >= seats_needed,
@@ -238,10 +267,10 @@ class TripService:
     def _serialize(trip: Trip) -> dict:
         return {
             "id": str(trip.id),
-            "pickup_city": trip.pickup_city,
-            "pickup_state": trip.pickup_state,
-            "destination_city": trip.destination_city,
-            "destination_state": trip.destination_state,
+            "pickup_lat": trip.pickup_latitude,
+            "pickup_lng": trip.pickup_longitude,
+            "destination_lat": trip.destination_latitude,
+            "destination_lng": trip.destination_longitude,
             "departure_time": trip.departure_time.isoformat() if trip.departure_time else None,
             "total_seats": trip.total_seats,
             "available_seats": trip.available_seats,

@@ -18,7 +18,6 @@ import {
   Alert,
   Image,
   Vibration,
-  NativeModules,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Feather, Ionicons } from '@expo/vector-icons'
@@ -26,6 +25,8 @@ import { LinearGradient } from 'expo-linear-gradient'
 import { router, useLocalSearchParams } from 'expo-router'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import axios from 'axios'
+import { useDriverSocket } from '../src/hooks/useDriverSocket'
+import type { PendingCustomer, CorridorCustomerPayload } from '../src/hooks/useDriverSocket'
 
 const { width, height } = Dimensions.get('window')
 const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1'
@@ -60,55 +61,31 @@ function randomRadarPos() {
   }
 }
 
-// ─── Demo bookings ────────────────────────────────────────────────────────────
-const DEMO_CUSTOMERS = [
-  { id: 'c1', name: 'Rahul Sharma',  phone: '+91 98765 43210', seats: 2, hasParcel: false, fare: 960  },
-  { id: 'c2', name: 'Priya Patil',   phone: '+91 87654 32109', seats: 1, hasParcel: true,  fare: 480  },
-  { id: 'c3', name: 'Amit Verma',    phone: '+91 76543 21098', seats: 3, hasParcel: false, fare: 1440 },
-  { id: 'c4', name: 'Sneha Joshi',   phone: '+91 65432 10987', seats: 1, hasParcel: false, fare: 480  },
-  { id: 'c5', name: 'Karan Mehta',   phone: '+91 54321 09876', seats: 2, hasParcel: true,  fare: 960  },
-]
-
-// ─── Safe siren player (Checks native support before importing expo-av to prevent crashes)
+// ─── Safe siren player (Uses vibration since expo-av has a native incompatibility with SDK 56)
 async function playSirenSafe() {
   try {
-    // 1. Safe detection of native Expo Audio module availability
-    const isAvAvailable = !!(
-      NativeModules.ExponentAV || 
-      (global as any).ExpoModules?.['ExponentAV'] ||
-      (global as any).ExpoModules?.['ExpoAV']
-    )
-
-    // Trigger physical feedback (vibration) as requested ("sounding/buzzing functionality")
-    Vibration.vibrate([0, 150, 80, 150])
-
-    if (!isAvAvailable) {
-      console.log('Skipping audio: ExponentAV module is not present in this Expo Go bundle.')
-      return
-    }
-
-    // 2. Safe dynamic load
-    const { Audio } = require('expo-av')
-    await Audio.setAudioModeAsync({ playsInSilentModeIOS: true })
-    const { sound } = await Audio.Sound.createAsync(
-      require('../assets/siran/drSiran.mp3'),
-      { shouldPlay: true, volume: 1.0 }
-    )
-    sound.setOnPlaybackStatusUpdate((status: any) => {
-      if (status.didJustFinish) {
-        sound.unloadAsync()
-      }
-    })
+    // Vibration pattern: buzz-pause-buzz-pause-buzz (mimics alert beeps)
+    Vibration.vibrate([0, 200, 100, 200, 100, 200])
   } catch (err) {
-    console.warn('Silent audio fallback triggered:', err)
+    console.warn('Vibration fallback failed:', err)
   }
 }
 
 export default function TripLiveScreen() {
   const params = useLocalSearchParams()
+  const tripId     = (params.tripId     as string) || 'demo'
   const from       = (params.from       as string) || 'Pune'
   const to         = (params.to         as string) || 'Mumbai'
   const totalSeats = parseInt((params.totalSeats as string) || '4')
+
+  const {
+    connected, joinDriverScan,
+    pendingCustomers, incomingRequest, clearRequest,
+    corridorCustomers,
+  } = useDriverSocket()
+
+  // Phase 2: Corridor customers fetched from REST (supplements WebSocket push)
+  const [apiCorridorCustomers, setApiCorridorCustomers] = useState<CorridorCustomerPayload[]>([])
 
   const [dots, setDots]               = useState<CustomerDot[]>([])
   const [selected, setSelected]       = useState<CustomerDot | null>(null)
@@ -155,62 +132,119 @@ export default function TripLiveScreen() {
     pulseRing(ring3, 1600)
   }, [])
 
-  // Add demo dots staggered (simulating live bookings arriving)
+  // ✅ Mounted ref guard — prevents state updates after component unmounts
+  const mountedRef = useRef(true)
   useEffect(() => {
-    const timers: ReturnType<typeof setTimeout>[] = []
-    DEMO_CUSTOMERS.forEach((c, i) => {
-      const t = setTimeout(() => {
-        const pos      = randomRadarPos()
-        const dotAnim  = new Animated.Value(0)
-        const dotPulse = new Animated.Value(0)
+    return () => { mountedRef.current = false }
+  }, [])
 
-        Animated.spring(dotAnim, {
-          toValue: 1, useNativeDriver: true, tension: 70, friction: 6,
-        }).start()
-        
-        Animated.loop(
-          Animated.sequence([
-            Animated.timing(dotPulse, { toValue: 1, duration: 1000, useNativeDriver: true }),
-            Animated.timing(dotPulse, { toValue: 0.5, duration: 1000, useNativeDriver: true }),
-          ])
-        ).start()
+  // ─── Join driver scan room + load real pending customers ──────────────────
+  useEffect(() => {
+    if (tripId && tripId !== 'demo') {
+      // Join WebSocket scan room for live NEW_PENDING_CUSTOMER pushes
+      if (connected) joinDriverScan(tripId)
+      // Load existing pending customers via REST
+      loadScanResults()
+    }
+  }, [tripId, connected])
 
-        setDots(prev => [
-          ...prev,
-          {
-            id: c.id,
-            bookingId: `bk-${c.id}`,
-            name: c.name,
-            phone: c.phone,
-            seats: c.seats,
-            date: new Date().toLocaleDateString('en-IN'),
-            time: `${7 + i}:00 AM`,
-            pickupAddress: from,
-            dropAddress: to,
-            fare: c.fare,
-            hasParcel: c.hasParcel,
-            rejected: false,
-            x: pos.x,
-            y: pos.y,
-            anim: dotAnim,
-            pulse: dotPulse,
-          },
-        ])
+  // ─── Phase 2: Poll corridor-customers REST endpoint every 30s ────────────
+  useEffect(() => {
+    if (!tripId || tripId === 'demo') return
 
-        // Visual HUD Alert banner animation
-        setNewBookingAlert(c.name)
+    const loadCorridorCustomers = async () => {
+      try {
+        const token = await AsyncStorage.getItem('access_token')
+        const headers = token ? { Authorization: `Bearer ${token}` } : {}
+        const res = await axios.get(`${API}/matching/corridor-customers`, {
+          params: { trip_id: tripId }, headers,
+        })
+        const rawData = res.data?.data || []
+        const customers: CorridorCustomerPayload[] = rawData.map((c: any) => ({
+          trip_id:          tripId,
+          customer_id:      c.booking_id,     // using booking_id as display key
+          lat:              c.pickup_lat,
+          lng:              c.pickup_lng,
+          dist_from_route_m: c.route_distance_km ? c.route_distance_km * 1000 : null,
+        }))
+        setApiCorridorCustomers(customers)
+        rawData.forEach((pc: any) => addPendingCustomerDot(pc))
+      } catch { /* silent — corridor data is non-critical */ }
+    }
+
+    loadCorridorCustomers()
+    const t = setInterval(loadCorridorCustomers, 30_000)
+    return () => clearInterval(t)
+  }, [tripId])
+
+  // ─── Live pushes: NEW_PENDING_CUSTOMER via useDriverSocket ────────────────
+  useEffect(() => {
+    pendingCustomers.forEach(pc => addPendingCustomerDot(pc))
+  }, [pendingCustomers])
+
+  // ─── Load scan results from API ───────────────────────────────────────────
+  const loadScanResults = useCallback(async () => {
+    try {
+      const token = await AsyncStorage.getItem('access_token')
+      const headers = token ? { Authorization: `Bearer ${token}` } : {}
+      const res = await axios.get(`${API}/matching/scan`, {
+        params: { trip_id: tripId }, headers,
+      })
+      const customers: PendingCustomer[] = res.data?.data || []
+      customers.forEach(pc => addPendingCustomerDot(pc))
+    } catch (e) {
+      console.warn('[TripLive] Scan load failed:', e)
+      // No demo fallback — radar waits for real bookings via WebSocket
+    }
+  }, [tripId])
+
+  // ─── Add a PendingCustomer as a radar dot ─────────────────────────────────
+  const addPendingCustomerDot = useCallback((pc: PendingCustomer) => {
+    if (!mountedRef.current) return
+    setDots(prev => {
+      if (prev.find(d => d.id === pc.booking_id)) return prev   // dedup
+      const pos      = randomRadarPos()
+      const dotAnim  = new Animated.Value(0)
+      const dotPulse = new Animated.Value(0)
+      Animated.spring(dotAnim, { toValue: 1, useNativeDriver: true, tension: 70, friction: 6 }).start()
+      Animated.loop(
         Animated.sequence([
-          Animated.timing(alertFade, { toValue: 1, duration: 300, useNativeDriver: true }),
-          Animated.delay(2000),
-          Animated.timing(alertFade, { toValue: 0, duration: 400, useNativeDriver: true }),
-        ]).start()
-
-        playSirenSafe()
-      }, (i + 1) * 3500)
-      timers.push(t)
+          Animated.timing(dotPulse, { toValue: 1, duration: 1000, useNativeDriver: true }),
+          Animated.timing(dotPulse, { toValue: 0.5, duration: 1000, useNativeDriver: true }),
+        ])
+      ).start()
+      return [
+        ...prev,
+        {
+          id:            pc.booking_id,
+          bookingId:     pc.booking_id,
+          name:          pc.customer_name,
+          phone:         '',                        // hidden until ARRIVAL_ALERT
+          seats:         pc.seats_required,
+          date:          pc.from_time?.split('T')[0] || new Date().toLocaleDateString('en-IN'),
+          time:          pc.from_time || '',
+          pickupAddress: pc.pickup_address,
+          dropAddress:   pc.destination_address,
+          fare:          0,
+          hasParcel:     pc.parcel,
+          rejected:      false,
+          x: pos.x, y: pos.y,
+          anim: dotAnim, pulse: dotPulse,
+        },
+      ]
     })
-    return () => timers.forEach(clearTimeout)
-  }, [from, to])
+
+    setNewBookingAlert(pc.customer_name)
+    Animated.sequence([
+      Animated.timing(alertFade, { toValue: 1, duration: 300, useNativeDriver: true }),
+      Animated.delay(2000),
+      Animated.timing(alertFade, { toValue: 0, duration: 400, useNativeDriver: true }),
+    ]).start()
+    playSirenSafe()
+  }, [])
+
+  // Radar starts empty — real bookings arrive via WebSocket (addPendingCustomerDot)
+  // or are loaded from GET /matching/scan on mount.
 
   // Panel slide animation
   useEffect(() => {
@@ -222,7 +256,7 @@ export default function TripLiveScreen() {
     }).start()
   }, [selected])
 
-  // Accept
+  // Accept — real API
   const handleAccept = async () => {
     if (!selected) return
     if (seatsUsed + selected.seats > totalSeats) {
@@ -233,26 +267,32 @@ export default function TripLiveScreen() {
     try {
       const token = await AsyncStorage.getItem('access_token')
       const headers = token ? { Authorization: `Bearer ${token}` } : {}
-      await axios.post(`${API}/bookings/${selected.bookingId}/accept`, {}, { headers })
+      await axios.post(`${API}/matching/respond`, {
+        booking_id:         selected.bookingId,
+        accepted:           true,
+        pending_booking_id: selected.id,   // same for pending-based dots
+      }, { headers })
     } catch (_) { /* demo - ignore */ }
-    
     setAcceptedIds(prev => [...prev, selected.id])
     setSeatsUsed(prev => prev + selected.seats)
-    Alert.alert('Accepted!', `Booking confirmed for ${selected.name}. Firebase notification sent!`)
+    Alert.alert('Accepted!', `Booking confirmed for ${selected.name}`)
     setActionLoading(false)
     setSelected(null)
   }
 
-  // Reject
+  // Reject — real API + hide from this driver
   const handleReject = async () => {
     if (!selected) return
     setActionLoading(true)
     try {
       const token = await AsyncStorage.getItem('access_token')
       const headers = token ? { Authorization: `Bearer ${token}` } : {}
-      await axios.post(`${API}/bookings/${selected.bookingId}/reject`, {}, { headers })
+      await axios.post(`${API}/matching/respond`, {
+        booking_id:         selected.bookingId,
+        accepted:           false,
+        pending_booking_id: selected.id,   // DB-persist rejection
+      }, { headers })
     } catch (_) { /* demo - ignore */ }
-    
     setRejectedIds(prev => [...prev, selected.id])
     setDots(prev => prev.map(d => d.id === selected.id ? { ...d, rejected: true } : d))
     setActionLoading(false)
@@ -308,6 +348,15 @@ export default function TripLiveScreen() {
             <Ionicons name="people" size={15} color="#22C55E" />
             <Text style={styles.seatsText}>{seatsUsed}/{totalSeats}</Text>
           </View>
+          {/* Phase 2: Corridor customer count badge */}
+          {(corridorCustomers.length + apiCorridorCustomers.length) > 0 && (
+            <View style={[styles.seatsChip, { backgroundColor: 'rgba(59,130,246,0.15)', borderColor: 'rgba(59,130,246,0.35)', marginLeft: 6 }]}>
+              <Ionicons name="locate" size={13} color="#3B82F6" />
+              <Text style={[styles.seatsText, { color: '#3B82F6' }]}>
+                {corridorCustomers.length + apiCorridorCustomers.length} in corridor
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* Dynamic Booking Alarm Toast */}
@@ -402,6 +451,29 @@ export default function TripLiveScreen() {
                 </View>
               </LinearGradient>
             </View>
+
+            {/* Empty state — no customers yet */}
+            {dots.length === 0 && (
+              <View style={{
+                position: 'absolute', alignItems: 'center', justifyContent: 'center',
+                width: '100%', height: '100%',
+              }}>
+                <View style={{
+                  backgroundColor: 'rgba(15,20,40,0.78)',
+                  borderRadius: 16, paddingHorizontal: 20, paddingVertical: 12,
+                  borderWidth: 1, borderColor: 'rgba(56,189,248,0.25)',
+                  alignItems: 'center',
+                }}>
+                  <Ionicons name="radio-outline" size={22} color="#38BDF8" style={{ marginBottom: 6 }} />
+                  <Text style={{ color: '#38BDF8', fontSize: 13, fontWeight: '700', letterSpacing: 0.5 }}>
+                    Scanning for customers…
+                  </Text>
+                  <Text style={{ color: '#64748B', fontSize: 11, marginTop: 3, textAlign: 'center' }}>
+                    Customers matching your route{'\n'}will appear here automatically
+                  </Text>
+                </View>
+              </View>
+            )}
 
             {/* Floating Interactive Customer Dots */}
             {dots

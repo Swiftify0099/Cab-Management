@@ -350,3 +350,125 @@ async def onboarding_status(
             "all_complete": has_vehicle and required_uploaded,
         },
     )
+
+
+# ============================================================
+# DRIVER EARNINGS  (used by earnings tab)
+# ============================================================
+
+from pydantic import BaseModel as _BaseModel
+from sqlalchemy import func as _func
+
+class _StatusUpdate(_BaseModel):
+    status: str   # 'online' | 'offline'
+
+
+@router.get(
+    "/earnings",
+    response_model=APIResponse[dict],
+    summary="Get driver earnings summary",
+)
+async def get_driver_earnings(
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+    db: AsyncSession = Depends(get_db),
+):
+    """Returns total earnings, today's earnings, and weekly earnings from completed bookings."""
+    from common.models.all_models import Booking, BookingStatus, Trip
+    from datetime import date, timedelta
+    import uuid as _uuid
+
+    # Get driver profile
+    driver_result = await db.execute(
+        select(Driver).where(Driver.user_id == current_user.id)
+    )
+    driver = driver_result.scalar_one_or_none()
+    if not driver:
+        return APIResponse(
+            message="Earnings",
+            data={
+                "total_earnings": 0,
+                "today_earnings": 0,
+                "week_earnings": 0,
+                "total_trips":    0,
+                "rating":         0.0,
+            },
+        )
+
+    # Aggregate from trips + bookings
+    today     = date.today()
+    week_ago  = today - timedelta(days=7)
+
+    # All completed trips by this driver
+    trips_q = await db.execute(
+        select(Trip).where(
+            Trip.driver_id == driver.id,
+            Trip.status.in_(["completed", "in_progress"]),
+        )
+    )
+    trips = trips_q.scalars().all()
+    trip_ids = [t.id for t in trips]
+
+    total_earnings = 0.0
+    today_earnings = 0.0
+    week_earnings  = 0.0
+    total_trips    = len(trips)
+
+    if trip_ids:
+        from sqlalchemy import and_
+        bookings_q = await db.execute(
+            select(Booking).where(
+                Booking.trip_id.in_(trip_ids),
+                Booking.status == BookingStatus.COMPLETED,
+            )
+        )
+        for booking in bookings_q.scalars().all():
+            fare = float(booking.total_fare or 0)
+            total_earnings += fare
+            # Find the trip's departure date
+            trip = next((t for t in trips if t.id == booking.trip_id), None)
+            if trip:
+                dep_date = trip.departure_time.date() if trip.departure_time else today
+                if dep_date == today:
+                    today_earnings += fare
+                if dep_date >= week_ago:
+                    week_earnings  += fare
+
+    return APIResponse(
+        message="Earnings fetched",
+        data={
+            "total_earnings": round(total_earnings, 2),
+            "today_earnings": round(today_earnings, 2),
+            "week_earnings":  round(week_earnings,  2),
+            "total_trips":    total_trips,
+            "rating":         float(driver.rating or 4.5),
+        },
+    )
+
+
+@router.patch(
+    "/status",
+    response_model=APIResponse[dict],
+    summary="Update driver online/offline status",
+)
+async def update_driver_status(
+    data: _StatusUpdate,
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+    db: AsyncSession = Depends(get_db),
+):
+    """Marks driver as online or offline. Used by home tab toggle."""
+    driver_result = await db.execute(
+        select(Driver).where(Driver.user_id == current_user.id)
+    )
+    driver = driver_result.scalar_one_or_none()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver profile not found")
+
+    # Store status in a simple way — extend model if needed
+    driver.is_active = (data.status == "online")
+    await db.commit()
+
+    return APIResponse(
+        message=f"Driver is now {data.status}",
+        data={"status": data.status},
+    )
+

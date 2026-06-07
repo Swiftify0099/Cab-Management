@@ -1,2 +1,2 @@
-// Route: /auth/profile-setup
-export { default } from '../../src/screens/auth/ProfileSetupScreen'
+import ProfileSetupScreen from '../../src/screens/auth/ProfileSetupScreen'
+export default ProfileSetupScreen

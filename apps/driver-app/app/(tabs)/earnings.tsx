@@ -10,10 +10,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
-import axios from 'axios'
-import AsyncStorage from '@react-native-async-storage/async-storage'
-
-const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1'
+import { api } from '../../src/api/client'
 
 const MOCK_TXS = [
   { id: '1', label: 'Trip: Pune → Mumbai',        date: 'Today, 9:30 AM',   amount: +480, status: 'Success',  icon: 'car',        color: '#D1FAE5', iconColor: '#065F46' },
@@ -40,9 +37,7 @@ export default function EarningsScreen() {
   const fetchEarnings = async () => {
     setLoading(true)
     try {
-      const token = await AsyncStorage.getItem('access_token')
-      const headers = token ? { Authorization: `Bearer ${token}` } : {}
-      const res = await axios.get(`${API}/driver/earnings`, { headers })
+      const res = await api.get(`/driver/earnings`)
       if (res.data?.data?.total_earnings) setBalance(res.data.data.total_earnings)
     } catch { } finally { setLoading(false) }
   }

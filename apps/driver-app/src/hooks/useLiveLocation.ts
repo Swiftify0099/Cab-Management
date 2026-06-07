@@ -31,6 +31,10 @@ export interface LiveLocationResult {
 /**
  * Starts GPS tracking when mounted (if autoStart=true).
  * Updates every 3 seconds with battery-efficient settings.
+ *
+ * IMPORTANT: onUpdate is stored in a ref to prevent infinite re-render loops.
+ * The caller must NOT rely on closure freshness of onUpdate — always pass
+ * a stable (useCallback) reference, or rely on other state for fresh values.
  */
 export function useLiveLocation(
   autoStart: boolean = false,
@@ -39,8 +43,18 @@ export function useLiveLocation(
   const [location, setLocation]       = useState<LiveLocation | null>(null)
   const [isTracking, setTracking]     = useState(false)
   const [permissionGranted, setPerm]  = useState<boolean | null>(null)
-  const watcherRef  = useRef<Location.LocationSubscription | null>(null)
+  const watcherRef   = useRef<Location.LocationSubscription | null>(null)
   const prevCoordRef = useRef<Coordinate | null>(null)
+  const isTrackingRef = useRef(false)
+
+  // ✅ Store onUpdate in a ref to avoid it being a dependency of startTracking.
+  // This prevents the infinite re-render loop:
+  //   onUpdate changes (inline arrow fn) → startTracking recreates
+  //   → useEffect fires → startTracking called → setState → re-render → repeat
+  const onUpdateRef = useRef(onUpdate)
+  useEffect(() => {
+    onUpdateRef.current = onUpdate
+  }, [onUpdate])
 
   const requestPermission = useCallback(async (): Promise<boolean> => {
     const { status } = await Location.requestForegroundPermissionsAsync()
@@ -50,10 +64,11 @@ export function useLiveLocation(
   }, [])
 
   const startTracking = useCallback(async () => {
-    if (isTracking) return
+    if (isTrackingRef.current) return
     const ok = await requestPermission()
     if (!ok) return
 
+    isTrackingRef.current = true
     setTracking(true)
 
     watcherRef.current = await Location.watchPositionAsync(
@@ -83,14 +98,18 @@ export function useLiveLocation(
         }
 
         setLocation(update)
-        onUpdate?.(update)
+        // ✅ Use ref — never stale, never causes re-renders of this hook
+        onUpdateRef.current?.(update)
       }
     )
-  }, [isTracking, requestPermission, onUpdate])
+    // ─── onUpdate is intentionally NOT in the dependency array ───
+    // It is accessed via onUpdateRef which is always current.
+  }, [requestPermission])  // ← No onUpdate dependency = no infinite loop
 
   const stopTracking = useCallback(() => {
     watcherRef.current?.remove()
     watcherRef.current = null
+    isTrackingRef.current = false
     setTracking(false)
   }, [])
 
@@ -98,7 +117,8 @@ export function useLiveLocation(
   useEffect(() => {
     if (autoStart) startTracking()
     return () => stopTracking()
-  }, [autoStart])
+  }, [autoStart])  // ← startTracking is stable (no onUpdate dep), safe here
 
   return { location, isTracking, permissionGranted, startTracking, stopTracking }
 }
+

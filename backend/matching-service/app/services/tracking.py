@@ -93,6 +93,7 @@ class TrackingService:
             trip_id=UUID(trip_id),
             driver_id=UUID(driver_id),
             booking_id=UUID(booking_id) if booking_id else None,
+            driver_location=point_wkt,
             latitude=latitude,
             longitude=longitude,
             speed_kmh=speed_kmh,
@@ -130,6 +131,21 @@ class TrackingService:
                 **location_data,
             },
         )
+
+        # ── Arrival Alert (10km / 10min threshold) ────────────────────────
+        try:
+            from app.services.pending_matching import PendingMatchingService
+            alert_svc = PendingMatchingService(self.db)
+            await alert_svc.check_arrival_alert(
+                trip_id=trip_id,
+                driver_lat=latitude,
+                driver_lng=longitude,
+                speed_kmh=speed_kmh,
+                distance_remaining_km=distance_remaining_km,
+                eta_minutes=eta_minutes,
+            )
+        except Exception as e:
+            logger.warning("Arrival alert check failed", exc_info=e)
 
         return location_data
 

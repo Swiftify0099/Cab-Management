@@ -14,18 +14,18 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react'
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  StatusBar, Dimensions, SafeAreaView,
+  StatusBar, Dimensions,
 } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
 import { useLocalSearchParams, router } from 'expo-router'
 import { Feather, Ionicons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
-import MapView from 'react-native-maps'
 
 import { DriverMap }     from '../src/components/map/DriverMap'
 import { SpeedAlert }    from '../src/components/map/SpeedAlert'
 import { SOSButton }     from '../src/components/map/SOSButton'
 import { EarningsPanel } from '../src/components/map/EarningsPanel'
-import { useLiveLocation } from '../src/hooks/useLiveLocation'
+import { useLiveLocation, type LiveLocation } from '../src/hooks/useLiveLocation'
 import { useGoogleDirections } from '../src/hooks/useGoogleDirections'
 import { useDriverSocket } from '../src/hooks/useDriverSocket'
 import { formatETA } from '../src/services/googleMaps'
@@ -46,7 +46,9 @@ export default function NavigationScreen() {
   // Map settings
   const { nightMode, trafficEnabled, setNightMode, toggleTraffic } = useMapStore()
 
-  // Live GPS
+  // Live GPS — pass stable callback defined below
+  // NOTE: handleLocationUpdate is defined after this line; useLiveLocation stores
+  // the callback in a ref internally so it always calls the latest version.
   const { location, startTracking, stopTracking } = useLiveLocation(true)
 
   // Directions
@@ -65,17 +67,22 @@ export default function NavigationScreen() {
   const currentStep = route?.steps[currentStepIndex]
   const etaText     = route ? formatETA(route.etaTimestamp) : '--'
 
+  // ✅ Stable callback reference prevents useLiveLocation re-render loops
+  const handleLocationUpdate = useCallback((loc: LiveLocation | null) => {
+    if (!loc) return
+    sendLocationUpdate({
+      lat:     loc.lat,
+      lng:     loc.lng,
+      speed:   loc.speed,
+      heading: loc.heading,
+      accuracy: loc.accuracy,
+      trip_id: tripId,
+    })
+  }, [sendLocationUpdate, tripId])
+
   // Emit LOCATION_UPDATE every time GPS updates
   useEffect(() => {
     if (!location) return
-    sendLocationUpdate({
-      lat:     location.lat,
-      lng:     location.lng,
-      speed:   location.speed,
-      heading: location.heading,
-      accuracy: location.accuracy,
-      trip_id: tripId,
-    })
 
     // Voice next step instruction when close enough
     if (voiceEnabled && currentStep) {
@@ -84,7 +91,7 @@ export default function NavigationScreen() {
         // Only speak if we just changed steps (simplified)
       } catch { /* no expo-speech */ }
     }
-  }, [location])
+  }, [location, voiceEnabled, currentStep])
 
   const handleSOS = useCallback((payload: any) => {
     emitSOS({ trip_id: tripId, lat: location?.lat ?? 0, lng: location?.lng ?? 0 })

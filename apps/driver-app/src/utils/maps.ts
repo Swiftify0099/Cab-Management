@@ -7,7 +7,7 @@
  * All functions maintain the same call signatures so existing
  * screens continue to work without changes.
  */
-import { geocodeAddress, reverseGeocodeCoord, decodePolyline, calculateBearing } from '../services/googleMaps'
+import { geocodeAddress, reverseGeocodeCoord, decodePolyline, calculateBearing, getPlaceAutocomplete } from '../services/googleMaps'
 
 // ─── geocodeCity ──────────────────────────────────────────────
 // Previously used Nominatim. Now uses Google Geocoding API.
@@ -42,5 +42,5 @@ export const reverseGeocode = async (
 // ─── getRoutePolyline ─────────────────────────────────────────
 // Was previously using OSRM. Now uses Google Directions API.
 // Returns coordinate array for MapView Polyline component.
-export { decodePolyline, calculateBearing } from '../services/googleMaps'
+export { decodePolyline, calculateBearing, getPlaceAutocomplete } from '../services/googleMaps'
 export { getDirections as getRoutePolyline } from '../services/googleMaps'

@@ -21,11 +21,13 @@
  *   CONNECTED              — gateway ack
  */
 import { useEffect, useRef, useCallback, useState } from 'react'
+import { Vibration } from 'react-native'
 import { io, Socket } from 'socket.io-client'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import * as Location from 'expo-location'
 
 const WS_URL = (process.env.EXPO_PUBLIC_WS_URL || 'http://10.0.2.2:80').replace(/\/api\/v1$/, '')
+const API    = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1'
 
 // ─── Types ────────────────────────────────────────────────────
 export interface IncomingRequest {
@@ -56,10 +58,51 @@ export interface LocationUpdatePayload {
   timestamp: number
 }
 
+export interface PendingCustomer {
+  booking_id: string
+  customer_name: string
+  pickup_address: string
+  pickup_lat: number
+  pickup_lng: number
+  destination_address: string
+  destination_lat: number
+  destination_lng: number
+  seats_required: number
+  parcel: boolean
+  from_time: string
+  to_time: string
+  women_only: boolean
+  pickup_distance_km: number
+  destination_distance_km: number
+}
+
+export interface ArrivalAlertPayload {
+  trip_id: string
+  booking_id: string
+  distance_km: number
+  eta_minutes: number | null
+  driver_phone?: string   // ONLY sent at arrival (10km threshold)
+}
+
+/** Phase 2 — Customer who just entered the 3KM route corridor */
+export interface CorridorCustomerPayload {
+  trip_id: string
+  customer_id: string
+  lat: number
+  lng: number
+  dist_from_route_m: number | null
+}
+
 interface UseDriverSocketReturn {
-  connected:       boolean
-  incomingRequest: IncomingRequest | null
-  clearRequest:    () => void
+  connected:          boolean
+  incomingRequest:    IncomingRequest | null
+  pendingCustomers:   PendingCustomer[]   // live scan list updates
+  corridorCustomers:  CorridorCustomerPayload[]  // Phase 2: live customers in corridor
+  arrivalAlert:       ArrivalAlertPayload | null
+  clearRequest:       () => void
+  clearArrivalAlert:  () => void
+  clearCorridorCustomers: () => void
+  removeCorridorCustomer: (customerId: string) => void
 
   // Location
   sendLocationUpdate: (payload: Omit<LocationUpdatePayload, 'driver_id' | 'timestamp'>) => void
@@ -74,6 +117,9 @@ interface UseDriverSocketReturn {
   emitSOS:             (payload: { trip_id: string; lat: number; lng: number }) => void
   emitParcelPicked:    (parcelId: string, tripId: string) => void
   emitParcelDelivered: (parcelId: string, tripId: string) => void
+
+  // Scan room
+  joinDriverScan:      (tripId: string) => void
 }
 
 // ─── Hook ─────────────────────────────────────────────────────
@@ -81,8 +127,29 @@ export function useDriverSocket(): UseDriverSocketReturn {
   const socketRef    = useRef<Socket | null>(null)
   const driverIdRef  = useRef<string>('unknown')
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const [connected, setConnected]           = useState(false)
-  const [incomingRequest, setIncomingRequest] = useState<IncomingRequest | null>(null)
+  const [connected, setConnected]                   = useState(false)
+  const [incomingRequest, setIncomingRequest]       = useState<IncomingRequest | null>(null)
+  const [pendingCustomers, setPendingCustomers]     = useState<PendingCustomer[]>([])
+  const [corridorCustomers, setCorridorCustomers]   = useState<CorridorCustomerPayload[]>([])  // Phase 2
+  const [arrivalAlert, setArrivalAlert]             = useState<ArrivalAlertPayload | null>(null)
+
+  // ─── Siren: vibration pattern (buzz-pause x3, mimics alert beeps) ──────────
+  const playSiren = useCallback(() => {
+    try {
+      // Cancel any existing vibration first to prevent stacking
+      Vibration.cancel()
+      // Finite pattern: 200ms buzz, 100ms pause — 3 times (NOT repeating)
+      Vibration.vibrate([0, 200, 100, 200, 100, 200])
+    } catch (e) {
+      console.warn('[DriverSocket] Vibration failed:', e)
+    }
+  }, [])
+
+  const stopSiren = useCallback(() => {
+    try {
+      Vibration.cancel()
+    } catch { /* ignore */ }
+  }, [])
 
   useEffect(() => {
     let socket: Socket | null = null
@@ -127,9 +194,34 @@ export function useDriverSocket(): UseDriverSocketReturn {
       socket.on('INCOMING_TRIP_REQUEST', (data: IncomingRequest) => {
         console.log('[DriverSocket] Incoming request:', data.booking_id)
         setIncomingRequest(data)
+        playSiren()
       })
 
-      socket.on('BOOKING_EXPIRED', () => setIncomingRequest(null))
+      // New events
+      socket.on('TRIP_REQUEST', (data: IncomingRequest) => {
+        console.log('[DriverSocket] TRIP_REQUEST:', data.booking_id)
+        setIncomingRequest(data)
+        playSiren()
+      })
+
+      socket.on('NEW_PENDING_CUSTOMER', (data: PendingCustomer) => {
+        console.log('[DriverSocket] New pending customer:', data.booking_id)
+        setPendingCustomers(prev => {
+          // Avoid duplicates
+          if (prev.find(p => p.booking_id === data.booking_id)) return prev
+          return [data, ...prev]
+        })
+      })
+
+      socket.on('ARRIVAL_ALERT', (data: ArrivalAlertPayload) => {
+        console.log('[DriverSocket] ARRIVAL_ALERT:', data)
+        setArrivalAlert(data)
+      })
+
+      socket.on('BOOKING_EXPIRED', () => {
+        setIncomingRequest(null)
+        stopSiren()
+      })
 
       socket.on('SUSPENDED', (data: any) => {
         console.warn('[DriverSocket] Suspended:', data.reason)
@@ -139,13 +231,43 @@ export function useDriverSocket(): UseDriverSocketReturn {
       socket.on('CONNECTED', (data: any) =>
         console.log('[DriverSocket] Gateway ack:', data.message)
       )
+
+      // ── Phase 2: Corridor matching events ─────────────────────────────────
+
+      // A new customer has entered the 3KM route corridor
+      socket.on('CUSTOMER_ENTERED_CORRIDOR', (data: CorridorCustomerPayload) => {
+        console.log('[DriverSocket] CUSTOMER_ENTERED_CORRIDOR:', data.customer_id)
+        setCorridorCustomers(prev => {
+          // Avoid duplicates — update if already in list
+          if (prev.find(c => c.customer_id === data.customer_id)) {
+            return prev.map(c => c.customer_id === data.customer_id ? data : c)
+          }
+          return [data, ...prev]
+        })
+        // Vibrate briefly to alert driver
+        try {
+          Vibration.cancel()
+          Vibration.vibrate([0, 100, 80, 100])
+        } catch { /* ignore */ }
+      })
+
+      // A customer has left the corridor (timeout or location moved away)
+      socket.on('CUSTOMER_EXITED_CORRIDOR', (data: { customer_id: string; trip_id: string }) => {
+        console.log('[DriverSocket] CUSTOMER_EXITED_CORRIDOR:', data.customer_id)
+        setCorridorCustomers(prev => prev.filter(c => c.customer_id !== data.customer_id))
+      })
     }
 
     const startHeartbeat = async (s: Socket) => {
+      // ✅ Request permission ONCE before starting the interval.
+      // Calling requestForegroundPermissionsAsync() inside setInterval can cause
+      // dialog stacking crashes on Android.
+      const { status } = await Location.requestForegroundPermissionsAsync()
+      const hasLocationPermission = status === 'granted'
+
       const sendBeat = async () => {
         try {
-          const { status } = await Location.requestForegroundPermissionsAsync()
-          if (status !== 'granted') {
+          if (!hasLocationPermission) {
             s.emit('heartbeat', { driver_id: driverIdRef.current, ts: Date.now() })
             return
           }
@@ -187,12 +309,18 @@ export function useDriverSocket(): UseDriverSocketReturn {
       socket?.emit('DRIVER_OFFLINE', { driver_id: driverIdRef.current, timestamp: Date.now() })
       socket?.disconnect()
       socketRef.current = null
-      setConnected(false)
+      // NOTE: Do NOT call setConnected(false) here.
+      // The component is unmounting; state updates after unmount cause crashes in React 19.
     }
   }, [])
 
   // ─── Emitters ───────────────────────────────────────────────
-  const clearRequest = useCallback(() => setIncomingRequest(null), [])
+  const clearRequest = useCallback(() => {
+    setIncomingRequest(null)
+    stopSiren()
+  }, [stopSiren])
+
+  const clearArrivalAlert = useCallback(() => setArrivalAlert(null), [])
 
   const sendLocationUpdate = useCallback(
     (payload: Omit<LocationUpdatePayload, 'driver_id' | 'timestamp'>) => {
@@ -250,10 +378,29 @@ export function useDriverSocket(): UseDriverSocketReturn {
     socketRef.current?.emit('PARCEL_DELIVERED', { parcel_id: parcelId, trip_id: tripId, driver_id: driverIdRef.current, timestamp: Date.now() })
   }, [])
 
+  const joinDriverScan = useCallback((tripId: string) => {
+    socketRef.current?.emit('join_driver_scan', { trip_id: tripId })
+  }, [])
+
+  // ── Phase 2: Corridor customer helpers ──────────────────────
+  const clearCorridorCustomers = useCallback(() => {
+    setCorridorCustomers([])
+  }, [])
+
+  const removeCorridorCustomer = useCallback((customerId: string) => {
+    setCorridorCustomers(prev => prev.filter(c => c.customer_id !== customerId))
+  }, [])
+
   return {
     connected,
     incomingRequest,
+    pendingCustomers,
+    corridorCustomers,        // Phase 2
+    arrivalAlert,
     clearRequest,
+    clearArrivalAlert,
+    clearCorridorCustomers,   // Phase 2
+    removeCorridorCustomer,   // Phase 2
     sendLocationUpdate,
     sendHeartbeat,
     emitDriverOnline,
@@ -264,5 +411,6 @@ export function useDriverSocket(): UseDriverSocketReturn {
     emitSOS,
     emitParcelPicked,
     emitParcelDelivered,
+    joinDriverScan,
   }
 }

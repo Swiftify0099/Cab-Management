@@ -12,11 +12,15 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
+import asyncio
+
 from app.api.v1.matching import router as matching_router
 from app.api.v1.tracking import router as tracking_router
 from app.core.config import matching_settings
-from common.database import engine
+from common.database import engine, async_session_maker
 from common.utils.redis_client import close_redis
+from app.services.tracking import consume_location_updates
+from app.services.corridor_matcher import consume_customer_location_updates
 
 logger = structlog.get_logger(__name__)
 limiter = Limiter(key_func=get_remote_address)
@@ -25,8 +29,14 @@ limiter = Limiter(key_func=get_remote_address)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(" Matching Service starting", env=matching_settings.ENVIRONMENT)
+    tasks = [
+        asyncio.create_task(consume_location_updates(async_session_maker)),
+        asyncio.create_task(consume_customer_location_updates(async_session_maker)),
+    ]
     yield
     logger.info(" Matching Service shutting down")
+    for task in tasks:
+        task.cancel()
     await close_redis()
     await engine.dispose()
 

@@ -12,7 +12,7 @@ import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { router } from 'expo-router'
 import axios from 'axios'
-import AsyncStorage from '@react-native-async-storage/async-storage'
+import * as SecureStore from 'expo-secure-store'
 
 const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1'
 
@@ -35,7 +35,7 @@ export default function ParcelBookingScreen() {
   const weightPercent = ((weight / 20) * 100).toFixed(0)
 
   const getAuthHeader = async () => {
-    const token = await AsyncStorage.getItem('access_token')
+    const token = await SecureStore.getItemAsync('access_token')
     return token ? { Authorization: `Bearer ${token}` } : {}
   }
 

@@ -24,6 +24,8 @@ class OTPSendResponse(BaseModel):
     phone: str
     expires_in_minutes: int
     dev_otp: Optional[str] = None  # Only in dev mode
+    is_existing: Optional[bool] = False
+    tokens: Optional['TokenResponse'] = None
 
 
 class OTPVerifyRequest(BaseModel):

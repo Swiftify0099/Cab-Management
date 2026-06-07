@@ -62,7 +62,7 @@ export default function ProfileSetupScreen() {
         dob, emergency_contact: `+91${emergencyContact.replace(/\D/g, '')}`,
       })
       setProfileComplete()
-      router.replace('/(tabs)')
+      router.replace('/auth/address-setup' as any)
     } catch (err: any) {
       Alert.alert('Error', err?.response?.data?.detail || 'Failed to save profile. Please try again.')
     } finally { setLoading(false) }

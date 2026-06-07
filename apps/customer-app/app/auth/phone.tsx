@@ -1,2 +1,2 @@
-// Route: /auth/phone
-export { default } from '../../src/screens/auth/PhoneScreen'
+import PhoneScreen from '../../src/screens/auth/PhoneScreen'
+export default PhoneScreen

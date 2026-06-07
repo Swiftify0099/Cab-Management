@@ -1,289 +1,486 @@
-import React, { useEffect, useState, useRef } from 'react';
+/**
+ * Matching Waiting Screen
+ * Handles:
+ *  - MATCH_FOUND  → show driver card, prompt to book
+ *  - TRIP_ACCEPTED → show confirmed card + navigate to tracking
+ *  - TRIP_REJECTED → show toast, keep searching
+ *  - ARRIVAL_ALERT → show 10km alert banner
+ *  - 120-second timeout → show "no driver" UI
+ */
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
-  View,
-  Text,
-  SafeAreaView,
-  StatusBar,
-  StyleSheet,
-  TouchableOpacity,
-  Alert
+  View, Text, StyleSheet, TouchableOpacity,
+  ActivityIndicator, Alert, Animated, Easing, StatusBar, ScrollView,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useCustomerSocket, DriverInfo } from '../src/hooks/useCustomerSocket';
 import axios from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
+import * as Location from 'expo-location';
+import {
+  useCustomerSocket,
+  MatchFoundPayload,
+  TripAcceptedPayload,
+  ArrivalAlertPayload,
+} from '../src/hooks/useCustomerSocket';
 
 const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1';
 
+type WaitState = 'searching' | 'match_found' | 'booking' | 'accepted' | 'failed'
+
 export default function MatchingWaitingScreen() {
-  const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
-  const { connected, joinTrip, on, off, socket } = useCustomerSocket();
-  const [driver, setDriver] = useState<DriverInfo | null>(null);
-  const [matchFailed, setMatchFailed] = useState(false);
-  const [timeoutSec, setTimeoutSec] = useState(120);
-  const [cancelling, setCancelling] = useState(false);
+  const {
+    bookingId,
+    pendingBookingId,
+    tripId: urlTripId,
+  } = useLocalSearchParams<{
+    bookingId: string
+    pendingBookingId?: string
+    tripId?: string
+  }>();
+
+  const {
+    connected, joinTrip, matchFound, tripAccepted, tripRejected,
+    arrivalAlert, clearMatchFound, clearTripAccepted, clearTripRejected, clearArrivalAlert,
+    socket, sendLocationUpdate,
+  } = useCustomerSocket();
+
+  const [state, setState]             = useState<WaitState>('searching');
+  const [timeLeft, setTimeLeft]       = useState(120);
+  const [matchData, setMatchData]     = useState<MatchFoundPayload | null>(null);
+  const [confirmedDriver, setConfirmedDriver] = useState<TripAcceptedPayload | null>(null);
+  const [rejectionMsg, setRejectionMsg] = useState('');
+  const [booking, setBooking]         = useState(false);
+  const [cancelling, setCancelling]   = useState(false);
+
+  // Pulse animation for searching dot
+  const pulse = React.useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
-    if (timeoutSec <= 0 && !driver) {
-      setMatchFailed(true);
-      return;
-    }
-    if (matchFailed || driver) return;
-    
-    const timer = setInterval(() => {
-      setTimeoutSec(s => s - 1);
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [timeoutSec, driver, matchFailed]);
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1.4, duration: 700, useNativeDriver: true, easing: Easing.ease }),
+        Animated.timing(pulse, { toValue: 1.0, duration: 700, useNativeDriver: true, easing: Easing.ease }),
+      ])
+    );
+    anim.start();
+    return () => anim.stop();
+  }, []);
 
+  // 120-second search timeout
   useEffect(() => {
-    if (connected && bookingId && socket) {
-      joinTrip(bookingId);
-      
-      const handleAccepted = (data: any) => {
-        if (data.booking_id === bookingId) {
-          setDriver(data.driver);
-        }
-      };
-      
-      const handleFailed = (data: any) => {
-        if (data.booking_id === bookingId) {
-          setMatchFailed(true);
-        }
+    if (state !== 'searching') return;
+    if (timeLeft <= 0) { setState('failed'); return; }
+    const t = setTimeout(() => setTimeLeft(s => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [timeLeft, state]);
+
+  // Join WebSocket room when connected
+  useEffect(() => {
+    if (!connected) return;
+    if (bookingId) joinTrip(bookingId);
+    if (urlTripId) joinTrip(urlTripId);
+  }, [connected, bookingId, urlTripId]);
+
+  // ── Phase 2: Broadcast GPS every 10s while searching ──────────────────────
+  // Backend checks if customer entered any driver's 3KM route corridor.
+  // On corridor entry: MATCH_FOUND is emitted back to customer.
+  useEffect(() => {
+    if (state !== 'searching') return;
+
+    let intervalId: ReturnType<typeof setInterval>;
+    let permGranted = false;
+
+    const startBroadcast = async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        permGranted = status === 'granted';
+      } catch { /* ignore */ }
+
+      const broadcastOnce = async () => {
+        if (!permGranted) return;
+        try {
+          const loc = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
+          sendLocationUpdate(loc.coords.latitude, loc.coords.longitude);
+        } catch { /* GPS unavailable — skip */ }
       };
 
-      socket.on('DRIVER_ACCEPTED', handleAccepted);
-      socket.on('MATCHING_FAILED', handleFailed);
-      
-      return () => {
-        socket.off('DRIVER_ACCEPTED', handleAccepted);
-        socket.off('MATCHING_FAILED', handleFailed);
-      };
+      await broadcastOnce();
+      intervalId = setInterval(broadcastOnce, 10_000);
+    };
+
+    startBroadcast();
+    return () => clearInterval(intervalId);
+  }, [state, sendLocationUpdate]);
+
+  // Handle MATCH_FOUND
+  useEffect(() => {
+    if (!matchFound) return;
+    setMatchData(matchFound);
+    setState('match_found');
+    clearMatchFound();
+  }, [matchFound]);
+
+  // Handle TRIP_ACCEPTED
+  useEffect(() => {
+    if (!tripAccepted) return;
+    setConfirmedDriver(tripAccepted);
+    setState('accepted');
+    clearTripAccepted();
+  }, [tripAccepted]);
+
+  // Handle TRIP_REJECTED (show toast, keep searching)
+  useEffect(() => {
+    if (!tripRejected) return;
+    setRejectionMsg(tripRejected.message || 'Driver rejected — still searching...');
+    clearTripRejected();
+    // Auto-hide rejection message after 4s
+    const t = setTimeout(() => setRejectionMsg(''), 4000);
+    return () => clearTimeout(t);
+  }, [tripRejected]);
+
+  // ── Book the matched trip ──────────────────────────────────────────────────
+  const handleBookMatch = useCallback(async () => {
+    if (!matchData || booking) return;
+    setBooking(true);
+    setState('booking');
+    try {
+      const token = await SecureStore.getItemAsync('access_token');
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      await axios.post(`${API}/bookings/`, {
+        trip_id:            matchData.trip_id,
+        seat_count:         1,
+        pending_booking_id: bookingId || pendingBookingId,
+      }, { headers });
+      // TRIP_ACCEPTED will come via WebSocket → handled above
+    } catch (e: any) {
+      Alert.alert('Booking Failed', e?.response?.data?.detail || 'Try again');
+      setState('match_found');
+    } finally {
+      setBooking(false);
     }
-  }, [connected, bookingId, socket]);
+  }, [matchData, booking, bookingId, pendingBookingId]);
 
-  const handleCancel = async () => {
+  // ── Cancel ─────────────────────────────────────────────────────────────────
+  const handleCancel = useCallback(async () => {
     setCancelling(true);
     try {
-      const token = await AsyncStorage.getItem('access_token');
+      const token = await SecureStore.getItemAsync('access_token');
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      await axios.post(`${API}/bookings/${bookingId}/cancel`, { reason: 'Cancelled while waiting' }, { headers });
-      router.replace('/(tabs)/trips');
-    } catch (e: any) {
-      Alert.alert('Error', e?.response?.data?.detail || 'Failed to cancel');
-      setCancelling(false);
-    }
-  };
+      if (bookingId) {
+        await axios.post(`${API}/bookings/${bookingId}/cancel`, { reason: 'Cancelled while waiting' }, { headers });
+      } else if (pendingBookingId) {
+        await axios.delete(`${API}/bookings/pending/${pendingBookingId}`, { headers });
+      }
+    } catch { /* ignore */ }
+    router.replace('/(tabs)/trips' as any);
+  }, [bookingId, pendingBookingId]);
 
+  // ── Navigate to tracking ───────────────────────────────────────────────────
   const handleTrackLive = () => {
-    router.replace(`/track?bookingId=${bookingId}`);
+    const bid = confirmedDriver?.booking_id || bookingId;
+    router.replace(`/track?bookingId=${bid}` as any);
   };
 
-  if (matchFailed) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="light-content" />
-        <View style={styles.centerContent}>
-          <Text style={{ fontSize: 60, marginBottom: 16 }}>😔</Text>
-          <Text style={styles.title}>No Driver Available</Text>
-          <Text style={styles.subtitle}>
-            No drivers are available in your area right now. Please try again in a few minutes.
-          </Text>
-          <TouchableOpacity style={styles.primaryBtn} onPress={() => router.back()}>
-            <Text style={styles.primaryBtnText}>Try Again</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.secondaryBtn} onPress={() => router.replace('/(tabs)/trips')}>
-            <Text style={styles.secondaryBtnText}>View My Trips</Text>
-          </TouchableOpacity>
+  // ══════════════════════════════════════════════════════════════════════════
+  // RENDER
+  // ══════════════════════════════════════════════════════════════════════════
+  return (
+    <SafeAreaView style={styles.root}>
+      <StatusBar barStyle="light-content" backgroundColor="#0A0F1E" />
+
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+          <Feather name="arrow-left" size={22} color="#fff" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>
+          {state === 'accepted' ? 'Ride Confirmed! 🎉'
+            : state === 'match_found' ? 'Match Found! 🚗'
+            : state === 'failed' ? 'No Drivers Available'
+            : 'Finding Your Driver...'}
+        </Text>
+        <View style={{ width: 38 }} />
+      </View>
+
+      {/* Rejection toast */}
+      {!!rejectionMsg && (
+        <View style={styles.rejectionToast}>
+          <Ionicons name="information-circle" size={18} color="#FCD34D" />
+          <Text style={styles.rejectionText}>{rejectionMsg}</Text>
         </View>
-      </SafeAreaView>
-    );
-  }
+      )}
 
-  if (driver) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="light-content" />
-        <View style={styles.centerContent}>
-          <Text style={{ fontSize: 60, marginBottom: 16 }}>🎉</Text>
-          <Text style={styles.title}>Driver Found!</Text>
-          <Text style={styles.subtitle}>Your cab is on the way</Text>
+      {/* Arrival Alert Banner */}
+      {arrivalAlert && (
+        <TouchableOpacity style={styles.arrivalBanner} onPress={clearArrivalAlert}>
+          <LinearGradient colors={['#F59E0B','#EF4444']} start={{x:0,y:0}} end={{x:1,y:0}} style={styles.arrivalGrad}>
+            <Text style={styles.arrivalEmoji}>🚗</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.arrivalTitle}>Driver is almost here!</Text>
+              <Text style={styles.arrivalSub}>
+                {arrivalAlert.distance_km.toFixed(1)} km away
+                {arrivalAlert.eta_minutes ? ` · ~${arrivalAlert.eta_minutes} min` : ''}
+                {arrivalAlert.driver_phone ? `  •  📞 ${arrivalAlert.driver_phone}` : ''}
+              </Text>
+            </View>
+            <Feather name="x" size={16} color="#fff" />
+          </LinearGradient>
+        </TouchableOpacity>
+      )}
 
-          <View style={[styles.glassCard, { width: '90%', marginTop: 24, padding: 20 }]}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
-              <View style={styles.avatarCircle}>
-                <Text style={styles.avatarText}>{driver.full_name.charAt(0)}</Text>
+      <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
+
+        {/* ── SEARCHING ────────────────────────────────────────────────────── */}
+        {(state === 'searching' || state === 'booking') && (
+          <View style={styles.searchingCard}>
+            <Animated.View style={[styles.pulseOuter, { transform: [{ scale: pulse }] }]} />
+            <View style={styles.pulseInner}>
+              <MaterialCommunityIcons name="car-search" size={52} color="#6366F1" />
+            </View>
+
+            <Text style={styles.searchTitle}>
+              {state === 'booking' ? 'Confirming your booking...' : 'Searching for drivers near you'}
+            </Text>
+            <Text style={styles.searchSub}>
+              {state === 'booking'
+                ? 'Please wait a moment'
+                : "We'll notify you the moment a driver matches your route"}
+            </Text>
+
+            {state === 'searching' && (
+              <>
+                <View style={styles.timerRow}>
+                  <Feather name="clock" size={14} color="#9CA3AF" />
+                  <Text style={styles.timerText}> {timeLeft}s remaining</Text>
+                </View>
+                <View style={styles.progressBar}>
+                  <View style={[styles.progressFill, { width: `${(timeLeft / 120) * 100}%` }]} />
+                </View>
+              </>
+            )}
+
+            {state === 'booking' && <ActivityIndicator color="#6366F1" size="large" style={{ marginTop: 24 }} />}
+          </View>
+        )}
+
+        {/* ── MATCH FOUND ──────────────────────────────────────────────────── */}
+        {state === 'match_found' && matchData && (
+          <View style={styles.matchCard}>
+            <LinearGradient colors={['rgba(99,102,241,0.2)', 'rgba(139,92,246,0.1)']} style={StyleSheet.absoluteFill} />
+
+            <View style={styles.matchIconRow}>
+              <View style={styles.matchIconCircle}>
+                <MaterialCommunityIcons name="car-connected" size={36} color="#6366F1" />
               </View>
-              <View>
-                <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>{driver.full_name}</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+              <Text style={styles.matchLabel}>Match Found!</Text>
+            </View>
+
+            <View style={styles.matchRow}>
+              <View style={styles.matchDot} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.matchFieldLabel}>Driver</Text>
+                <Text style={styles.matchFieldValue}>{matchData.driver_name}</Text>
+              </View>
+            </View>
+            <View style={styles.matchDivider} />
+            <View style={styles.matchRow}>
+              <View style={[styles.matchDot, { backgroundColor: '#3B82F6' }]} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.matchFieldLabel}>Route</Text>
+                <Text style={styles.matchFieldValue} numberOfLines={2}>
+                  {matchData.pickup_address} → {matchData.destination_address}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.matchDivider} />
+            <View style={styles.matchInfoRow}>
+              <View style={styles.matchInfoItem}>
+                <Text style={styles.matchInfoLabel}>Seats</Text>
+                <Text style={styles.matchInfoValue}>{matchData.available_seats} avail.</Text>
+              </View>
+              <View style={styles.matchInfoItem}>
+                <Text style={styles.matchInfoLabel}>Departure</Text>
+                <Text style={styles.matchInfoValue}>
+                  {new Date(matchData.departure_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </Text>
+              </View>
+              <View style={styles.matchInfoItem}>
+                <Text style={styles.matchInfoLabel}>Pickup dist.</Text>
+                <Text style={styles.matchInfoValue}>
+                  {(matchData.pickup_distance_meters / 1000).toFixed(1)} km
+                </Text>
+              </View>
+              {matchData.women_only && (
+                <View style={styles.matchInfoItem}>
+                  <Text style={[styles.matchInfoValue, { color: '#F472B6' }]}>👩 Women Only</Text>
+                </View>
+              )}
+            </View>
+
+            <TouchableOpacity style={styles.bookNowBtn} onPress={handleBookMatch} disabled={booking}>
+              <LinearGradient colors={['#6366F1', '#8B5CF6']} start={{x:0,y:0}} end={{x:1,y:0}} style={styles.bookNowGrad}>
+                {booking
+                  ? <ActivityIndicator color="#fff" />
+                  : <Text style={styles.bookNowText}>Book This Ride</Text>
+                }
+              </LinearGradient>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.skipBtn} onPress={() => { setState('searching'); setMatchData(null); }}>
+              <Text style={styles.skipText}>Keep Searching</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* ── ACCEPTED ─────────────────────────────────────────────────────── */}
+        {state === 'accepted' && confirmedDriver && (
+          <View style={styles.acceptedCard}>
+            <LinearGradient colors={['rgba(16,185,129,0.2)', 'rgba(5,150,105,0.1)']} style={StyleSheet.absoluteFill} />
+
+            <View style={styles.checkCircle}>
+              <Ionicons name="checkmark" size={40} color="#10B981" />
+            </View>
+            <Text style={styles.acceptedTitle}>Your ride is confirmed!</Text>
+            <Text style={styles.acceptedSub}>
+              {confirmedDriver.driver?.full_name || 'Your driver'} has accepted your request.
+            </Text>
+
+            <View style={styles.driverCard}>
+              <View style={styles.driverIconCircle}>
+                <Ionicons name="person" size={28} color="#6366F1" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.driverName}>{confirmedDriver.driver?.full_name || '—'}</Text>
+                <Text style={styles.driverSub}>
+                  {confirmedDriver.driver?.vehicle || ''} • {confirmedDriver.driver?.registration_number || ''}
+                </Text>
+                <View style={styles.ratingRow}>
                   <Ionicons name="star" size={14} color="#FBBF24" />
-                  <Text style={{ color: '#FBBF24', marginLeft: 4 }}>{driver.rating.toFixed(1)}</Text>
+                  <Text style={styles.ratingText}> {confirmedDriver.driver?.rating?.toFixed(1) || '4.5'}</Text>
                 </View>
               </View>
             </View>
 
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
-              <View style={styles.infoBox}>
-                <Text style={styles.infoLabel}>Vehicle</Text>
-                <Text style={styles.infoValue}>{driver.vehicle}</Text>
-              </View>
-              <View style={styles.infoBox}>
-                <Text style={styles.infoLabel}>Reg. Number</Text>
-                <Text style={styles.infoValue}>{driver.registration_number}</Text>
-              </View>
-              <View style={styles.infoBox}>
-                <Text style={styles.infoLabel}>Distance</Text>
-                <Text style={styles.infoValue}>{driver.distance_km} km</Text>
-              </View>
-              <View style={styles.infoBox}>
-                <Text style={styles.infoLabel}>ETA</Text>
-                <Text style={styles.infoValue}>~{Math.round(driver.distance_km * 3)} min</Text>
-              </View>
-            </View>
-          </View>
-
-          <View style={{ flexDirection: 'row', gap: 12, marginTop: 24, paddingHorizontal: 20 }}>
-            <TouchableOpacity style={[styles.primaryBtn, { flex: 1, backgroundColor: '#10B981' }]}>
-              <Ionicons name="call" size={18} color="#fff" />
-              <Text style={[styles.primaryBtnText, { marginLeft: 8 }]}>Call Driver</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.primaryBtn, { flex: 1 }]} onPress={handleTrackLive}>
-              <Ionicons name="location" size={18} color="#fff" />
-              <Text style={[styles.primaryBtnText, { marginLeft: 8 }]}>Track Live</Text>
+            <TouchableOpacity style={styles.trackBtn} onPress={handleTrackLive}>
+              <LinearGradient colors={['#10B981', '#059669']} start={{x:0,y:0}} end={{x:1,y:0}} style={styles.trackGrad}>
+                <Feather name="navigation" size={18} color="#fff" />
+                <Text style={styles.trackText}>Track Live</Text>
+              </LinearGradient>
             </TouchableOpacity>
           </View>
-        </View>
-      </SafeAreaView>
-    );
-  }
+        )}
 
-  // Waiting Animation (Stitch code adapted)
-  return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" />
-
-      {/* Map Background Layer */}
-      <View style={[StyleSheet.absoluteFillObject, { opacity: 0.2, zIndex: 0 }]}>
-        <View style={{ width: '100%', height: '100%', borderWidth: 1, borderColor: '#374151', transform: [{ scale: 1.5 }, { rotate: '15deg' }] }}>
-           <View style={{ width: 1, height: '100%', backgroundColor: '#6B7280', position: 'absolute', left: 80 }} />
-           <View style={{ width: '100%', height: 1, backgroundColor: '#6B7280', position: 'absolute', top: 128 }} />
-           <View style={{ width: 1, height: '100%', backgroundColor: '#6B7280', position: 'absolute', left: 240 }} />
-           <View style={{ width: '100%', height: 1, backgroundColor: '#6B7280', position: 'absolute', top: 320 }} />
-           <View style={{ width: 1, height: '100%', backgroundColor: '#6B7280', position: 'absolute', left: 160, transform: [{ rotate: '45deg' }] }} />
-        </View>
-      </View>
-
-      {/* Radar Animation Area */}
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', position: 'relative', zIndex: 10 }}>
-        
-        {/* Glow Rings representing radar pulses */}
-        <View style={{ width: 320, height: 320, borderRadius: 160, borderWidth: 1, borderColor: 'rgba(168,85,247,0.3)', alignItems: 'center', justifyContent: 'center', position: 'absolute' }}>
-          <View style={{ width: 256, height: 256, borderRadius: 128, borderWidth: 1, borderColor: 'rgba(192,132,252,0.5)', position: 'absolute' }} />
-          <View style={[{ width: 192, height: 192, borderRadius: 96, borderWidth: 1, borderColor: 'rgba(216,180,254,0.7)', position: 'absolute' }, styles.glow]} />
-          
-          <View style={[{ width: '100%', height: '100%', borderRadius: 160, position: 'absolute' }, styles.radarSweep]} />
-        </View>
-
-        {/* Cars (Mocked positions) */}
-        <View style={{ position: 'absolute', top: '25%', left: '20%', transform: [{ rotate: '-10deg' }] }}>
-           <View style={{ width: 64, height: 4, backgroundColor: 'rgba(34,211,238,0.5)', borderRadius: 2, position: 'absolute', right: -48, top: 8 }} />
-           <View style={{ width: 40, height: 20, backgroundColor: '#2563EB', borderRadius: 6, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#60A5FA', shadowColor: 'rgba(34,211,238,0.5)', shadowOpacity: 1, shadowRadius: 4, elevation: 5 }}>
-             <View style={{ width: 24, height: 12, backgroundColor: '#1E3A8A', borderRadius: 2 }} />
-           </View>
-        </View>
-
-        <View style={{ position: 'absolute', top: '50%', right: '15%', transform: [{ rotate: '80deg' }] }}>
-           <View style={{ width: 80, height: 6, backgroundColor: 'rgba(34,211,238,0.4)', borderRadius: 3, position: 'absolute', right: -64, top: 8 }} />
-           <View style={{ width: 40, height: 20, backgroundColor: '#2563EB', borderRadius: 6, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#60A5FA', shadowColor: 'rgba(34,211,238,0.5)', shadowOpacity: 1, shadowRadius: 4, elevation: 5 }}>
-             <View style={{ width: 24, height: 12, backgroundColor: '#1E3A8A', borderRadius: 2 }} />
-           </View>
-        </View>
-
-        <View style={{ position: 'absolute', bottom: '25%', left: '33%', transform: [{ rotate: '170deg' }] }}>
-           <View style={{ width: 96, height: 6, backgroundColor: 'rgba(34,211,238,0.5)', borderRadius: 3, position: 'absolute', right: -80, top: 8 }} />
-           <View style={{ width: 40, height: 20, backgroundColor: '#2563EB', borderRadius: 6, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#60A5FA', shadowColor: 'rgba(34,211,238,0.5)', shadowOpacity: 1, shadowRadius: 4, elevation: 5 }}>
-             <View style={{ width: 24, height: 12, backgroundColor: '#1E3A8A', borderRadius: 2 }} />
-           </View>
-        </View>
-
-        {/* Main Text Content */}
-        <View style={{ position: 'absolute', zIndex: 20, alignItems: 'center', paddingHorizontal: 32, width: '100%' }}>
-          <Text style={{ color: '#FFFFFF', fontSize: 28, fontWeight: '900', textAlign: 'center', lineHeight: 34, marginBottom: 16 }}>
-            Finding the best intercity partner for you...
-          </Text>
-          <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 14, textAlign: 'center', lineHeight: 20, paddingHorizontal: 24 }}>
-            Safety check: All drivers on this route are background-verified.
-          </Text>
-          
-          <Text style={{ color: '#9CA3AF', fontSize: 14, marginTop: 24 }}>
-            {timeoutSec}s remaining
-          </Text>
-        </View>
-
-      </View>
-
-      {/* Bottom Floating Card */}
-      <View style={{ position: 'absolute', bottom: 0, width: '100%', paddingHorizontal: 20, paddingBottom: 32, paddingTop: 16, zIndex: 20 }}>
-        <View style={[styles.glassCard, { padding: 24 }]}>
-          
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
-            <View style={{ width: 64, height: 64, borderRadius: 32, borderWidth: 1, borderColor: '#9CA3AF', alignItems: 'center', justifyContent: 'center', marginRight: 16, backgroundColor: 'rgba(255,255,255,0.05)' }}>
-               <Ionicons name="car" size={32} color="#D1D5DB" />
-            </View>
-            <View>
-              <Text style={{ color: '#FFFFFF', fontSize: 20, fontWeight: '800', marginBottom: 4 }}>Premium Intercity</Text>
-              <Text style={{ color: '#9CA3AF', fontSize: 14 }}>Connecting to drivers...</Text>
-            </View>
+        {/* ── FAILED ───────────────────────────────────────────────────────── */}
+        {state === 'failed' && (
+          <View style={styles.failedCard}>
+            <Ionicons name="alert-circle-outline" size={64} color="#EF4444" />
+            <Text style={styles.failedTitle}>No drivers found</Text>
+            <Text style={styles.failedSub}>
+              Your pre-booking is saved. We'll notify you when a matching driver publishes a route.
+            </Text>
+            <TouchableOpacity style={styles.retryBtn} onPress={() => { setTimeLeft(120); setState('searching'); }}>
+              <Text style={styles.retryText}>Search Again</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.preLinkBtn} onPress={() => router.push('/pre-booking' as any)}>
+              <Text style={styles.preLinkText}>Submit a Pre-Booking →</Text>
+            </TouchableOpacity>
           </View>
+        )}
+      </ScrollView>
 
-          {/* Scanning Line Animation Mock */}
-          <View style={{ width: '100%', height: 4, backgroundColor: '#1E3A8A', borderRadius: 2, overflow: 'hidden', marginTop: 8 }}>
-            <View style={[{ width: '33%', height: '100%', backgroundColor: '#22D3EE', borderRadius: 2, marginLeft: '33%' }, styles.scanLine]} />
-          </View>
-          <View style={{ width: '100%', flexDirection: 'row', justifyContent: 'center', marginTop: 4, opacity: 0.5, alignItems: 'center' }}>
-             <View style={{ width: 4, height: 4, backgroundColor: '#A5F3FC', borderRadius: 2, marginHorizontal: 4 }} />
-             <View style={{ width: 6, height: 6, backgroundColor: '#A5F3FC', borderRadius: 3, marginHorizontal: 4, transform: [{ translateY: -4 }] }} />
-             <View style={{ width: 4, height: 4, backgroundColor: '#A5F3FC', borderRadius: 2, marginHorizontal: 4 }} />
-             <View style={{ width: 8, height: 8, backgroundColor: '#A5F3FC', borderRadius: 4, marginHorizontal: 4, transform: [{ translateY: -2 }] }} />
-          </View>
-          
-          <TouchableOpacity 
-            style={{ marginTop: 24, alignItems: 'center', paddingVertical: 12, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(239, 68, 68, 0.5)' }} 
-            onPress={handleCancel}
-            disabled={cancelling}
-          >
-            <Text style={{ color: '#EF4444', fontWeight: '600' }}>{cancelling ? 'Cancelling...' : 'Cancel Search'}</Text>
+      {/* Cancel Button */}
+      {(state === 'searching' || state === 'match_found') && (
+        <View style={styles.cancelWrap}>
+          <TouchableOpacity style={styles.cancelBtn} onPress={handleCancel} disabled={cancelling}>
+            {cancelling
+              ? <ActivityIndicator color="#EF4444" />
+              : <Text style={styles.cancelText}>Cancel Request</Text>
+            }
           </TouchableOpacity>
         </View>
-      </View>
-      
+      )}
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0F172A' },
-  centerContent: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 20, zIndex: 10 },
-  title: { color: '#FFFFFF', fontSize: 28, fontWeight: '900', textAlign: 'center', marginBottom: 8 },
-  subtitle: { color: '#9CA3AF', fontSize: 16, textAlign: 'center', marginBottom: 32, paddingHorizontal: 20 },
-  
-  glow: { shadowColor: '#A855F7', shadowOpacity: 1, shadowRadius: 30, elevation: 20 },
-  radarSweep: { borderLeftWidth: 2, borderLeftColor: 'rgba(168, 85, 247, 0.2)', borderTopWidth: 2, borderTopColor: 'rgba(168, 85, 247, 0.05)', transform: [{ rotate: '45deg' }] },
-  scanLine: { shadowColor: '#22D3EE', shadowOpacity: 1, shadowRadius: 10, elevation: 5 },
-  
-  glassCard: { backgroundColor: 'rgba(30, 35, 50, 0.85)', borderRadius: 30, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)', shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 20, elevation: 15 },
-  
-  primaryBtn: { backgroundColor: '#3B82F6', borderRadius: 16, paddingVertical: 16, paddingHorizontal: 32, width: '100%', alignItems: 'center', marginBottom: 12, flexDirection: 'row', justifyContent: 'center' },
-  primaryBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
-  secondaryBtn: { backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 16, paddingVertical: 16, paddingHorizontal: 32, width: '100%', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
-  secondaryBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
+  root:            { flex: 1, backgroundColor: '#0A0F1E' },
+  header:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16 },
+  backBtn:         { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center' },
+  headerTitle:     { color: '#fff', fontSize: 18, fontWeight: '700', flex: 1, textAlign: 'center' },
 
-  avatarCircle: { width: 56, height: 56, borderRadius: 28, backgroundColor: '#3B82F6', alignItems: 'center', justifyContent: 'center', marginRight: 16 },
-  avatarText: { color: '#FFFFFF', fontSize: 24, fontWeight: '700' },
-  
-  infoBox: { backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: 12, width: '48%' },
-  infoLabel: { color: '#9CA3AF', fontSize: 12, marginBottom: 4 },
-  infoValue: { color: '#FFFFFF', fontSize: 14, fontWeight: '600', textTransform: 'capitalize' },
+  rejectionToast:  { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(252,211,77,0.15)', borderColor: '#FCD34D', borderWidth: 1, borderRadius: 10, marginHorizontal: 20, padding: 12, marginBottom: 8, gap: 8 },
+  rejectionText:   { color: '#FCD34D', fontSize: 13, flex: 1 },
+
+  arrivalBanner:   { marginHorizontal: 16, borderRadius: 16, marginBottom: 12, overflow: 'hidden' },
+  arrivalGrad:     { flexDirection: 'row', alignItems: 'center', padding: 14, gap: 10 },
+  arrivalEmoji:    { fontSize: 22 },
+  arrivalTitle:    { color: '#fff', fontWeight: 'bold', fontSize: 15 },
+  arrivalSub:      { color: 'rgba(255,255,255,0.85)', fontSize: 13, marginTop: 2 },
+
+  body:            { padding: 20, paddingBottom: 120 },
+
+  // Searching
+  searchingCard:   { backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 28, padding: 32, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
+  pulseOuter:      { width: 140, height: 140, borderRadius: 70, backgroundColor: 'rgba(99,102,241,0.15)', position: 'absolute', top: 32 - 20, alignSelf: 'center' },
+  pulseInner:      { width: 100, height: 100, borderRadius: 50, backgroundColor: 'rgba(99,102,241,0.2)', alignItems: 'center', justifyContent: 'center', marginBottom: 28, marginTop: 8 },
+  searchTitle:     { color: '#fff', fontSize: 20, fontWeight: '700', textAlign: 'center', marginBottom: 8 },
+  searchSub:       { color: '#9CA3AF', fontSize: 14, textAlign: 'center', lineHeight: 20, marginBottom: 20 },
+  timerRow:        { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  timerText:       { color: '#9CA3AF', fontSize: 13 },
+  progressBar:     { width: '100%', height: 4, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 2 },
+  progressFill:    { height: 4, backgroundColor: '#6366F1', borderRadius: 2 },
+
+  // Match Found
+  matchCard:       { backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 28, padding: 24, borderWidth: 1, borderColor: 'rgba(99,102,241,0.3)', overflow: 'hidden' },
+  matchIconRow:    { flexDirection: 'row', alignItems: 'center', marginBottom: 20, gap: 12 },
+  matchIconCircle: { width: 60, height: 60, borderRadius: 30, backgroundColor: 'rgba(99,102,241,0.2)', alignItems: 'center', justifyContent: 'center' },
+  matchLabel:      { color: '#fff', fontSize: 22, fontWeight: '800' },
+  matchRow:        { flexDirection: 'row', alignItems: 'flex-start', gap: 12, paddingVertical: 8 },
+  matchDot:        { width: 10, height: 10, borderRadius: 5, backgroundColor: '#22C55E', marginTop: 6 },
+  matchFieldLabel: { color: '#9CA3AF', fontSize: 12, marginBottom: 2 },
+  matchFieldValue: { color: '#fff', fontSize: 15, fontWeight: '600' },
+  matchDivider:    { height: 1, backgroundColor: 'rgba(255,255,255,0.07)', marginVertical: 4 },
+  matchInfoRow:    { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginVertical: 12 },
+  matchInfoItem:   { alignItems: 'center', minWidth: 80 },
+  matchInfoLabel:  { color: '#9CA3AF', fontSize: 11, marginBottom: 2 },
+  matchInfoValue:  { color: '#fff', fontSize: 14, fontWeight: '700' },
+  bookNowBtn:      { borderRadius: 16, overflow: 'hidden', marginTop: 8 },
+  bookNowGrad:     { paddingVertical: 16, alignItems: 'center' },
+  bookNowText:     { color: '#fff', fontSize: 17, fontWeight: '700' },
+  skipBtn:         { alignItems: 'center', marginTop: 12 },
+  skipText:        { color: '#9CA3AF', fontSize: 14 },
+
+  // Accepted
+  acceptedCard:    { backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 28, padding: 28, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(16,185,129,0.3)', overflow: 'hidden' },
+  checkCircle:     { width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(16,185,129,0.2)', alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+  acceptedTitle:   { color: '#fff', fontSize: 22, fontWeight: '800', marginBottom: 6, textAlign: 'center' },
+  acceptedSub:     { color: '#9CA3AF', fontSize: 14, textAlign: 'center', marginBottom: 20 },
+  driverCard:      { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 16, padding: 16, width: '100%', marginBottom: 20, gap: 14 },
+  driverIconCircle: { width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(99,102,241,0.2)', alignItems: 'center', justifyContent: 'center' },
+  driverName:      { color: '#fff', fontSize: 16, fontWeight: '700' },
+  driverSub:       { color: '#9CA3AF', fontSize: 13, marginTop: 2 },
+  ratingRow:       { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
+  ratingText:      { color: '#FBBF24', fontSize: 13, fontWeight: '600' },
+  trackBtn:        { width: '100%', borderRadius: 16, overflow: 'hidden' },
+  trackGrad:       { paddingVertical: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  trackText:       { color: '#fff', fontSize: 17, fontWeight: '700' },
+
+  // Failed
+  failedCard:      { backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 28, padding: 32, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(239,68,68,0.2)' },
+  failedTitle:     { color: '#fff', fontSize: 22, fontWeight: '800', marginTop: 16, marginBottom: 8 },
+  failedSub:       { color: '#9CA3AF', fontSize: 14, textAlign: 'center', lineHeight: 20, marginBottom: 24 },
+  retryBtn:        { backgroundColor: '#6366F1', borderRadius: 14, paddingVertical: 14, paddingHorizontal: 32, marginBottom: 12 },
+  retryText:       { color: '#fff', fontSize: 16, fontWeight: '700' },
+  preLinkBtn:      { paddingVertical: 8 },
+  preLinkText:     { color: '#6366F1', fontSize: 14, fontWeight: '600' },
+
+  cancelWrap:      { position: 'absolute', bottom: 0, left: 0, right: 0, padding: 20, paddingBottom: 36, backgroundColor: 'transparent' },
+  cancelBtn:       { backgroundColor: 'rgba(239,68,68,0.1)', borderWidth: 1, borderColor: '#EF4444', borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
+  cancelText:      { color: '#EF4444', fontSize: 16, fontWeight: '600' },
 });

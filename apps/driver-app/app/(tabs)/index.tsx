@@ -12,12 +12,9 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { Feather, Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { router } from 'expo-router'
-import axios from 'axios'
-import AsyncStorage from '@react-native-async-storage/async-storage'
+import { api } from '../../src/api/client'
 import IncomingRequestScreen from '../incoming-request'
 import { useDriverSocket } from '../../src/hooks/useDriverSocket'
-
-const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1'
 
 const STATUS_COLORS: Record<string, string> = {
   draft: '#94A3B8', published: '#3B82F6', in_progress: '#10B981',
@@ -40,25 +37,19 @@ export default function DriverHomeScreen() {
     const next = !isOnline
     setIsOnline(next)
     try {
-      const headers = await getAuthHeader()
-      await axios.patch(`${API}/driver/status`, { status: next ? 'online' : 'offline' }, { headers })
+      await api.patch(`/driver/status`, { status: next ? 'online' : 'offline' })
     } catch { }
   }
 
   useEffect(() => { loadTrips() }, [])
 
-  const getAuthHeader = async () => {
-    const token = await AsyncStorage.getItem('access_token')
-    return token ? { Authorization: `Bearer ${token}` } : {}
-  }
-
   const loadTrips = async () => {
-    setLoading(true)
     try {
-      const headers = await getAuthHeader()
-      const res = await axios.get(`${API}/trips/my-trips`, { headers })
-      setTrips(res.data.data || [])
-    } catch {
+      setLoading(true)
+      const res = await api.get(`/trips/my-trips`)
+      setTrips(res.data?.data || [])
+    } catch (err: any) {
+      console.log('Failed to load trips:', err.response?.data || err.message)
       setTrips([{
         id: 'demo-1', pickup_city: 'Pune', destination_city: 'Mumbai',
         departure_time: new Date(Date.now() + 3600000).toISOString(),

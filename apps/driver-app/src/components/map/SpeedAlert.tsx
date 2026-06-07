@@ -25,11 +25,19 @@ export function SpeedAlert({
   const show    = visible ?? isOver
   const opacity = useRef(new Animated.Value(0)).current
   const scale   = useRef(new Animated.Value(0.8)).current
+  const lastVibratedRef = useRef(0)  // timestamp of last vibration (cooldown guard)
 
   useEffect(() => {
     if (show) {
-      // Vibrate on overspeed
-      Vibration.vibrate(200)
+      // Vibrate on overspeed — but only once per 10 seconds to avoid spam
+      const now = Date.now()
+      if (now - lastVibratedRef.current > 10000) {
+        lastVibratedRef.current = now
+        try {
+          Vibration.cancel()
+          Vibration.vibrate(200)
+        } catch { /* ignore vibration errors */ }
+      }
 
       Animated.parallel([
         Animated.spring(opacity, { toValue: 1, useNativeDriver: true, tension: 80, friction: 8 }),

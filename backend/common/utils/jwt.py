@@ -93,6 +93,7 @@ def decode_token(token: str, expected_type: str = "access") -> dict[str, Any]:
         token,
         settings.JWT_SECRET_KEY,
         algorithms=[settings.JWT_ALGORITHM],
+        options={"verify_exp": not settings.is_development},
     )
 
     token_type = payload.get("type")

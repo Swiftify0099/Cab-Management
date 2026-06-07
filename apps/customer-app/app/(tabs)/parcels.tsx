@@ -10,7 +10,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
-import MapView from 'react-native-maps'
+import MapView, { PROVIDER_GOOGLE } from 'react-native-maps'
 import { router } from 'expo-router'
 
 const MOCK_PARCELS = [
@@ -112,6 +112,7 @@ export default function ParcelsTab() {
       {/* Map Background */}
       <View style={styles.mapBg}>
         <MapView
+          provider={PROVIDER_GOOGLE}
           style={StyleSheet.absoluteFill}
           initialRegion={{
             latitude: 19.0760,
@@ -247,7 +248,7 @@ export default function ParcelsTab() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#E0F2FE' },
-  mapBg: { ...StyleSheet.absoluteFillObject, zIndex: 0 },
+  mapBg: { ...(StyleSheet.absoluteFill as any), zIndex: 0 },
   safeArea: { flex: 1 },
 
   header: {

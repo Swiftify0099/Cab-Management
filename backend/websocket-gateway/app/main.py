@@ -57,7 +57,14 @@ async def _redis_listener():
     r = await get_redis()
     # Use a separate connection for pub/sub
     pubsub_conn = r.pubsub()
-    await pubsub_conn.psubscribe("driver:*:events", "customer:*:events", "trip:*:events")
+    await pubsub_conn.psubscribe(
+        "driver:*:events",
+        "customer:*:events",
+        "trip:*:events",
+        "driver_scan:*",
+        # Corridor matching events
+        "corridor:*",
+    )
     logger.info(" Redis pub/sub listener started")
 
     async for message in pubsub_conn.listen():
@@ -83,6 +90,11 @@ async def _redis_listener():
                     room = f"user:{entity_id}"
                 elif entity == "trip":
                     room = f"trip:{entity_id}"
+                elif entity == "driver_scan":
+                    room = f"driver_scan:{entity_id}"
+                elif entity == "corridor":
+                    # corridor:{driver_user_id} → emit to driver's room
+                    room = f"driver:{entity_id}"
                 else:
                     continue
 
@@ -241,8 +253,47 @@ async def driver_respond(sid, data):
 
 
 @sio.event
+async def join_driver_scan(sid, data):
+    """
+    Driver joins the scan room for a specific trip.
+    Receives NEW_PENDING_CUSTOMER events in real-time when a new
+    pre-booking customer matches their route.
+    """
+    trip_id = data.get("trip_id")
+    if not trip_id:
+        return
+    room = f"driver_scan:{trip_id}"
+    await sio.enter_room(sid, room)
+    logger.info("Driver joined scan room", sid=sid, trip_id=trip_id)
+    await sio.emit("SCAN_JOINED", {"trip_id": trip_id}, to=sid)
+
+
+@sio.event
+async def LOCATION_UPDATE(sid, data):
+    """
+    Driver sends GPS update via WebSocket (from useDriverSocket.ts LOCATION_UPDATE emit).
+    Broadcasts to trip room AND publishes to Redis for tracking persistence.
+    """
+    client = _connected_clients.get(sid, {})
+    if client.get("role") != "driver":
+        return
+
+    trip_id = data.get("trip_id")
+    driver_id = client.get("user_id")
+    data["driver_id"] = driver_id
+
+    if trip_id:
+        # Broadcast live location to everyone tracking this trip
+        await sio.emit("LOCATION_UPDATE", data, room=f"trip:{trip_id}", skip_sid=sid)
+
+    # Publish to Redis for matching-service to persist + check arrival alert
+    r = await get_redis()
+    await r.publish("live:location:updates", json.dumps({**data, "driver_id": driver_id}))
+
+
+@sio.event
 async def heartbeat(sid, data):
-    """Driver heartbeat  updates online status TTL in Redis."""
+    """Driver heartbeat — updates online status TTL in Redis."""
     client = _connected_clients.get(sid, {})
     driver_id = client.get("user_id")
     if driver_id and client.get("role") == "driver":
@@ -256,6 +307,42 @@ async def heartbeat(sid, data):
                 json.dumps({"driver_id": driver_id, "latitude": lat, "longitude": lng}),
             )
         await sio.emit("HEARTBEAT_ACK", {"ts": data.get("ts")}, to=sid)
+
+
+@sio.event
+async def CUSTOMER_LOCATION_UPDATE(sid, data):
+    """
+    Customer sends GPS position while searching for rides.
+    Publishes to matching-service via Redis for corridor membership check.
+
+    Emitted from useCustomerSocket.ts every ~10 seconds.
+    Response events:
+      - CUSTOMER_ENTERED_CORRIDOR → driver's WebSocket room (via Redis)
+      - MATCH_FOUND              → customer's WebSocket room (via Redis)
+    """
+    client = _connected_clients.get(sid, {})
+    customer_id = client.get("user_id")
+    if not customer_id:
+        return
+
+    lat = data.get("lat") or data.get("latitude")
+    lng = data.get("lng") or data.get("longitude")
+    if lat is None or lng is None:
+        return
+
+    r = await get_redis()
+    # Publish to a dedicated channel — matching-service (or a separate consumer)
+    # listens on this channel and runs corridor check
+    await r.publish(
+        "customer:location:updates",
+        json.dumps({"customer_id": customer_id, "lat": lat, "lng": lng}),
+    )
+    # Also cache in Redis for fast corridor queries
+    await r.setex(
+        f"customer:location:{customer_id}",
+        60,
+        json.dumps({"lat": lat, "lng": lng}),
+    )
 
 
 @sio.event

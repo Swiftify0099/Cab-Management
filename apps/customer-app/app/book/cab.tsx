@@ -11,9 +11,9 @@ import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
 import { LinearGradient } from 'expo-linear-gradient'
-import MapView, { Polyline } from 'react-native-maps'
+import MapView, { Polyline, PROVIDER_GOOGLE } from 'react-native-maps'
 import axios from 'axios'
-import AsyncStorage from '@react-native-async-storage/async-storage'
+import * as SecureStore from 'expo-secure-store'
 import { geocodeCity, getRoutePolyline } from '../../src/utils/maps'
 
 const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1'
@@ -71,9 +71,11 @@ export default function BookCabScreen() {
   const [booking, setBooking] = useState(false)
   const [chooseSeat, setChooseSeat] = useState(false)
   const [routeCoords, setRouteCoords] = useState<{latitude: number, longitude: number}[]>([])
+  const [pickupCoords, setPickupCoords] = useState<{lat: number, lon: number} | null>(null)
+  const [destCoords, setDestCoords] = useState<{lat: number, lon: number} | null>(null)
 
   const getAuthHeader = async () => {
-    const token = await AsyncStorage.getItem('access_token')
+    const token = await SecureStore.getItemAsync('access_token')
     return token ? { Authorization: `Bearer ${token}` } : {}
   }
 
@@ -85,9 +87,29 @@ export default function BookCabScreen() {
     setLoading(true)
     try {
       const headers = await getAuthHeader()
+      
+      let startLoc = null;
+      let endLoc = null;
+      try {
+        startLoc = await geocodeCity(fromCity.trim())
+        endLoc = await geocodeCity(toCity.trim())
+      } catch (e) {
+        console.warn("Geocoding failed:", e)
+      }
+
+      if (!startLoc || !endLoc) {
+        Alert.alert("Location not found", "Could not find coordinates for these cities.");
+        setLoading(false);
+        return;
+      }
+      
+      setPickupCoords(startLoc)
+      setDestCoords(endLoc)
+
       try {
         const res = await axios.post(`${API}/trips/search`, {
-          from_city: fromCity.trim(), to_city: toCity.trim(),
+          from_lat: startLoc.lat, from_lng: startLoc.lon,
+          to_lat: endLoc.lat, to_lng: endLoc.lon,
           departure_date: date.trim() || new Date().toISOString().split('T')[0],
           seats_needed: seats, with_parcel: withParcel, women_only: womenOnly,
         }, { headers })
@@ -95,7 +117,8 @@ export default function BookCabScreen() {
         setResultMode('trips')
       } catch {
         const res = await axios.post(`${API}/bookings/fare`, {
-          from_city: fromCity.trim(), to_city: toCity.trim(),
+          from_lat: startLoc.lat, from_lng: startLoc.lon,
+          to_lat: endLoc.lat, to_lng: endLoc.lon,
           departure_time: new Date((date || new Date().toISOString().split('T')[0]) + 'T08:00').toISOString(),
           seats, with_parcel: withParcel,
         }, { headers })
@@ -104,8 +127,6 @@ export default function BookCabScreen() {
       }
       
       try {
-        const startLoc = await geocodeCity(fromCity.trim())
-        const endLoc = await geocodeCity(toCity.trim())
         if (startLoc && endLoc) {
           const apiKey = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjRlYjFhNDY4Y2ExZDQ0NmU4OWQ0Yjk3ZWI5ZGEzN2FjIiwiaCI6Im11cm11cjY0In0='
           const polyline = await getRoutePolyline(startLoc, endLoc, apiKey)
@@ -140,16 +161,17 @@ export default function BookCabScreen() {
   // ── STEP 1: Address Entry (dark map) ─────────────────
   if (step === 'form') {
     return (
-      <View style={styles.container}>
-        <View style={styles.mapBg}>
+      <View style={styles.formRoot}>
+        <View style={StyleSheet.absoluteFill}>
           <MapView
+            provider={PROVIDER_GOOGLE}
             style={StyleSheet.absoluteFill}
             initialRegion={{ latitude: 19.0760, longitude: 72.8777, latitudeDelta: 0.1, longitudeDelta: 0.1 }}
           >
           </MapView>
         </View>
 
-        <SafeAreaView style={styles.safeArea}>
+        <SafeAreaView style={{ flex: 1 }}>
           {/* Header */}
           <View style={styles.formHeader}>
             <TouchableOpacity onPress={() => router.back()} style={styles.formBack}>
@@ -256,6 +278,7 @@ export default function BookCabScreen() {
       {/* Real Map Background for Route */}
       <View style={StyleSheet.absoluteFill}>
         <MapView
+          provider={PROVIDER_GOOGLE}
           style={StyleSheet.absoluteFill}
           initialRegion={routeCoords.length > 0 ? {
             latitude: routeCoords[Math.floor(routeCoords.length / 2)].latitude,
@@ -359,15 +382,33 @@ export default function BookCabScreen() {
               if (chooseSeat) {
                 router.push('/book/seats')
               } else {
-                // Determine if this is a shared trip or private matching
                 if (resultMode === 'trips' && trips.length > 0) {
-                  // Book a shared trip
                   handleBookTrip(trips[0]);
                 } else {
-                  // Private cab - go to matching waiting screen
-                  // Generate a temporary booking ID until backend is fully wired
-                  const tempBookingId = 'req_' + Math.random().toString(36).substring(2, 9);
-                  router.push(`/matching-waiting?bookingId=${tempBookingId}` as any)
+                  setBooking(true);
+                  try {
+                    const headers = await getAuthHeader();
+                    const res = await axios.post(`${API}/bookings/pending`, {
+                      pickup_address: fromCity,
+                      pickup_lat: pickupCoords?.lat || 0,
+                      pickup_lng: pickupCoords?.lon || 0,
+                      destination_address: toCity,
+                      destination_lat: destCoords?.lat || 0,
+                      destination_lng: destCoords?.lon || 0,
+                      travel_date: date.trim() || new Date().toISOString().split('T')[0],
+                      from_time: '00:00',
+                      to_time: '23:59',
+                      seats_required: seats,
+                      parcel: withParcel,
+                      women_only: womenOnly,
+                    }, { headers });
+                    const pbId = res.data?.data?.id;
+                    router.push(`/matching-waiting?bookingId=&pendingBookingId=${pbId}` as any)
+                  } catch (e: any) {
+                    Alert.alert("Error", e?.response?.data?.detail || "Could not create request");
+                  } finally {
+                    setBooking(false);
+                  }
                 }
               }
             }}
@@ -378,6 +419,19 @@ export default function BookCabScreen() {
               <Feather name={chooseSeat ? "arrow-right" : "search"} size={20} color="white" style={{ marginLeft: 8 }} />
             </LinearGradient>
           </TouchableOpacity>
+
+          {/* Pre-Booking banner — shown when no trips found */}
+          {resultMode === 'fares' && (
+            <TouchableOpacity
+              style={{ marginTop: 12, borderWidth: 1, borderColor: 'rgba(139,92,246,0.4)', borderRadius: 16, paddingVertical: 13, alignItems: 'center', backgroundColor: 'rgba(139,92,246,0.08)' }}
+              onPress={() => router.push('/pre-booking' as any)}
+              activeOpacity={0.85}
+            >
+              <Text style={{ color: '#A78BFA', fontSize: 14, fontWeight: '600' }}>
+                No driver available? Pre-Book for later →
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
     </View>

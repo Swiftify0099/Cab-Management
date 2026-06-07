@@ -35,13 +35,22 @@
         "ACCESS_COARSE_LOCATION",
         "ACCESS_BACKGROUND_LOCATION",
         "CAMERA",
+        "READ_CONTACTS",
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE",
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO",
+        "POST_NOTIFICATIONS",
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
         "FOREGROUND_SERVICE"
       ],
-      "useNextNotificationsApi": true
+      "useNextNotificationsApi": true,
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyCZw4DVNyJwP85ZeDG1y_x8DLQ7bF8J0EU"
+        }
+      }
     },
     "plugins": [
       "expo-router",
@@ -54,6 +63,20 @@
           "locationAlwaysAndWhenInUsePermission": "CabBooking needs your location to track your trip and show customers your position in real-time.",
           "locationAlwaysPermission": "Background location lets us track your trip even when the app is in the background.",
           "locationWhenInUsePermission": "CabBooking needs your location to match you with nearby passengers."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#F59E0B",
+          "sounds": []
+        }
+      ],
+      [
+        "react-native-maps",
+        {
+          "googleMapsApiKey": "AIzaSyCZw4DVNyJwP85ZeDG1y_x8DLQ7bF8J0EU"
         }
       ]
     ],

@@ -1,2 +1,2 @@
-// Route: /auth/otp
-export { default } from '../../src/screens/auth/OTPScreen'
+import OTPScreen from '../../src/screens/auth/OTPScreen'
+export default OTPScreen

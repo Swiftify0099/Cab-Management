@@ -5,7 +5,7 @@ Phase 3: Customers book seats on Driver Trips.
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks
 from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,8 +22,10 @@ fare_router = APIRouter()
 #  Fare schemas 
 
 class FareRequest(BaseModel):
-    from_city: str
-    to_city: str
+    from_lat: float
+    from_lng: float
+    to_lat: float
+    to_lng: float
     departure_time: str
     seats: int = 1
     with_parcel: bool = False
@@ -66,6 +68,28 @@ class CancelBookingRequest(BaseModel):
     reason: str
 
 
+class CreatePendingBookingRequest(BaseModel):
+    pickup_address: str
+    pickup_lat: float
+    pickup_lng: float
+    destination_address: str
+    destination_lat: float
+    destination_lng: float
+    travel_date: str
+    from_time: str
+    to_time: str
+    seats_required: int = 1
+    parcel: bool = False
+    women_only: bool = False
+
+    @field_validator("seats_required")
+    @classmethod
+    def validate_seats(cls, v: int) -> int:
+        if v < 1 or v > 10:
+            raise ValueError("You can pre-book 1-10 seats")
+        return v
+
+
 #  Fare Routes 
 
 @fare_router.post(
@@ -79,7 +103,7 @@ async def get_fare_estimates(
 ):
     departure = request.get_departure()
     fares = calculate_all_fares(
-        request.from_city, request.to_city, departure,
+        request.from_lat, request.from_lng, request.to_lat, request.to_lng, departure,
         seats_required=request.seats,
         with_parcel=request.with_parcel,
         window_seat=request.window_seat,
@@ -141,6 +165,73 @@ async def get_my_trips(
         offset=offset,
     )
     return SuccessResponse(success=True, message="Trips retrieved", data=trips)
+
+
+@booking_router.post(
+    "/pending",
+    status_code=status.HTTP_201_CREATED,
+    response_model=SuccessResponse,
+    summary="Create a pre-booking intent",
+)
+async def create_pending_booking(
+    request: CreatePendingBookingRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    service = BookingService(db)
+    try:
+        pb = await service.create_pending_booking(
+            customer_user_id=current_user.user_id_str,
+            pickup_address=request.pickup_address,
+            pickup_lat=request.pickup_lat,
+            pickup_lng=request.pickup_lng,
+            destination_address=request.destination_address,
+            destination_lat=request.destination_lat,
+            destination_lng=request.destination_lng,
+            travel_date=request.travel_date,
+            from_time=request.from_time,
+            to_time=request.to_time,
+            seats_required=request.seats_required,
+            parcel=request.parcel,
+            women_only=request.women_only,
+        )
+        # Background task for reverse match
+        background_tasks.add_task(service.trigger_reverse_match, str(pb["id"]))
+        return SuccessResponse(success=True, message="Pre-booking created", data=pb)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@booking_router.get(
+    "/pending",
+    summary="Get my pending bookings",
+    response_model=SuccessResponse,
+)
+async def get_my_pending_bookings(
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    service = BookingService(db)
+    pbs = await service.get_pending_bookings(current_user.user_id_str)
+    return SuccessResponse(success=True, message="Pending bookings retrieved", data=pbs)
+
+
+@booking_router.delete(
+    "/pending/{pending_booking_id}",
+    summary="Cancel a pending booking",
+    response_model=SuccessResponse,
+)
+async def cancel_pending_booking_route(
+    pending_booking_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    service = BookingService(db)
+    ok = await service.cancel_pending_booking(pending_booking_id, current_user.user_id_str)
+    if not ok:
+        raise HTTPException(status_code=400, detail="Cannot cancel this pending booking")
+    return SuccessResponse(success=True, message="Pending booking cancelled")
 
 
 @booking_router.get(

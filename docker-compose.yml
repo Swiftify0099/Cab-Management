@@ -347,3 +347,28 @@ services:
       - websocket-gateway
     networks:
       - cabooking_net
+
+  # ============================================================
+  # FRONTEND WEBSITES (React/Vite)
+  # ============================================================
+  admin-web-frontend:
+    build:
+      context: ./apps/admin-web
+      dockerfile: Dockerfile
+    container_name: cabooking_admin_web
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    networks:
+      - cabooking_net
+
+  customer-web-frontend:
+    build:
+      context: ./apps/customer-web
+      dockerfile: Dockerfile
+    container_name: cabooking_customer_web
+    restart: unless-stopped
+    ports:
+      - "5174:80"
+    networks:
+      - cabooking_net

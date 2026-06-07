@@ -13,7 +13,7 @@ import { router, useLocalSearchParams } from 'expo-router'
 import * as WebBrowser from 'expo-web-browser'
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons'
 import axios from 'axios'
-import AsyncStorage from '@react-native-async-storage/async-storage'
+import * as SecureStore from 'expo-secure-store'
 
 const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1'
 
@@ -29,7 +29,7 @@ export default function PaymentScreen() {
   const [paying, setPaying] = useState(false)
 
   const getHeaders = async () => {
-    const token = await AsyncStorage.getItem('access_token')
+    const token = await SecureStore.getItemAsync('access_token')
     return token ? { Authorization: `Bearer ${token}` } : {}
   }
 
@@ -107,15 +107,15 @@ export default function PaymentScreen() {
 
       // Open Razorpay checkout page in browser
       // (Native Razorpay SDK requires ejecting from Expo — WebBrowser is the managed workflow approach)
-      const checkoutUrl = `https://api.razorpay.com/v1/checkout/embedded`
+      const checkoutUrl = `${API}/payments/checkout.html`
       const params = new URLSearchParams({
-        key: order.key_id,
+        key_id: order.key_id,
         order_id: order.order_id,
         amount: String(order.amount_paise),
         currency: 'INR',
         name: 'CabBooking',
         description: `${booking.trip?.pickup_city} → ${booking.trip?.destination_city}`,
-        callback_url: `${API.replace('/api/v1', '')}/payment-success?booking_id=${bookingId}`,
+        callback_url: `${API}/payments/payment-success?booking_id=${bookingId}`,
       })
 
       const result = await WebBrowser.openBrowserAsync(`${checkoutUrl}?${params}`)

@@ -11,7 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons'
 import axios from 'axios'
-import AsyncStorage from '@react-native-async-storage/async-storage'
+import * as SecureStore from 'expo-secure-store'
 
 const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1'
 
@@ -39,7 +39,7 @@ export default function TripsTab() {
   const [cancelling, setCancelling] = useState(false)
 
   const getAuthHeader = async () => {
-    const token = await AsyncStorage.getItem('access_token')
+    const token = await SecureStore.getItemAsync('access_token')
     return token ? { Authorization: `Bearer ${token}` } : {}
   }
 

@@ -3,12 +3,12 @@ All SQLAlchemy models for CabBooking SuperApp.
 Complete production schema with PostGIS geography columns.
 """
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum as PyEnum
 from typing import List, Optional
 
-from geoalchemy2 import Geography
+from geoalchemy2 import Geography, Geometry
 from sqlalchemy import (
     ARRAY,
     JSON,
@@ -22,6 +22,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    Time,
     UniqueConstraint,
     func,
 )
@@ -395,13 +396,9 @@ class Trip(Base, UUIDMixin, TimestampMixin):
     pickup_location: Mapped[object] = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=False)
     pickup_latitude: Mapped[float] = mapped_column(Float, nullable=False)
     pickup_longitude: Mapped[float] = mapped_column(Float, nullable=False)
-    pickup_city: Mapped[str] = mapped_column(String(100), nullable=False)
-    pickup_state: Mapped[str] = mapped_column(String(100), nullable=False)
     destination_location: Mapped[object] = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=False)
     destination_latitude: Mapped[float] = mapped_column(Float, nullable=False)
     destination_longitude: Mapped[float] = mapped_column(Float, nullable=False)
-    destination_city: Mapped[str] = mapped_column(String(100), nullable=False)
-    destination_state: Mapped[str] = mapped_column(String(100), nullable=False)
     departure_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     estimated_arrival: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     total_seats: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -486,17 +483,24 @@ class Booking(Base, UUIDMixin, TimestampMixin):
 # LIVE TRACKING
 # ============================================================
 
-class LiveTracking(Base, TimestampMixin):
-    """Real-time driver location for a trip. Updated at ~1Hz."""
+class LiveTracking(Base, UUIDMixin, TimestampMixin):
+    """Real-time driver location for a trip. Upserted on every GPS push."""
     __tablename__ = "live_tracking"
 
-    trip_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("trips.id", ondelete="CASCADE"), primary_key=True, nullable=False)
-    driver_location: Mapped[object] = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=False)
+    trip_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("trips.id", ondelete="CASCADE"), nullable=False, index=True)
+    driver_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("drivers.id"), nullable=True, index=True)
+    booking_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("bookings.id"), nullable=True)
+    driver_location: Mapped[Optional[object]] = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=True)
     latitude: Mapped[float] = mapped_column(Float, nullable=False)
     longitude: Mapped[float] = mapped_column(Float, nullable=False)
     speed_kmh: Mapped[float] = mapped_column(Float, default=0.0)
     heading: Mapped[float] = mapped_column(Float, default=0.0)
-    accuracy: Mapped[float] = mapped_column(Float, default=0.0)
+    accuracy_m: Mapped[float] = mapped_column(Float, default=0.0)
+    altitude_m: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    eta_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    distance_remaining_km: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    arrival_alert_sent: Mapped[bool] = mapped_column(Boolean, default=False)  # True once 10km/10min alert sent
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     trip: Mapped["Trip"] = relationship(back_populates="live_tracking")
 
@@ -845,3 +849,250 @@ class TripStop(Base, UUIDMixin, TimestampMixin):
 
     trip: Mapped["Trip"] = relationship("Trip", foreign_keys=[trip_id])
 
+
+# ============================================================
+# PRE-BOOKING (Customer intent before a driver exists)
+# ============================================================
+
+class PendingBookingStatus(str, PyEnum):
+    WAITING   = "waiting"
+    MATCHED   = "matched"
+    CANCELLED = "cancelled"
+    EXPIRED   = "expired"
+
+
+class PendingBooking(Base, UUIDMixin, TimestampMixin):
+    """
+    A customer's travel intent submitted BEFORE any driver has created a
+    matching trip.  Stored for up to 24 hours; matched drivers are notified
+    the moment a suitable trip is published.
+    """
+    __tablename__ = "pending_bookings"
+
+    customer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    customer_name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Pickup
+    pickup_address: Mapped[str]  = mapped_column(Text, nullable=False)
+    pickup_lat:     Mapped[float] = mapped_column(Float, nullable=False)
+    pickup_lng:     Mapped[float] = mapped_column(Float, nullable=False)
+    pickup_location: Mapped[Optional[object]] = mapped_column(
+        Geography(geometry_type="POINT", srid=4326), nullable=True
+    )
+
+    # Destination
+    destination_address: Mapped[str]  = mapped_column(Text, nullable=False)
+    destination_lat:     Mapped[float] = mapped_column(Float, nullable=False)
+    destination_lng:     Mapped[float] = mapped_column(Float, nullable=False)
+    destination_location: Mapped[Optional[object]] = mapped_column(
+        Geography(geometry_type="POINT", srid=4326), nullable=True
+    )
+
+    # Travel window
+    travel_date: Mapped[date]         = mapped_column(Date, nullable=False)
+    from_time:   Mapped[time]         = mapped_column(Time, nullable=False)
+    to_time:     Mapped[time]         = mapped_column(Time, nullable=False)
+
+    # Preferences
+    seats_required: Mapped[int]  = mapped_column(Integer, default=1, nullable=False)
+    parcel:         Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    women_only:     Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Status
+    status:     Mapped[PendingBookingStatus] = mapped_column(
+        Enum(PendingBookingStatus), default=PendingBookingStatus.WAITING, index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    # Relationships
+    customer:    Mapped["User"] = relationship(foreign_keys=[customer_id])
+    rejections:  Mapped[List["DriverRejection"]] = relationship(back_populates="pending_booking")
+
+
+# ============================================================
+# DRIVER REJECTION — Industry-standard DB-persisted reject-hide
+# ============================================================
+
+class DriverRejection(Base, UUIDMixin, TimestampMixin):
+    """
+    Persists every explicit driver rejection of a customer booking.
+
+    Industry standard (Uber/Ola): store in DB so the customer is permanently
+    hidden from that driver's scan screen for this booking lifecycle, even
+    across app restarts.  Redis is NOT used for this — it is too volatile.
+
+    Unique constraint prevents duplicate rows.  If the same booking is
+    rejected a second time (edge-case retry), the upsert is idempotent.
+    """
+    __tablename__ = "driver_rejections"
+    __table_args__ = (UniqueConstraint("driver_id", "pending_booking_id"),)
+
+    driver_id:          Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    pending_booking_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("pending_bookings.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    # Optional: which booking_id (seat booking) triggered the rejection
+    booking_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("bookings.id"), nullable=True
+    )
+    rejected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    driver:          Mapped["Driver"]         = relationship(foreign_keys=[driver_id])
+    pending_booking: Mapped["PendingBooking"] = relationship(back_populates="rejections")
+
+
+# ============================================================
+# DRIVER POINT WALLET
+# ============================================================
+
+class DriverPointWallet(Base, UUIDMixin, TimestampMixin):
+    """Point balance ledger for a driver.  Created on first trip creation."""
+    __tablename__ = "driver_point_wallets"
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        unique=True, nullable=False
+    )
+    balance: Mapped[int] = mapped_column(Integer, default=2500, nullable=False)
+
+    driver:       Mapped["Driver"]               = relationship(foreign_keys=[driver_id])
+    transactions: Mapped[List["DriverPointTransaction"]] = relationship(back_populates="wallet")
+
+
+class DriverPointTransaction(Base, UUIDMixin, TimestampMixin):
+    """Audit log for every point credit / debit."""
+    __tablename__ = "driver_point_transactions"
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    wallet_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("driver_point_wallets.id"),
+        nullable=False
+    )
+    delta:  Mapped[int] = mapped_column(Integer, nullable=False)   # negative = debit
+    reason: Mapped[str] = mapped_column(String(255), nullable=False)
+    ref_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)  # booking_id
+
+    driver: Mapped["Driver"]           = relationship(foreign_keys=[driver_id])
+    wallet: Mapped["DriverPointWallet"] = relationship(back_populates="transactions")
+
+
+# ============================================================
+# SHOWROOM  (Map markers for vehicle showrooms near the route)
+# ============================================================
+
+class Showroom(Base, UUIDMixin, TimestampMixin):
+    """Vehicle showroom / service centre shown as map markers."""
+    __tablename__ = "showrooms"
+
+    name:        Mapped[str]           = mapped_column(String(255), nullable=False)
+    brand:       Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    address:     Mapped[str]           = mapped_column(Text, nullable=False)
+    city:        Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    state:       Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    lat:         Mapped[float]         = mapped_column(Float, nullable=False)
+    lng:         Mapped[float]         = mapped_column(Float, nullable=False)
+    location:    Mapped[Optional[object]] = mapped_column(
+        Geography(geometry_type="POINT", srid=4326), nullable=True
+    )
+    contact:     Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_active:   Mapped[bool]          = mapped_column(Boolean, default=True)
+
+
+# ============================================================
+# POLYGON + ROUTE CORRIDOR MATCHING  (Phase 2 Geo System)
+# ============================================================
+
+class TripPolygons(Base, UUIDMixin, TimestampMixin):
+    """
+    Driver-drawn service area polygons for a trip.
+
+    pickup_polygon      — area near the start city where the driver will pick up
+    destination_polygon — area near the end city where the driver will drop off
+
+    Stored as PostGIS GEOMETRY(POLYGON,4326) so ST_Within queries are instant.
+    """
+    __tablename__ = "trip_polygons"
+
+    trip_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("trips.id", ondelete="CASCADE"),
+        unique=True, nullable=False, index=True
+    )
+    # Pickup service area polygon drawn by driver
+    pickup_polygon: Mapped[Optional[object]] = mapped_column(
+        Geometry(geometry_type="POLYGON", srid=4326), nullable=True
+    )
+    # Destination service area polygon drawn by driver
+    destination_polygon: Mapped[Optional[object]] = mapped_column(
+        Geometry(geometry_type="POLYGON", srid=4326), nullable=True
+    )
+
+    trip: Mapped["Trip"] = relationship("Trip", foreign_keys=[trip_id])
+
+
+class TripRouteGeometry(Base, UUIDMixin, TimestampMixin):
+    """
+    Google Directions route stored as PostGIS geometry.
+
+    route_linestring — decoded polyline as LINESTRING(4326)
+    route_buffer     — ST_Buffer(route_linestring::geography, 3000)::geometry
+                       3 KM corridor around the route.  Customers whose current
+                       GPS falls inside this polygon are eligible for matching.
+    """
+    __tablename__ = "trip_route_geometry"
+
+    trip_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("trips.id", ondelete="CASCADE"),
+        unique=True, nullable=False, index=True
+    )
+    # Google Directions overview polyline decoded to PostGIS LINESTRING
+    route_linestring: Mapped[Optional[object]] = mapped_column(
+        Geometry(geometry_type="LINESTRING", srid=4326), nullable=True
+    )
+    # Auto-generated 3 KM buffer corridor around the route
+    route_buffer: Mapped[Optional[object]] = mapped_column(
+        Geometry(geometry_type="POLYGON", srid=4326), nullable=True
+    )
+    # Store raw encoded polyline for re-rendering on frontend
+    encoded_polyline: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Route metadata
+    distance_km: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    duration_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    trip: Mapped["Trip"] = relationship("Trip", foreign_keys=[trip_id])
+
+
+class CustomerLocation(Base, UUIDMixin, TimestampMixin):
+    """
+    Live customer GPS — upserted on every location push.
+
+    One row per customer (unique constraint on customer_id).
+    Used to check if a customer has entered a trip's route corridor.
+    """
+    __tablename__ = "customer_locations"
+    __table_args__ = (UniqueConstraint("customer_id"),)
+
+    customer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    location: Mapped[Optional[object]] = mapped_column(
+        Geography(geometry_type="POINT", srid=4326), nullable=True
+    )
+    lat: Mapped[float] = mapped_column(Float, nullable=False)
+    lng: Mapped[float] = mapped_column(Float, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

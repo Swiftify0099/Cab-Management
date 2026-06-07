@@ -106,11 +106,97 @@ app.include_router(admin_auth_router, prefix="/api/v1/admin/auth", tags=["Admin 
 app.include_router(profile_router, prefix="/api/v1/profile", tags=["Profile"])
 app.include_router(driver_router, prefix="/api/v1/driver", tags=["Driver Onboarding"])
 
+# ============================================================
+# Dynamic Gateway Mounting (Booking & Matching)
+# ============================================================
+import sys
+import os
+
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+# Snapshot auth-service app modules so we don't break Python 3.13's import machinery
+_auth_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.startswith("app.")}
+
+# Load Booking Service
+try:
+    _booking_path = os.path.join(_ROOT, "booking-service")
+    if _booking_path not in sys.path:
+        sys.path.insert(0, _booking_path)
+
+    for _mod in list(sys.modules.keys()):
+        if _mod == "app" or _mod.startswith("app."):
+            del sys.modules[_mod]
+
+    from app.api.v1 import booking_router, fare_router, trip_router
+    from app.api.v1.subscriptions import router as subscription_router
+
+    app.include_router(trip_router,          prefix="/api/v1/trips",         tags=["Trips"])
+    app.include_router(booking_router,       prefix="/api/v1/bookings",      tags=["Bookings"])
+    app.include_router(fare_router,          prefix="/api/v1/bookings/fare", tags=["Fare"])
+    app.include_router(subscription_router)
+    logger.info("[GATEWAY] Successfully mounted Booking Service routers")
+except Exception as e:
+    logger.error("[GATEWAY] Failed to mount Booking Service", exc_info=True)
+finally:
+    if _booking_path in sys.path:
+        sys.path.remove(_booking_path)
+
+# Load Matching Service
+try:
+    _matching_path = os.path.join(_ROOT, "matching-service")
+    if _matching_path not in sys.path:
+        sys.path.insert(0, _matching_path)
+
+    for _mod in list(sys.modules.keys()):
+        if _mod == "app" or _mod.startswith("app."):
+            del sys.modules[_mod]
+
+    from app.api.v1.matching import router as matching_router
+    app.include_router(matching_router, prefix="/api/v1/matching", tags=["Matching"])
+    logger.info("[GATEWAY] Successfully mounted Matching Service routers")
+except Exception as e:
+    logger.error("[GATEWAY] Failed to mount Matching Service", exc_info=True)
+finally:
+    if _matching_path in sys.path:
+        sys.path.remove(_matching_path)
+
+# Load Payment Service
+try:
+    _payment_path = os.path.join(_ROOT, "payment-service")
+    if _payment_path not in sys.path:
+        sys.path.insert(0, _payment_path)
+
+    for _mod in list(sys.modules.keys()):
+        if _mod == "app" or _mod.startswith("app."):
+            del sys.modules[_mod]
+
+    # Load payment env variables so Razorpay keys are available
+    import dotenv as _dotenv
+    _dotenv.load_dotenv(os.path.join(_payment_path, ".env"), override=False)
+
+    from app.api.v1.payments import router as payment_router
+    app.include_router(payment_router, prefix="/api/v1", tags=["Payment"])
+    logger.info("[GATEWAY] Successfully mounted Payment Service routers")
+except Exception as e:
+    logger.error("[GATEWAY] Failed to mount Payment Service", exc_info=True)
+finally:
+    if _payment_path in sys.path:
+        sys.path.remove(_payment_path)
+
+# Restore original sys.modules for auth
+for _mod in list(sys.modules.keys()):
+    if _mod == "app" or _mod.startswith("app."):
+        del sys.modules[_mod]
+sys.modules.update(_auth_mods)
+
+
 
 # ============================================================
-# Health Check
+# Health Check & Webhooks
 # ============================================================
 
 @app.get("/health", tags=["Health"])
 async def health_check():
     return {"status": "healthy", "service": "auth-service", "version": "1.0.0"}
+
+

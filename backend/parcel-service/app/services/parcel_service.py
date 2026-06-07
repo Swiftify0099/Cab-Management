@@ -141,8 +141,8 @@ class ParcelService:
             "status": "pending",
             "delivery_otp": delivery_otp,  # shown only to customer
             "trip": {
-                "from": trip.pickup_city,
-                "to": trip.destination_city,
+                "from": "Pickup Area",
+                "to": "Destination Area",
                 "departure_time": trip.departure_time.isoformat(),
             },
         }
@@ -216,8 +216,8 @@ class ParcelService:
             "fare": float(parcel.fare),
             "is_fragile": parcel.is_fragile,
             "trip": {
-                "from": trip.pickup_city if trip else "",
-                "to": trip.destination_city if trip else "",
+                "from": "Pickup Area",
+                "to": "Destination Area",
                 "departure_time": trip.departure_time.isoformat() if trip else None,
                 "status": trip.status.value if trip else "unknown",
             },

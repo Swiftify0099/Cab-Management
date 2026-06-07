@@ -24,12 +24,8 @@ trip_router = APIRouter()
 #  Request schemas 
 
 class CreateTripRequest(BaseModel):
-    pickup_city: str
-    pickup_state: str
     pickup_lat: float
     pickup_lng: float
-    destination_city: str
-    destination_state: str
     destination_lat: float
     destination_lng: float
     departure_time: str
@@ -53,8 +49,10 @@ class CreateTripRequest(BaseModel):
 
 
 class SearchTripsRequest(BaseModel):
-    from_city: str
-    to_city: str
+    from_lat: float
+    from_lng: float
+    to_lat: float
+    to_lng: float
     departure_date: str
     seats_needed: int = 1
     vehicle_type: Optional[str] = None
@@ -79,12 +77,8 @@ async def create_trip(
     try:
         trip = await service.create_trip(
             driver_user_id=current_user.user_id_str,
-            pickup_city=request.pickup_city,
-            pickup_state=request.pickup_state,
             pickup_lat=request.pickup_lat,
             pickup_lng=request.pickup_lng,
-            destination_city=request.destination_city,
-            destination_state=request.destination_state,
             destination_lat=request.destination_lat,
             destination_lng=request.destination_lng,
             departure_time=datetime.fromisoformat(request.departure_time.replace("Z", "+00:00")),
@@ -113,8 +107,10 @@ async def search_trips(
     service = TripService(db)
     departure = datetime.fromisoformat(request.departure_date)
     trips = await service.search_trips(
-        from_city=request.from_city,
-        to_city=request.to_city,
+        from_lat=request.from_lat,
+        from_lng=request.from_lng,
+        to_lat=request.to_lat,
+        to_lng=request.to_lng,
         departure_date=departure,
         seats_needed=request.seats_needed,
         vehicle_type=request.vehicle_type,

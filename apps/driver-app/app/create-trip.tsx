@@ -1,41 +1,77 @@
 /**
  * Create Trip Screen — Driver publishes a new intercity route.
- * Accessed from Home tab via "Create New Trip" button.
+ * Stepper Redesign with Massive Map & Geo-only matching.
  */
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
-  View, Text, ScrollView, TextInput, TouchableOpacity,
+  View, Text, ScrollView, TextInput, TouchableOpacity, FlatList,
   StyleSheet, ActivityIndicator, Alert, Switch, Dimensions, Platform, Modal
 } from 'react-native'
 import { router } from 'expo-router'
-import MapView, { Marker } from 'react-native-maps'
 import DateTimePicker from '@react-native-community/datetimepicker'
-import axios from 'axios'
-import AsyncStorage from '@react-native-async-storage/async-storage'
-import { reverseGeocode, geocodeCity } from '../src/utils/maps'
-import { Feather } from '@expo/vector-icons'
+import { api } from '../src/api/client'
+import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
+import { getDirections } from '../src/services/googleMaps'
+import type { RouteData, AutocompletePrediction } from '../src/services/googleMaps'
+import { reverseGeocode, geocodeCity, getPlaceAutocomplete } from '../src/utils/maps'
 
-const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1'
+// Lazy-import MapView to avoid crash if native module isn't ready
+let MapView: any = null
+let Marker: any = null
+let Polygon: any = null
+let Polyline: any = null
+try {
+  const maps = require('react-native-maps')
+  MapView = maps.default
+  Marker = maps.Marker
+  Polygon = maps.Polygon
+  Polyline = maps.Polyline
+} catch (e) {
+  console.warn('[CreateTrip] react-native-maps not available:', e)
+}
+
+function decodePolyline(encoded: string): { latitude: number; longitude: number }[] {
+  const points: { latitude: number; longitude: number }[] = []
+  let index = 0, lat = 0, lng = 0
+  while (index < encoded.length) {
+    let b, shift = 0, result = 0
+    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5 } while (b >= 0x20)
+    lat += (result & 1) ? ~(result >> 1) : (result >> 1)
+    shift = 0; result = 0
+    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5 } while (b >= 0x20)
+    lng += (result & 1) ? ~(result >> 1) : (result >> 1)
+    points.push({ latitude: lat / 1e5, longitude: lng / 1e5 })
+  }
+  return points
+}
 
 const VEHICLE_TYPES = [
-  { value: 'sedan', label: 'Sedan 🚗', seats: 4 },
-  { value: 'suv', label: 'SUV 🚙', seats: 6 },
-  { value: 'mini', label: 'Mini 🚕', seats: 4 },
-  { value: 'tempo_traveller', label: 'Tempo Traveller 🚐', seats: 12 },
+  { value: 'sedan', label: 'Sedan', icon: 'car-side', seats: 4 },
+  { value: 'suv', label: 'SUV', icon: 'car-estate', seats: 6 },
+  { value: 'mini', label: 'Mini', icon: 'car-hatchback', seats: 4 },
+  { value: 'tempo_traveller', label: 'Tempo', icon: 'van-passenger', seats: 12 },
 ]
 
 const { height } = Dimensions.get('window')
 
 export default function CreateTripScreen() {
+  const [isMounted, setIsMounted] = useState(false)
+  
+  // STEPPER STATE
+  const [step, setStep] = useState(1) // 1 to 4
+  
+  useEffect(() => {
+    const t = setTimeout(() => setIsMounted(true), 300)
+    return () => clearTimeout(t)
+  }, [])
+
   const [form, setForm] = useState({
-    pickup_city: 'Pune',
-    pickup_state: 'Maharashtra',
     pickup_lat: 18.5204,
     pickup_lng: 73.8567,
-    destination_city: 'Mumbai',
-    destination_state: 'Maharashtra',
     destination_lat: 19.0760,
     destination_lng: 72.8777,
+    pickup_city_display: '', // Used only for UI display, not sent to DB
+    destination_city_display: '', // Used only for UI display, not sent to DB
     departure_time: '',
     total_seats: 4,
     vehicle_type: 'sedan',
@@ -47,21 +83,27 @@ export default function CreateTripScreen() {
     window_seat_charge: '30',
     notes: '',
   })
+  
   const [loading, setLoading] = useState(false)
-  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [routeData, setRouteData] = useState<RouteData | null>(null)
+  const [fetchingRoute, setFetchingRoute] = useState(false)
+  const [predictions, setPredictions] = useState<AutocompletePrediction[]>([])
+  const [activeSearch, setActiveSearch] = useState<'pickup' | 'destination' | null>(null)
 
-  // Date & Time picker state
+  // Map Drawing State
+  const [pickupPolygon, setPickupPolygon] = useState<{latitude:number;longitude:number}[]>([])
+  const [destinationPolygon, setDestinationPolygon] = useState<{latitude:number;longitude:number}[]>([])
+  const [drawingMode, setDrawingMode] = useState<'pickup' | 'destination' | null>(null)
+
+  // Date/Time
   const [selectedDate, setSelectedDate] = useState<Date | null>(null)
   const [showDatePicker, setShowDatePicker] = useState(false)
   const [showTimePicker, setShowTimePicker] = useState(false)
   const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date')
 
-  const update = (key: string, value: any) => {
-    setForm(p => ({ ...p, [key]: value }))
-    setErrors(p => ({ ...p, [key]: '' }))
-  }
+  const update = (key: string, value: any) => setForm(p => ({ ...p, [key]: value }))
 
-  // Handle marker drag
+  // Reverse Geocode when map markers move to update display strings
   const handleMarkerDrag = async (type: 'pickup' | 'destination', coord: { latitude: number, longitude: number }) => {
     if (type === 'pickup') {
       update('pickup_lat', coord.latitude)
@@ -73,22 +115,32 @@ export default function CreateTripScreen() {
 
     const res = await reverseGeocode(coord.latitude, coord.longitude)
     if (res) {
-      if (type === 'pickup') {
-        update('pickup_city', res.city)
-        update('pickup_state', res.state)
-      } else {
-        update('destination_city', res.city)
-        update('destination_state', res.state)
-      }
+      if (type === 'pickup') update('pickup_city_display', res.city)
+      else update('destination_city_display', res.city)
     }
   }
 
-  // Handle city input blur (geocode typed city)
-  const handleCityBlur = async (type: 'pickup' | 'destination') => {
-    const city = type === 'pickup' ? form.pickup_city : form.destination_city
-    if (!city.trim()) return
+  // Geocode typed city when user searches
+  const handleSearchTextChange = async (type: 'pickup' | 'destination', text: string) => {
+    update(type === 'pickup' ? 'pickup_city_display' : 'destination_city_display', text)
+    setActiveSearch(type)
+    if (text.length > 2) {
+      const results = await getPlaceAutocomplete(text)
+      setPredictions(results)
+    } else {
+      setPredictions([])
+    }
+  }
 
-    const res = await geocodeCity(city)
+  const handleSelectPrediction = async (prediction: AutocompletePrediction) => {
+    if (!activeSearch) return
+    const type = activeSearch
+    setActiveSearch(null)
+    setPredictions([])
+    
+    update(type === 'pickup' ? 'pickup_city_display' : 'destination_city_display', prediction.description)
+    
+    const res = await geocodeCity(prediction.description)
     if (res) {
       if (type === 'pickup') {
         update('pickup_lat', res.lat)
@@ -100,48 +152,62 @@ export default function CreateTripScreen() {
     }
   }
 
-  const validate = () => {
-    const e: Record<string, string> = {}
-    if (!form.pickup_city.trim()) e.pickup_city = 'Enter pickup city'
-    if (!form.destination_city.trim()) e.destination_city = 'Enter destination city'
-    if (form.pickup_city.toLowerCase() === form.destination_city.toLowerCase())
-      e.destination_city = 'From and to cities must be different'
-    
-    // Check if departure_time is valid
-    if (!form.departure_time) {
-      e.departure_time = 'Select departure time'
-    } else {
-      const d = new Date(form.departure_time)
-      if (isNaN(d.getTime())) {
-        e.departure_time = 'Invalid date format'
-      }
+  // Fetch Route whenever lat/lng changes
+  const fetchRoute = useCallback(async () => {
+    if (!form.pickup_lat || !form.destination_lat) return
+    setFetchingRoute(true)
+    try {
+      const data = await getDirections(
+        { lat: form.pickup_lat, lng: form.pickup_lng },
+        { lat: form.destination_lat, lng: form.destination_lng },
+      )
+      if (data) setRouteData(data)
+    } catch (e) {
+      console.warn('[CreateTrip] Route fetch failed:', e)
+    } finally {
+      setFetchingRoute(false)
     }
+  }, [form.pickup_lat, form.pickup_lng, form.destination_lat, form.destination_lng])
 
-    if (!form.base_fare || isNaN(Number(form.base_fare)) || Number(form.base_fare) < 50)
-      e.base_fare = 'Enter valid base fare (min ₹50)'
-    if (form.total_seats < 1 || form.total_seats > 40)
-      e.total_seats = 'Seats must be 1–40'
-    setErrors(e)
-    return !Object.keys(e).length
+  useEffect(() => {
+    if (form.pickup_lat && form.destination_lat) {
+      const t = setTimeout(fetchRoute, 1000)
+      return () => clearTimeout(t)
+    }
+  }, [form.pickup_lat, form.pickup_lng, form.destination_lat, form.destination_lng])
+
+  const handleMapPress = useCallback((event: any) => {
+    if (!drawingMode) return
+    const coord = event.nativeEvent.coordinate
+    if (drawingMode === 'pickup') setPickupPolygon(prev => [...prev, coord])
+    else setDestinationPolygon(prev => [...prev, coord])
+  }, [drawingMode])
+
+  const handleFinishDrawing = () => {
+    const poly = drawingMode === 'pickup' ? pickupPolygon : destinationPolygon
+    if (poly.length > 0 && poly.length < 3) {
+      Alert.alert('Too few points', 'Tap at least 3 points on the map or remove all pins.')
+      return
+    }
+    setDrawingMode(null)
+  }
+
+  const removePolygonPoint = (type: 'pickup' | 'destination', index: number) => {
+    if (type === 'pickup') {
+      setPickupPolygon(prev => prev.filter((_, i) => i !== index))
+    } else {
+      setDestinationPolygon(prev => prev.filter((_, i) => i !== index))
+    }
   }
 
   const handleCreate = async () => {
-    if (!validate()) return
     setLoading(true)
     try {
-      const token = await AsyncStorage.getItem('access_token')
-      const headers = token ? { Authorization: `Bearer ${token}` } : {}
-
-      // Convert to strict ISO string for backend
       const isoTime = new Date(form.departure_time).toISOString()
 
-      const res = await axios.post(`${API}/trips/`, {
-        pickup_city: form.pickup_city.trim(),
-        pickup_state: form.pickup_state,
+      const res = await api.post(`/trips/`, {
         pickup_lat: form.pickup_lat,
         pickup_lng: form.pickup_lng,
-        destination_city: form.destination_city.trim(),
-        destination_state: form.destination_state,
         destination_lat: form.destination_lat,
         destination_lng: form.destination_lng,
         departure_time: isoTime,
@@ -154,28 +220,31 @@ export default function CreateTripScreen() {
         window_seats: form.window_seats,
         window_seat_charge: Number(form.window_seat_charge),
         notes: form.notes.trim() || null,
-      }, { headers })
+        encoded_polyline: routeData?.encodedPolyline || null,
+        distance_km: routeData?.distanceKm || null,
+        duration_minutes: routeData?.durationMinutes || null,
+        pickup_polygon: pickupPolygon.length >= 3 ? pickupPolygon.map(c => ({ lat: c.latitude, lng: c.longitude })) : null,
+        destination_polygon: destinationPolygon.length >= 3 ? destinationPolygon.map(c => ({ lat: c.latitude, lng: c.longitude })) : null,
+      })
 
       const tripId = res?.data?.data?.id || res?.data?.trip_id || 'demo'
-      // Navigate to Live Radar screen
       router.replace({
         pathname: '/trip-live',
         params: {
           tripId,
-          from: form.pickup_city,
-          to: form.destination_city,
+          from: form.pickup_city_display,
+          to: form.destination_city_display,
           totalSeats: form.total_seats.toString(),
           departureTime: isoTime,
         },
       })
     } catch (err: any) {
-      // Demo: navigate to live screen anyway
       router.replace({
         pathname: '/trip-live',
         params: {
           tripId: 'demo',
-          from: form.pickup_city,
-          to: form.destination_city,
+          from: form.pickup_city_display,
+          to: form.destination_city_display,
           totalSeats: form.total_seats.toString(),
           departureTime: form.departure_time,
         },
@@ -185,374 +254,372 @@ export default function CreateTripScreen() {
     }
   }
 
-  // Date/time picker helpers
-  const formatDisplayDate = (d: Date | null) => {
-    if (!d) return ''
-    return d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
-  }
-  const formatDisplayTime = (d: Date | null) => {
-    if (!d) return ''
-    return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
-  }
-
-  const onDateChange = (_: any, date?: Date) => {
-    if (Platform.OS === 'android') setShowDatePicker(false)
-    if (date) {
-      const next = selectedDate ? new Date(selectedDate) : new Date()
-      next.setFullYear(date.getFullYear(), date.getMonth(), date.getDate())
-      setSelectedDate(next)
-      update('departure_time', next.toISOString())
-      if (Platform.OS === 'android') setShowTimePicker(true)
+  const nextStep = () => {
+    if (step === 1 && !routeData) {
+      Alert.alert('Route not found', 'Please ensure valid pickup and destination points on the map.')
+      return
     }
-  }
-
-  const onTimeChange = (_: any, time?: Date) => {
-    if (Platform.OS === 'android') setShowTimePicker(false)
-    if (time) {
-      const next = selectedDate ? new Date(selectedDate) : new Date()
-      next.setHours(time.getHours(), time.getMinutes())
-      setSelectedDate(next)
-      update('departure_time', next.toISOString())
+    if (step === 2 && !form.departure_time) {
+      Alert.alert('Missing Info', 'Please select a departure time.')
+      return
     }
+    if (step === 3 && (!form.base_fare || Number(form.base_fare) < 50)) {
+      Alert.alert('Missing Info', 'Please enter a valid base fare (min ₹50).')
+      return
+    }
+    if (step < 4) setStep(step + 1)
   }
-
-  const selectedVehicle = VEHICLE_TYPES.find(v => v.value === form.vehicle_type)
 
   return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+    <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Text style={styles.backBtnText}>← Back</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Create Trip</Text>
-        <Text style={styles.headerSub}>Publish your intercity route</Text>
-      </View>
-
-      <View style={styles.form}>
-        
-        {/* Map View for Selecting Pickup and Destination */}
-        <SectionHeader title="🗺️ Select Points on Map" />
-        <Text style={styles.fieldHint}>Drag the Red marker for Pickup and the Blue marker for Drop-off.</Text>
-        <View style={styles.mapContainer}>
-          <MapView
-            style={styles.map}
-            initialRegion={{
-              latitude: (form.pickup_lat + form.destination_lat) / 2,
-              longitude: (form.pickup_lng + form.destination_lng) / 2,
-              latitudeDelta: Math.abs(form.pickup_lat - form.destination_lat) * 2 || 2,
-              longitudeDelta: Math.abs(form.pickup_lng - form.destination_lng) * 2 || 2,
-            }}
-          >
-            {/* Pickup Marker */}
-            <Marker 
-              coordinate={{ latitude: form.pickup_lat, longitude: form.pickup_lng }}
-              draggable
-              onDragEnd={(e) => handleMarkerDrag('pickup', e.nativeEvent.coordinate)}
-              pinColor="red"
-              title="Pickup"
-            />
-            {/* Destination Marker */}
-            <Marker 
-              coordinate={{ latitude: form.destination_lat, longitude: form.destination_lng }}
-              draggable
-              onDragEnd={(e) => handleMarkerDrag('destination', e.nativeEvent.coordinate)}
-              pinColor="blue"
-              title="Destination"
-            />
-          </MapView>
+        <View style={styles.headerTop}>
+          <TouchableOpacity onPress={() => step > 1 ? setStep(step - 1) : router.back()} style={styles.backBtn}>
+            <Feather name="arrow-left" size={24} color="#F8FAFC" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Create Trip</Text>
+          <View style={{ width: 24 }} />
         </View>
 
-        {/* Route */}
-        <SectionHeader title="📍 Route Details" />
-        <FieldGroup>
-          <Field label="Pickup City *" error={errors.pickup_city}>
-            <TextInput style={[styles.input, errors.pickup_city && styles.inputError]}
-              placeholder="e.g. Pune" placeholderTextColor="#94A3B8"
-              value={form.pickup_city} onChangeText={v => update('pickup_city', v)}
-              onBlur={() => handleCityBlur('pickup')} />
-          </Field>
-          <Field label="Pickup State" error="">
-            <TextInput style={styles.input} placeholder="e.g. Maharashtra" placeholderTextColor="#94A3B8"
-              value={form.pickup_state} onChangeText={v => update('pickup_state', v)} />
-          </Field>
-        </FieldGroup>
-
-        <FieldGroup>
-          <Field label="Destination City *" error={errors.destination_city}>
-            <TextInput style={[styles.input, errors.destination_city && styles.inputError]}
-              placeholder="e.g. Mumbai" placeholderTextColor="#94A3B8"
-              value={form.destination_city} onChangeText={v => update('destination_city', v)}
-              onBlur={() => handleCityBlur('destination')} />
-          </Field>
-          <Field label="Destination State" error="">
-            <TextInput style={styles.input} placeholder="e.g. Maharashtra" placeholderTextColor="#94A3B8"
-              value={form.destination_state} onChangeText={v => update('destination_state', v)} />
-          </Field>
-        </FieldGroup>
-
-        {/* Departure */}
-        <SectionHeader title="🕐 Departure" />
-        <Field label="Departure Date & Time *" error={errors.departure_time}>
-          {/* Date Picker Button */}
-          <TouchableOpacity
-            style={[styles.datePickerBtn, errors.departure_time && styles.inputError]}
-            onPress={() => { setPickerMode('date'); setShowDatePicker(true) }}
-            activeOpacity={0.8}
-          >
-            <Feather name="calendar" size={16} color="#3B82F6" />
-            <Text style={selectedDate ? styles.datePickerText : styles.datePickerPlaceholder}>
-              {selectedDate ? formatDisplayDate(selectedDate) : 'Select departure date'}
-            </Text>
-            {selectedDate && (
-              <TouchableOpacity onPress={() => { setPickerMode('time'); setShowTimePicker(true) }} style={styles.timeChip}>
-                <Feather name="clock" size={13} color="#7C3AED" />
-                <Text style={styles.timeChipText}>{formatDisplayTime(selectedDate)}</Text>
-              </TouchableOpacity>
-            )}
-          </TouchableOpacity>
-
-          {/* Android Date Picker */}
-          {Platform.OS === 'android' && showDatePicker && (
-            <DateTimePicker
-              value={selectedDate || new Date()}
-              mode="date"
-              minimumDate={new Date()}
-              display="calendar"
-              onChange={onDateChange}
-            />
-          )}
-          {Platform.OS === 'android' && showTimePicker && (
-            <DateTimePicker
-              value={selectedDate || new Date()}
-              mode="time"
-              display="default"
-              onChange={onTimeChange}
-            />
-          )}
-
-          {/* iOS Inline Picker (Modal) */}
-          {Platform.OS === 'ios' && (
-            <Modal transparent visible={showDatePicker || showTimePicker} animationType="slide">
-              <View style={styles.iosPickerOverlay}>
-                <View style={styles.iosPickerCard}>
-                  <View style={styles.iosPickerHeader}>
-                    <TouchableOpacity onPress={() => { setShowDatePicker(false); setShowTimePicker(false) }}>
-                      <Text style={styles.iosPickerDone}>Done</Text>
-                    </TouchableOpacity>
-                  </View>
-                  <DateTimePicker
-                    value={selectedDate || new Date()}
-                    mode={showTimePicker ? 'time' : 'date'}
-                    minimumDate={new Date()}
-                    display="inline"
-                    onChange={showTimePicker ? onTimeChange : onDateChange}
-                    style={{ width: '100%' }}
-                  />
-                  {!showTimePicker && (
-                    <TouchableOpacity style={styles.nextTimeBtn} onPress={() => { setShowDatePicker(false); setShowTimePicker(true) }}>
-                      <Text style={styles.nextTimeBtnText}>Next: Select Time →</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
+        {/* Stepper Dots */}
+        <View style={styles.stepperContainer}>
+          {[1, 2, 3, 4].map(s => (
+            <View key={s} style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <View style={[styles.stepDot, step >= s && styles.stepDotActive]}>
+                {step > s ? <Feather name="check" size={10} color="#fff" /> : <Text style={styles.stepDotText}>{s}</Text>}
               </View>
-            </Modal>
-          )}
-        </Field>
-
-        {/* Vehicle & Seats */}
-        <SectionHeader title="🚗 Vehicle & Seats" />
-
-        <Text style={styles.label}>Vehicle Type *</Text>
-        <View style={styles.vehicleGrid}>
-          {VEHICLE_TYPES.map(v => (
-            <TouchableOpacity
-              key={v.value}
-              onPress={() => { update('vehicle_type', v.value); update('total_seats', v.seats) }}
-              style={[styles.vehicleOption, form.vehicle_type === v.value && styles.vehicleOptionActive]}
-              activeOpacity={0.8}
-            >
-              <Text style={[styles.vehicleLabel, form.vehicle_type === v.value && styles.vehicleLabelActive]}>
-                {v.label}
-              </Text>
-              <Text style={[styles.vehicleSub, form.vehicle_type === v.value && styles.vehicleSubActive]}>
-                {v.seats} seats
-              </Text>
-            </TouchableOpacity>
+              {s < 4 && <View style={[styles.stepLine, step > s && styles.stepLineActive]} />}
+            </View>
           ))}
         </View>
+      </View>
 
-        <FieldGroup>
-          <Field label={`Total Seats (${selectedVehicle?.seats} max)`} error={errors.total_seats as string}>
-            <TextInput style={[styles.input, errors.total_seats && styles.inputError]}
-              keyboardType="numeric" placeholderTextColor="#94A3B8"
-              value={form.total_seats.toString()}
-              onChangeText={v => update('total_seats', parseInt(v) || 1)} />
-          </Field>
-          <Field label="Window Seats" error="">
-            <TextInput style={styles.input} keyboardType="numeric" placeholderTextColor="#94A3B8"
-              value={form.window_seats.toString()}
-              onChangeText={v => update('window_seats', parseInt(v) || 0)} />
-          </Field>
-        </FieldGroup>
+      <View style={styles.content}>
+        {/* ================= STEP 1: ROUTE & MAP ================= */}
+        {step === 1 && (
+          <View style={styles.stepContainer}>
+            <View style={styles.stepHeader}>
+              <Text style={styles.stepTitle}>Route & Service Areas</Text>
+              <Text style={styles.stepSub}>Drag pins to set locations. Tap buttons to draw polygons.</Text>
+            </View>
 
-        {/* Pricing */}
-        <SectionHeader title="💰 Fare" />
-        <FieldGroup>
-          <Field label="Base Fare (₹/seat) *" error={errors.base_fare}>
-            <TextInput style={[styles.input, errors.base_fare && styles.inputError]}
-              keyboardType="decimal-pad" placeholder="e.g. 480" placeholderTextColor="#94A3B8"
-              value={form.base_fare} onChangeText={v => update('base_fare', v)} />
-          </Field>
-          <Field label="Window Surcharge (₹)" error="">
-            <TextInput style={styles.input} keyboardType="decimal-pad" placeholderTextColor="#94A3B8"
-              value={form.window_seat_charge} onChangeText={v => update('window_seat_charge', v)} />
-          </Field>
-        </FieldGroup>
+            <View style={styles.mapContainer}>
+              {!isMounted || !MapView ? (
+                <View style={styles.mapPlaceholder}><ActivityIndicator color="#3B82F6" /></View>
+              ) : (
+                <MapView
+                  style={styles.map}
+                  scrollEnabled={!drawingMode}
+                  initialRegion={{
+                    latitude: (form.pickup_lat + form.destination_lat) / 2,
+                    longitude: (form.pickup_lng + form.destination_lng) / 2,
+                    latitudeDelta: Math.abs(form.pickup_lat - form.destination_lat) * 2 || 2,
+                    longitudeDelta: Math.abs(form.pickup_lng - form.destination_lng) * 2 || 2,
+                  }}
+                  onPress={handleMapPress}
+                >
+                  {Polyline && routeData?.encodedPolyline && (
+                    <Polyline coordinates={decodePolyline(routeData.encodedPolyline)} strokeColor="#3B82F6" strokeWidth={5} />
+                  )}
+                  {Polygon && pickupPolygon.length >= 3 && <Polygon coordinates={pickupPolygon} fillColor="rgba(34,197,94,0.18)" strokeColor="#22C55E" strokeWidth={2} />}
+                  {Polygon && destinationPolygon.length >= 3 && <Polygon coordinates={destinationPolygon} fillColor="rgba(239,68,68,0.18)" strokeColor="#EF4444" strokeWidth={2} />}
+                  
+                  {drawingMode === 'pickup' && pickupPolygon.map((pt, i) => Marker && <Marker key={`p${i}`} coordinate={pt} onPress={() => removePolygonPoint('pickup', i)}><View style={styles.dotP} /></Marker>)}
+                  {drawingMode === 'destination' && destinationPolygon.map((pt, i) => Marker && <Marker key={`d${i}`} coordinate={pt} onPress={() => removePolygonPoint('destination', i)}><View style={styles.dotD} /></Marker>)}
 
-        {/* Toggles */}
-        <SectionHeader title="⚙️ Options" />
-        <View style={styles.toggleCard}>
-          <ToggleRow
-            label="Accept Parcels" sub="Allow customers to send parcels with this trip"
-            value={form.parcel_enabled} onChange={v => update('parcel_enabled', v)} />
-          <View style={styles.divider} />
-          <ToggleRow
-            label="Women-Only Trip" sub="Only accept female passengers"
-            value={form.women_only} onChange={v => update('women_only', v)} />
-        </View>
+                  {Marker && <Marker coordinate={{ latitude: form.pickup_lat, longitude: form.pickup_lng }} draggable onDragEnd={(e: any) => handleMarkerDrag('pickup', e.nativeEvent.coordinate)} pinColor="green" />}
+                  {Marker && <Marker coordinate={{ latitude: form.destination_lat, longitude: form.destination_lng }} draggable onDragEnd={(e: any) => handleMarkerDrag('destination', e.nativeEvent.coordinate)} pinColor="red" />}
+                </MapView>
+              )}
 
-        {/* Notes */}
-        <Field label="Notes (optional)" error="">
-          <TextInput style={[styles.input, { height: 80, textAlignVertical: 'top', paddingTop: 12 }]}
-            multiline placeholder="Any special instructions for passengers..." placeholderTextColor="#94A3B8"
-            value={form.notes} onChangeText={v => update('notes', v)} />
-        </Field>
+              {/* Map Floating Overlays */}
+              <View style={styles.mapOverlays}>
+                <View style={styles.searchCard}>
+                  <View style={styles.searchRow}>
+                    <View style={styles.greenDot} />
+                    <TextInput 
+                      style={styles.searchInput} 
+                      placeholder="Search Pickup Location..." 
+                      value={form.pickup_city_display} 
+                      onChangeText={v => handleSearchTextChange('pickup', v)} 
+                    />
+                  </View>
+                  <View style={styles.searchDivider} />
+                  <View style={styles.searchRow}>
+                    <View style={styles.redDot} />
+                    <TextInput 
+                      style={styles.searchInput} 
+                      placeholder="Search Destination..." 
+                      value={form.destination_city_display} 
+                      onChangeText={v => handleSearchTextChange('destination', v)} 
+                    />
+                  </View>
+                  {fetchingRoute && <ActivityIndicator size="small" color="#3B82F6" style={{position:'absolute', right:16, top: 40}} />}
+                  {routeData && !fetchingRoute && (
+                    <View style={styles.routeDistanceBadge}>
+                      <Text style={styles.routeDistanceText}>{routeData.distanceKm} km · {routeData.durationMinutes} min</Text>
+                    </View>
+                  )}
+                </View>
 
-        {/* Submit */}
-        <TouchableOpacity style={[styles.submitBtn, loading && { opacity: 0.6 }]}
-          onPress={handleCreate} disabled={loading} activeOpacity={0.85}>
-          {loading
-            ? <ActivityIndicator color="#FFFFFF" />
-            : <Text style={styles.submitText}>Create Trip (Save as Draft)</Text>
-          }
+                {/* Autocomplete Dropdown */}
+                {activeSearch && predictions.length > 0 && (
+                  <View style={styles.predictionsCard}>
+                    <FlatList
+                      data={predictions}
+                      keyExtractor={item => item.placeId}
+                      keyboardShouldPersistTaps="handled"
+                      renderItem={({item}) => (
+                        <TouchableOpacity style={styles.predictionItem} onPress={() => handleSelectPrediction(item)}>
+                          <Feather name="map-pin" size={16} color="#64748B" />
+                          <View style={{ marginLeft: 10, flex: 1 }}>
+                            <Text style={styles.predictionMain} numberOfLines={1}>{item.mainText}</Text>
+                            <Text style={styles.predictionSub} numberOfLines={1}>{item.secondaryText}</Text>
+                          </View>
+                        </TouchableOpacity>
+                      )}
+                    />
+                  </View>
+                )}
+
+                {drawingMode ? (
+                  <View style={styles.drawingToolbar}>
+                    <Text style={styles.drawingText}>{drawingMode === 'pickup' ? 'Drawing Pickup' : 'Drawing Dropoff'}...</Text>
+                    <TouchableOpacity style={styles.btnFinish} onPress={handleFinishDrawing}><Text style={styles.btnTextLight}>Done</Text></TouchableOpacity>
+                  </View>
+                ) : (
+                  <View style={styles.drawingToolbarRow}>
+                    <TouchableOpacity style={styles.btnDraw} onPress={() => setDrawingMode('pickup')}>
+                      <Feather name="edit-2" size={14} color="#fff" />
+                      <Text style={styles.btnTextLight}>{pickupPolygon.length >= 3 ? '✓ Pickup Area' : '+ Pickup Area'}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.btnDraw, { backgroundColor: '#EF4444' }]} onPress={() => setDrawingMode('destination')}>
+                      <Feather name="edit-2" size={14} color="#fff" />
+                      <Text style={styles.btnTextLight}>{destinationPolygon.length >= 3 ? '✓ Dropoff Area' : '+ Dropoff Area'}</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* ================= STEP 2: DEPARTURE & VEHICLE ================= */}
+        {step === 2 && (
+          <ScrollView style={styles.stepContainer} contentContainerStyle={{ padding: 20 }}>
+            <Text style={styles.stepTitle}>Departure & Vehicle</Text>
+            
+            <Text style={styles.label}>When are you leaving? *</Text>
+            <TouchableOpacity style={styles.datePickerBtn} onPress={() => { setPickerMode('date'); setShowDatePicker(true) }}>
+              <Feather name="calendar" size={20} color="#3B82F6" />
+              <Text style={selectedDate ? styles.dateText : styles.placeholder}>
+                {selectedDate ? selectedDate.toLocaleString('en-IN', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Select Date & Time'}
+              </Text>
+            </TouchableOpacity>
+
+            {(Platform.OS === 'android' && showDatePicker) && <DateTimePicker value={selectedDate || new Date()} mode="date" display="calendar" onChange={(_: any, date?: Date) => { setShowDatePicker(false); if(date) { setSelectedDate(date); setShowTimePicker(true); } }} />}
+            {(Platform.OS === 'android' && showTimePicker) && <DateTimePicker value={selectedDate || new Date()} mode="time" display="default" onChange={(_: any, time?: Date) => { setShowTimePicker(false); if(time) { const d = new Date(selectedDate!); d.setHours(time.getHours(), time.getMinutes()); setSelectedDate(d); update('departure_time', d.toISOString()) } }} />}
+            {Platform.OS === 'ios' && (
+              <Modal transparent visible={showDatePicker || showTimePicker} animationType="slide">
+                <View style={styles.iosPickerBg}>
+                  <View style={styles.iosPicker}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 10 }}>
+                      <TouchableOpacity onPress={() => { setShowDatePicker(false); setShowTimePicker(false) }}><Text style={styles.btnTextBlue}>Done</Text></TouchableOpacity>
+                    </View>
+                    <DateTimePicker value={selectedDate || new Date()} mode={showTimePicker ? 'time' : 'date'} display="inline" onChange={(_: any, d?: Date) => { if(d){ setSelectedDate(d); update('departure_time', d.toISOString()) } }} />
+                    {!showTimePicker && <TouchableOpacity style={styles.btnPrimary} onPress={() => { setShowDatePicker(false); setShowTimePicker(true) }}><Text style={styles.btnTextLight}>Next: Time</Text></TouchableOpacity>}
+                  </View>
+                </View>
+              </Modal>
+            )}
+
+            <Text style={[styles.label, { marginTop: 24 }]}>Vehicle Type</Text>
+            <View style={styles.vehicleGrid}>
+              {VEHICLE_TYPES.map(v => (
+                <TouchableOpacity key={v.value} onPress={() => { update('vehicle_type', v.value); update('total_seats', v.seats) }} style={[styles.vCard, form.vehicle_type === v.value && styles.vCardActive]}>
+                  <MaterialCommunityIcons name={v.icon as any} size={32} color={form.vehicle_type === v.value ? '#2563EB' : '#64748B'} />
+                  <Text style={[styles.vCardText, form.vehicle_type === v.value && styles.vCardTextActive]}>{v.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: 16, marginTop: 20 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.label}>Total Seats</Text>
+                <TextInput style={styles.input} keyboardType="numeric" value={form.total_seats.toString()} onChangeText={v => update('total_seats', parseInt(v)||1)} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.label}>Window Seats</Text>
+                <TextInput style={styles.input} keyboardType="numeric" value={form.window_seats.toString()} onChangeText={v => update('window_seats', parseInt(v)||0)} />
+              </View>
+            </View>
+          </ScrollView>
+        )}
+
+        {/* ================= STEP 3: PRICING & OPTIONS ================= */}
+        {step === 3 && (
+          <ScrollView style={styles.stepContainer} contentContainerStyle={{ padding: 20 }}>
+            <Text style={styles.stepTitle}>Pricing & Preferences</Text>
+
+            <View style={{ flexDirection: 'row', gap: 16, marginBottom: 24 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.label}>Base Fare (₹/seat) *</Text>
+                <TextInput style={styles.input} keyboardType="numeric" placeholder="e.g. 500" value={form.base_fare} onChangeText={v => update('base_fare', v)} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.label}>Window Surcharge (₹)</Text>
+                <TextInput style={styles.input} keyboardType="numeric" placeholder="0" value={form.window_seat_charge} onChangeText={v => update('window_seat_charge', v)} />
+              </View>
+            </View>
+
+            <View style={styles.toggleCard}>
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1 }}><Text style={styles.toggleLabel}>Accept Parcels</Text><Text style={styles.toggleSub}>Allow customers to send luggage</Text></View>
+                <Switch value={form.parcel_enabled} onValueChange={v => update('parcel_enabled', v)} trackColor={{ true: '#3B82F6' }} />
+              </View>
+              <View style={styles.divider} />
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1 }}><Text style={styles.toggleLabel}>Women-Only Trip</Text><Text style={styles.toggleSub}>Restrict bookings to female riders</Text></View>
+                <Switch value={form.women_only} onValueChange={v => update('women_only', v)} trackColor={{ true: '#EC4899' }} />
+              </View>
+            </View>
+
+            <Text style={[styles.label, { marginTop: 16 }]}>Special Instructions</Text>
+            <TextInput style={[styles.input, { height: 100, textAlignVertical: 'top' }]} multiline placeholder="Any specific details for passengers..." value={form.notes} onChangeText={v => update('notes', v)} />
+          </ScrollView>
+        )}
+
+        {/* ================= STEP 4: REVIEW ================= */}
+        {step === 4 && (
+          <ScrollView style={styles.stepContainer} contentContainerStyle={{ padding: 20 }}>
+            <Text style={styles.stepTitle}>Review & Publish</Text>
+            
+            <View style={styles.summaryCard}>
+              <View style={styles.summaryRoute}>
+                <View style={styles.greenDot} />
+                <Text style={styles.summaryCity}>{form.pickup_city_display}</Text>
+                <Feather name="arrow-right" size={16} color="#94A3B8" style={{ marginHorizontal: 10 }} />
+                <View style={styles.redDot} />
+                <Text style={styles.summaryCity}>{form.destination_city_display}</Text>
+              </View>
+              <Text style={styles.summaryTime}>{selectedDate?.toLocaleString('en-IN', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</Text>
+              <View style={styles.divider} />
+              
+              <View style={styles.summaryGrid}>
+                <View style={styles.summaryItem}><Feather name="truck" size={16} color="#64748B"/><Text style={styles.summaryValue}>{form.vehicle_type}</Text></View>
+                <View style={styles.summaryItem}><Feather name="users" size={16} color="#64748B"/><Text style={styles.summaryValue}>{form.total_seats} Seats</Text></View>
+                <View style={styles.summaryItem}><Feather name="map" size={16} color="#64748B"/><Text style={styles.summaryValue}>{routeData?.distanceKm || 0} km</Text></View>
+                <View style={styles.summaryItem}><Feather name="tag" size={16} color="#64748B"/><Text style={styles.summaryValue}>₹{form.base_fare}/seat</Text></View>
+              </View>
+            </View>
+
+            <Text style={styles.summaryInfo}>Trip will be saved as DRAFT. You can publish it from the Home screen when you are ready to drive.</Text>
+          </ScrollView>
+        )}
+      </View>
+
+      {/* Footer Navigation */}
+      <View style={styles.footer}>
+        {step > 1 && (
+          <TouchableOpacity style={styles.btnSecondary} onPress={() => setStep(step - 1)}>
+            <Text style={styles.btnTextDark}>Back</Text>
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity style={styles.btnPrimary} onPress={step === 4 ? handleCreate : nextStep} disabled={loading}>
+          {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnTextLight}>{step === 4 ? 'Save Trip Draft' : 'Next Step'}</Text>}
         </TouchableOpacity>
-
-        <Text style={styles.submitHint}>
-          ℹ️ Trip is saved as DRAFT. Go to Home to publish it when ready.
-        </Text>
       </View>
-    </ScrollView>
-  )
-}
-
-function SectionHeader({ title }: { title: string }) {
-  return <Text style={styles.sectionHeader}>{title}</Text>
-}
-
-function FieldGroup({ children }: { children: React.ReactNode }) {
-  return <View style={styles.fieldGroup}>{children}</View>
-}
-
-function Field({ label, error, children }: { label: string; error: string; children: React.ReactNode }) {
-  return (
-    <View style={styles.fieldWrapper}>
-      <Text style={styles.label}>{label}</Text>
-      {children}
-      {!!error && <Text style={styles.errorText}>{error}</Text>}
-    </View>
-  )
-}
-
-function ToggleRow({ label, sub, value, onChange }: {
-  label: string; sub: string; value: boolean; onChange: (v: boolean) => void
-}) {
-  return (
-    <View style={styles.toggleRow}>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.toggleLabel}>{label}</Text>
-        <Text style={styles.toggleSub}>{sub}</Text>
-      </View>
-      <Switch value={value} onValueChange={onChange}
-        trackColor={{ false: '#475569', true: '#3B82F6' }} thumbColor="#FFFFFF" />
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F1F5F9' },
-  header: { backgroundColor: '#1E293B', paddingHorizontal: 20, paddingTop: 20, paddingBottom: 24 },
-  backBtn: { marginBottom: 12 },
-  backBtnText: { color: '#94A3B8', fontSize: 14 },
-  headerTitle: { fontSize: 24, fontWeight: '800', color: '#F8FAFC' },
-  headerSub: { fontSize: 13, color: '#64748B', marginTop: 2 },
-  form: { padding: 16, gap: 4 },
+  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  header: { backgroundColor: '#1E293B', paddingTop: 40, paddingBottom: 20 },
+  headerTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, marginBottom: 20 },
+  backBtn: { padding: 4 },
+  headerTitle: { fontSize: 20, fontWeight: '700', color: '#FFF' },
+  stepperContainer: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
+  stepDot: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#334155', justifyContent: 'center', alignItems: 'center' },
+  stepDotActive: { backgroundColor: '#3B82F6' },
+  stepDotText: { color: '#FFF', fontSize: 12, fontWeight: '700' },
+  stepLine: { width: 40, height: 3, backgroundColor: '#334155', marginHorizontal: 8, borderRadius: 2 },
+  stepLineActive: { backgroundColor: '#3B82F6' },
   
-  mapContainer: { height: 250, borderRadius: 14, overflow: 'hidden', marginBottom: 12, borderWidth: 1, borderColor: '#E2E8F0' },
+  content: { flex: 1 },
+  stepContainer: { flex: 1 },
+  stepHeader: { padding: 20, paddingBottom: 10, backgroundColor: '#FFF', borderBottomWidth: 1, borderColor: '#F1F5F9' },
+  stepTitle: { fontSize: 24, fontWeight: '800', color: '#0F172A', marginBottom: 6 },
+  stepSub: { fontSize: 14, color: '#64748B' },
+  
+  // Map Step
+  mapContainer: { flex: 1, position: 'relative' },
   map: { flex: 1 },
+  mapPlaceholder: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#E2E8F0' },
+  mapOverlays: { position: 'absolute', top: 20, left: 20, right: 20, bottom: 20, justifyContent: 'space-between', pointerEvents: 'box-none' },
+  // Search Bar
+  searchCard: { backgroundColor: 'rgba(255,255,255,0.95)', borderRadius: 16, padding: 12, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10, elevation: 5 },
+  searchRow: { flexDirection: 'row', alignItems: 'center' },
+  searchInput: { flex: 1, height: 40, fontSize: 15, color: '#1E293B', marginLeft: 10 },
+  searchDivider: { height: 1, backgroundColor: '#E2E8F0', marginVertical: 6, marginLeft: 20 },
+  routeDistanceBadge: { marginTop: 10, backgroundColor: '#EFF6FF', alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
+  routeDistanceText: { fontSize: 12, color: '#3B82F6', fontWeight: '700' },
+  predictionsCard: { backgroundColor: '#FFF', borderRadius: 16, marginTop: 8, paddingVertical: 8, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10, elevation: 5, maxHeight: 200 },
+  predictionItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
+  predictionMain: { fontSize: 15, fontWeight: '500', color: '#1E293B' },
+  predictionSub: { fontSize: 12, color: '#64748B', marginTop: 2 },
+  
+  drawingToolbarRow: { flexDirection: 'row', gap: 10, alignSelf: 'center' },
+  drawingToolbar: { backgroundColor: '#1E293B', padding: 16, borderRadius: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  drawingText: { color: '#FFF', fontWeight: '600', fontSize: 14 },
+  
+  // UI Elements
+  label: { fontSize: 14, fontWeight: '600', color: '#334155', marginBottom: 8 },
+  input: { backgroundColor: '#FFF', borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 12, padding: 16, fontSize: 16, color: '#0F172A' },
+  datePickerBtn: { backgroundColor: '#FFF', borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 12, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  placeholder: { color: '#94A3B8', fontSize: 16 },
+  dateText: { color: '#0F172A', fontSize: 16, fontWeight: '600' },
+  vehicleGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  vCard: { flex: 1, minWidth: '45%', backgroundColor: '#FFF', borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 16, padding: 20, alignItems: 'center', gap: 10 },
+  vCardActive: { borderColor: '#3B82F6', backgroundColor: '#EFF6FF' },
+  vCardText: { fontSize: 14, fontWeight: '600', color: '#64748B' },
+  vCardTextActive: { color: '#2563EB' },
+  
+  // Toggles
+  toggleCard: { backgroundColor: '#FFF', borderRadius: 16, padding: 4, borderWidth: 1, borderColor: '#E2E8F0', marginTop: 10 },
+  toggleRow: { flexDirection: 'row', alignItems: 'center', padding: 16 },
+  toggleLabel: { fontSize: 15, fontWeight: '600', color: '#1E293B' },
+  toggleSub: { fontSize: 12, color: '#64748B', marginTop: 2 },
+  divider: { height: 1, backgroundColor: '#F1F5F9', marginHorizontal: 16 },
 
-  sectionHeader: { fontSize: 13, fontWeight: '700', color: '#64748B', marginTop: 16, marginBottom: 8, letterSpacing: 0.5 },
-  fieldGroup: { flexDirection: 'row', gap: 10 },
-  fieldWrapper: { flex: 1, marginBottom: 10 },
-  label: { fontSize: 12, fontWeight: '600', color: '#475569', marginBottom: 6 },
-  input: {
-    backgroundColor: '#FFFFFF', borderWidth: 1.5, borderColor: '#E2E8F0',
-    borderRadius: 12, padding: 12, fontSize: 14, color: '#0F172A',
-  },
-  inputError: { borderColor: '#EF4444' },
-  errorText: { fontSize: 11, color: '#EF4444', marginTop: 3 },
-  fieldHint: { fontSize: 10, color: '#94A3B8', marginTop: 3 },
+  // Summary
+  summaryCard: { backgroundColor: '#FFF', borderRadius: 20, padding: 20, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 20 },
+  summaryRoute: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+  summaryCity: { fontSize: 18, fontWeight: '700', color: '#0F172A' },
+  summaryTime: { fontSize: 15, color: '#3B82F6', fontWeight: '600', marginBottom: 20 },
+  summaryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 20, marginTop: 20 },
+  summaryItem: { flexDirection: 'row', alignItems: 'center', gap: 8, width: '40%' },
+  summaryValue: { fontSize: 15, fontWeight: '600', color: '#334155' },
+  summaryInfo: { fontSize: 14, color: '#64748B', textAlign: 'center', paddingHorizontal: 20, lineHeight: 22 },
 
-  // Date picker styles
-  datePickerBtn: {
-    backgroundColor: '#FFFFFF', borderWidth: 1.5, borderColor: '#E2E8F0',
-    borderRadius: 12, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 48,
-  },
-  datePickerText: { flex: 1, color: '#0F172A', fontSize: 14, fontWeight: '500' },
-  datePickerPlaceholder: { flex: 1, color: '#94A3B8', fontSize: 14 },
-  timeChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: '#EDE9FE', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4,
-  },
-  timeChipText: { color: '#7C3AED', fontSize: 12, fontWeight: '600' },
-  iosPickerOverlay: {
-    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end',
-  },
-  iosPickerCard: {
-    backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24,
-    paddingBottom: 30, paddingHorizontal: 16,
-  },
-  iosPickerHeader: {
-    flexDirection: 'row', justifyContent: 'flex-end', paddingVertical: 14,
-    borderBottomWidth: 1, borderColor: '#F1F5F9',
-  },
-  iosPickerDone: { color: '#2563EB', fontSize: 16, fontWeight: '700' },
-  nextTimeBtn: {
-    backgroundColor: '#2563EB', borderRadius: 12, padding: 14, margin: 12, alignItems: 'center',
-  },
-  nextTimeBtnText: { color: '#FFF', fontSize: 15, fontWeight: '700' },
+  // Footers & Buttons
+  footer: { backgroundColor: '#FFF', padding: 20, borderTopWidth: 1, borderColor: '#E2E8F0', flexDirection: 'row', gap: 12 },
+  btnPrimary: { flex: 1, backgroundColor: '#2563EB', borderRadius: 16, padding: 18, alignItems: 'center', shadowColor: '#2563EB', shadowOpacity: 0.3, shadowRadius: 8, elevation: 4 },
+  btnSecondary: { backgroundColor: '#F1F5F9', borderRadius: 16, padding: 18, alignItems: 'center', paddingHorizontal: 30 },
+  btnTextLight: { color: '#FFF', fontSize: 16, fontWeight: '700' },
+  btnTextDark: { color: '#334155', fontSize: 16, fontWeight: '700' },
+  btnDraw: { backgroundColor: '#22C55E', borderRadius: 12, paddingHorizontal: 20, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 8, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 5, elevation: 4 },
+  btnFinish: { backgroundColor: '#22C55E', borderRadius: 10, paddingHorizontal: 20, paddingVertical: 10 },
+  btnTextBlue: { color: '#2563EB', fontSize: 16, fontWeight: '600' },
+  
+  // Dots
+  greenDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#22C55E' },
+  redDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#EF4444' },
+  dotP: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#22C55E', borderWidth: 1.5, borderColor: '#fff' },
+  dotD: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#EF4444', borderWidth: 1.5, borderColor: '#fff' },
 
-  vehicleGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
-  vehicleOption: {
-    flex: 1, minWidth: '45%', borderWidth: 1.5, borderColor: '#E2E8F0',
-    borderRadius: 12, padding: 12, backgroundColor: '#FFFFFF', alignItems: 'center',
-  },
-  vehicleOptionActive: { borderColor: '#2563EB', backgroundColor: '#EFF6FF' },
-  vehicleLabel: { fontSize: 13, fontWeight: '600', color: '#475569' },
-  vehicleLabelActive: { color: '#2563EB' },
-  vehicleSub: { fontSize: 11, color: '#94A3B8', marginTop: 2 },
-  vehicleSubActive: { color: '#3B82F6' },
-  toggleCard: { backgroundColor: '#FFFFFF', borderRadius: 14, padding: 4, marginBottom: 12, borderWidth: 1, borderColor: '#E2E8F0' },
-  toggleRow: { flexDirection: 'row', alignItems: 'center', padding: 12, gap: 12 },
-  toggleLabel: { fontSize: 13, fontWeight: '600', color: '#334155' },
-  toggleSub: { fontSize: 11, color: '#94A3B8', marginTop: 2, maxWidth: 220 },
-  divider: { height: 1, backgroundColor: '#F1F5F9', marginHorizontal: 12 },
-  submitBtn: {
-    backgroundColor: '#2563EB', borderRadius: 16, padding: 18,
-    alignItems: 'center', marginTop: 20,
-    shadowColor: '#2563EB', shadowOpacity: 0.35, shadowRadius: 12, elevation: 4,
-  },
-  submitText: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
-  submitHint: { fontSize: 12, color: '#94A3B8', textAlign: 'center', marginTop: 10, marginBottom: 8 },
+  // iOS Picker
+  iosPickerBg: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
+  iosPicker: { backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 40 },
 })
-

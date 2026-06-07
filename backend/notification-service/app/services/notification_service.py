@@ -124,10 +124,24 @@ class NotificationService:
 
 # Notification templates for each event type
 TEMPLATES = {
-    "DRIVER_ACCEPTED": {
-        "title": "Driver Found! ",
-        "body": "Your driver is on the way. Track live in the app.",
-    },
+    # Existing
+    "DRIVER_ACCEPTED": {"title": "Driver Found!", "body": "Your driver is on the way. Track live in the app."},
+    "TRIP_STARTED": {"title": "Trip Started", "body": "Your trip is underway. Have a safe journey!"},
+    "PAYMENT_CAPTURED": {"title": "Payment Successful", "body": "Your payment was processed successfully."},
+    "PARCEL_STATUS_UPDATE": {"title": "Parcel Update", "body": "Your parcel status has been updated."},
+    "EARNING_CREDITED": {"title": "Earning Credited", "body": "Your trip earning has been added to your wallet."},
+    "INCOMING_TRIP_REQUEST": {"title": "New Trip Request!", "body": "A customer wants you for a trip. Respond quickly!"},
+    "SOS_ALERT": {"title": "Emergency Alert", "body": "SOS received during trip. Immediate action required."},
+    # New: Full Ride Matching Flow
+    "MATCH_FOUND": {"title": "Matching Ride Found!", "body": "A driver heading your way was found. Tap to book your seat."},
+    "TRIP_REQUEST": {"title": "New Ride Request", "body": "A customer wants a ride. Open app to accept (40s)."},
+    "TRIP_ACCEPTED": {"title": "Ride Confirmed!", "body": "Your driver accepted your request and is on the way."},
+    "TRIP_REJECTED": {"title": "Driver Couldn't Accept", "body": "Don't worry - other drivers are still looking for you."},
+    "ARRIVAL_ALERT": {"title": "Driver is Almost Here!", "body": "Your driver is within 10 km. Get ready!"},
+    "SEAT_BOOKED": {"title": "Seat Booked", "body": "A customer booked a seat on your trip."},
+    "SEAT_FULL": {"title": "Trip is Full!", "body": "All seats on your trip are booked!"},
+    "PENDING_BOOKING_CREATED": {"title": "Pre-Booking Submitted", "body": "We will notify you when a matching driver is found."},
+},
     "TRIP_STARTED": {
         "title": "Trip Started [YAY]",
         "body": "Your trip is underway. Have a safe journey!",

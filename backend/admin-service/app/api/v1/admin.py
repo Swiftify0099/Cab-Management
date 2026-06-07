@@ -61,16 +61,14 @@ async def list_trips(
     if status:
         query = query.where(Trip.status == TripStatus(status))
     if q:
-        query = query.where(
-            or_(Trip.pickup_city.ilike(f"%{q}%"), Trip.destination_city.ilike(f"%{q}%"))
-        )
+        query = query.where(Trip.status == TripStatus(q))
     result = await db.execute(query)
     trips = result.scalars().all()
     return SuccessResponse(success=True, message="OK", data=[
         {
             "id": str(t.id),
-            "pickup_city": t.pickup_city,
-            "destination_city": t.destination_city,
+            "pickup_lat": t.pickup_latitude,
+            "destination_lat": t.destination_latitude,
             "status": t.status.value,
             "departure_time": t.departure_time.isoformat(),
             "total_seats": t.total_seats,

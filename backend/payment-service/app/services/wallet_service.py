@@ -16,8 +16,8 @@ from sqlalchemy import select, and_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.models.all_models import (
-    Customer, Wallet, WalletTransaction,
-    WalletTransactionType, Coupon, CouponUsage,
+    CustomerProfile, WalletTransaction,
+    LedgerType, Coupon
 )
 from app.core.config import payment_settings
 from app.services.razorpay_service import RazorpayService
@@ -32,7 +32,7 @@ class WalletService:
     async def get_or_create_wallet(self, customer_id: str) -> dict:
         """Get customer wallet; create with 0 if first time."""
         result = await self.db.execute(
-            select(Customer).where(Customer.id == UUID(customer_id))
+            select(CustomerProfile).where(CustomerProfile.user_id == UUID(customer_id))
         )
         customer = result.scalar_one_or_none()
         if not customer:
@@ -79,7 +79,7 @@ class WalletService:
     ) -> dict:
         """Directly credit wallet (after successful Razorpay payment for top-up)."""
         result = await self.db.execute(
-            select(Customer).where(Customer.id == UUID(customer_id))
+            select(CustomerProfile).where(CustomerProfile.user_id == UUID(customer_id))
         )
         customer = result.scalar_one_or_none()
         if not customer:
@@ -91,11 +91,11 @@ class WalletService:
 
         # Record transaction
         tx = WalletTransaction(
-            customer_id=UUID(customer_id),
+            user_id=UUID(customer_id),
             amount=amount,
-            transaction_type=WalletTransactionType.CREDIT,
+            transaction_type=LedgerType.WALLET_CREDIT,
             description=description,
-            reference_id=reference_id,
+            ref_id=UUID(reference_id) if reference_id and len(reference_id) == 36 else None,
             balance_after=new_balance,
         )
         self.db.add(tx)
@@ -109,7 +109,7 @@ class WalletService:
     ) -> dict:
         """Deduct amount from wallet for booking payment."""
         result = await self.db.execute(
-            select(Customer).where(Customer.id == UUID(customer_id))
+            select(CustomerProfile).where(CustomerProfile.user_id == UUID(customer_id))
         )
         customer = result.scalar_one_or_none()
         if not customer:
@@ -123,11 +123,11 @@ class WalletService:
         customer.wallet_balance = new_balance
 
         tx = WalletTransaction(
-            customer_id=UUID(customer_id),
+            user_id=UUID(customer_id),
             amount=amount,
-            transaction_type=WalletTransactionType.DEBIT,
+            transaction_type=LedgerType.WALLET_DEBIT,
             description=description,
-            reference_id=reference_id,
+            ref_id=UUID(reference_id) if reference_id and len(reference_id) == 36 else None,
             balance_after=new_balance,
         )
         self.db.add(tx)
@@ -144,7 +144,7 @@ class WalletService:
             raise ValueError("Minimum 10 points required for redemption")
 
         result = await self.db.execute(
-            select(Customer).where(Customer.id == UUID(customer_id))
+            select(CustomerProfile).where(CustomerProfile.user_id == UUID(customer_id))
         )
         customer = result.scalar_one_or_none()
         if not customer:
@@ -158,14 +158,14 @@ class WalletService:
         await self.db.commit()
 
         # Credit wallet
-        result = await self.credit_wallet(
+        result_credit = await self.credit_wallet(
             customer_id=customer_id,
             amount=rupee_value,
             description=f"Reward points redemption ({points} pts)",
         )
 
         logger.info("Points redeemed", customer_id=customer_id, points=points, rupees=str(rupee_value))
-        return {"points_used": points, "rupees_credited": float(rupee_value), **result}
+        return {"points_used": points, "rupees_credited": float(rupee_value), **result_credit}
 
     async def get_transaction_history(
         self, customer_id: str, page: int = 1, page_size: int = 20
@@ -174,7 +174,7 @@ class WalletService:
         offset = (page - 1) * page_size
         result = await self.db.execute(
             select(WalletTransaction)
-            .where(WalletTransaction.customer_id == UUID(customer_id))
+            .where(WalletTransaction.user_id == UUID(customer_id))
             .order_by(desc(WalletTransaction.created_at))
             .offset(offset)
             .limit(page_size)
@@ -205,7 +205,6 @@ class WalletService:
                 and_(
                     Coupon.code == code.upper(),
                     Coupon.is_active == True,
-                    Coupon.valid_from <= datetime.utcnow(),
                 )
             )
         )
@@ -216,28 +215,18 @@ class WalletService:
 
         if coupon.valid_until and coupon.valid_until < datetime.utcnow():
             raise ValueError("Coupon has expired")
+            
+        if coupon.valid_from and coupon.valid_from > datetime.utcnow():
+            raise ValueError("Coupon is not active yet")
 
-        if coupon.min_booking_amount and booking_amount < coupon.min_booking_amount:
-            raise ValueError(f"Minimum booking amount {coupon.min_booking_amount} required")
+        if coupon.min_fare and booking_amount < coupon.min_fare:
+            raise ValueError(f"Minimum booking amount {coupon.min_fare} required")
 
-        # Check usage limit
-        usage_result = await self.db.execute(
-            select(CouponUsage).where(
-                and_(
-                    CouponUsage.coupon_id == coupon.id,
-                    CouponUsage.customer_id == UUID(customer_id),
-                )
-            )
-        )
-        existing_usage = usage_result.scalar_one_or_none()
-        if existing_usage:
-            raise ValueError("You have already used this coupon")
-
-        if coupon.total_usage_count >= (coupon.max_usage_count or 999999):
+        if coupon.uses_count >= (coupon.max_uses or 999999):
             raise ValueError("Coupon usage limit reached")
 
         # Calculate discount
-        if coupon.discount_type == "percentage":
+        if coupon.discount_type.value == "percentage":
             discount = min(
                 booking_amount * Decimal(str(coupon.discount_value)) / 100,
                 Decimal(str(coupon.max_discount_amount or 9999)),
@@ -249,6 +238,6 @@ class WalletService:
             "coupon_id": str(coupon.id),
             "code": coupon.code,
             "discount_amount": float(discount),
-            "discount_type": coupon.discount_type,
+            "discount_type": coupon.discount_type.value,
             "final_amount": float(booking_amount - discount),
         }

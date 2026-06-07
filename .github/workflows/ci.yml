@@ -225,6 +225,24 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Build admin-web image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./apps/admin-web
+          push: false
+          tags: cabooking/admin-web:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build customer-web image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./apps/customer-web
+          push: false
+          tags: cabooking/customer-web:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   # ─────────────────────────────────────────────────────────
   # JOB 5 — Deploy (main branch only)
   # ─────────────────────────────────────────────────────────
@@ -233,7 +251,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [backend-tests, frontend-builds, code-quality]
     if: github.ref == 'refs/heads/main'
-    environment: staging
+    environment:
+      name: staging
 
     steps:
       - uses: actions/checkout@v4

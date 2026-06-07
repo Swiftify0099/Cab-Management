@@ -64,6 +64,40 @@ async def send_otp(
     """
     phone = payload.phone.strip()
 
+    # Check if user already exists
+    result = await db.execute(select(User).where(User.phone == phone))
+    user = result.scalar_one_or_none()
+
+    if user and user.is_active:
+        # Existing active user -> Bypass OTP and auto-verify
+        access_token, refresh_token = await issue_tokens(
+            db=db,
+            user=user,
+            device_id=None,
+            device_name=None,
+        )
+        logger.info("User auto-verified (OTP bypassed)", user_id=str(user.id), phone=phone)
+        
+        response_data = OTPSendResponse(
+            phone=phone,
+            expires_in_minutes=auth_settings.OTP_EXPIRE_MINUTES,
+            dev_otp=None,
+            is_existing=True,
+            tokens=TokenResponse(
+                access_token=access_token,
+                refresh_token=refresh_token,
+                token_type="bearer",
+                user_id=str(user.id),
+                role=user.role.value,
+                is_new_user=False,
+                profile_complete=user.is_profile_complete,
+            )
+        )
+        return APIResponse(
+            message="Auto-verified existing user",
+            data=response_data,
+        )
+
     # Rate limit: 5 OTP requests per phone per hour
     count = await increment_otp_requests(phone)
     if count > auth_settings.OTP_MAX_REQUESTS_PER_HOUR:
@@ -119,22 +153,26 @@ async def verify_otp(
     """
     phone = payload.phone.strip()
 
-    # Get stored OTP from Redis
-    stored_otp = await get_otp(phone)
-    if not stored_otp:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OTP expired or not found. Please request a new OTP.",
-        )
+    # In DEV mode, allow "123456" as a universal OTP bypass
+    if auth_settings.OTP_DEV_MODE and payload.otp_code == "123456":
+        pass  # Bypass verification
+    else:
+        # Get stored OTP from Redis
+        stored_otp = await get_otp(phone)
+        if not stored_otp:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="OTP expired or not found. Please request a new OTP.",
+            )
 
-    if stored_otp != payload.otp_code:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid OTP. Please try again.",
-        )
+        if stored_otp != payload.otp_code:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid OTP. Please try again.",
+            )
 
-    # OTP verified  delete from Redis
-    await delete_otp(phone)
+        # OTP verified  delete from Redis
+        await delete_otp(phone)
 
     # Get or create user
     user, is_new = await create_user_if_not_exists(
