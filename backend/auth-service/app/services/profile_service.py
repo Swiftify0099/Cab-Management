@@ -139,13 +139,14 @@ async def create_address(
 
     address = SavedAddress(
         user_id=user_id,
+        address_type=data.address_type or "general",
         label=data.label,
         location=point,
         latitude=data.latitude,
         longitude=data.longitude,
-        pincode=data.pincode,
-        district=data.district,
-        state=data.state,
+        pincode=data.pincode or None,
+        district=data.district or None,
+        state=data.state or None,
         landmark=data.landmark,
         full_address=data.full_address,
         is_default=data.is_default,

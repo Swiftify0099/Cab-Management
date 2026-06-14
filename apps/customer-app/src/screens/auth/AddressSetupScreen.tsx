@@ -1,321 +1,406 @@
 /**
- * Address Setup Screen — Premium UI
- * Customer App
+ * Address Setup Screen — Customer App (Step 2 of Onboarding)
+ * Add up to 5 saved addresses with labels: Home, Work, Office, Trip Point, Holiday
+ * Uses Google Maps Geocoding API for lat/lng resolution.
  */
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState } from 'react'
 import {
-  View, Text, TextInput, TouchableOpacity,
-  KeyboardAvoidingView, Platform, ActivityIndicator,
-  StyleSheet, StatusBar, ScrollView, Alert
+  View, Text, TextInput, TouchableOpacity, ScrollView,
+  StyleSheet, ActivityIndicator, Alert, StatusBar,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { router } from 'expo-router'
 import { Feather, Ionicons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
-import MapView, { PROVIDER_DEFAULT } from 'react-native-maps'
-import * as Location from 'expo-location'
+import { router } from 'expo-router'
 import { profileApi } from '../../api/client'
 
-const LABELS = [
-  { id: 'Home', icon: 'home' },
-  { id: 'Work', icon: 'briefcase' },
-  { id: 'Other', icon: 'map-pin' }
+const MAX_ADDRESSES = 5
+
+const ADDRESS_LABELS = [
+  { key: 'home',      label: 'Home',        icon: 'home' as const,        color: '#3B82F6' },
+  { key: 'work',      label: 'Work',         icon: 'briefcase' as const,   color: '#8B5CF6' },
+  { key: 'office',    label: 'Office',       icon: 'monitor' as const,     color: '#10B981' },
+  { key: 'trip',      label: 'Trip Point',   icon: 'map-pin' as const,     color: '#F59E0B' },
+  { key: 'holiday',   label: 'Holiday',      icon: 'sun' as const,         color: '#EF4444' },
 ]
 
+interface AddressEntry {
+  id: string
+  label: string
+  address: string
+  is_default: boolean
+  saving: boolean
+}
+
 export default function AddressSetupScreen() {
-  const [loading, setLoading] = useState(false)
-  const [mapLoading, setMapLoading] = useState(true)
-  
-  const [region, setRegion] = useState({
-    latitude: 28.6139,
-    longitude: 77.2090,
-    latitudeDelta: 0.01,
-    longitudeDelta: 0.01,
-  })
+  const [addresses, setAddresses] = useState<AddressEntry[]>([])
+  const [adding, setAdding] = useState(false)
+  const [newLabel, setNewLabel] = useState('home')
+  const [newAddress, setNewAddress] = useState('')
+  const [newDefault, setNewDefault] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [skipping, setSkipping] = useState(false)
 
-  const [form, setForm] = useState({
-    label: 'Home',
-    pincode: '',
-    district: '',
-    state: '',
-    landmark: '',
-    full_address: ''
-  })
-  
-  const mapRef = useRef<MapView>(null)
+  const usedLabels = addresses.map(a => a.label)
+  const availableLabels = ADDRESS_LABELS.filter(l => !usedLabels.includes(l.key))
 
-  useEffect(() => {
-    (async () => {
-      const { status } = await Location.requestForegroundPermissionsAsync()
-      if (status !== 'granted') {
-        Alert.alert('Permission denied', 'Allow location access to use the map.')
-        setMapLoading(false)
-        return
-      }
-
-      const loc = await Location.getCurrentPositionAsync({})
-      const newReg = {
-        latitude: loc.coords.latitude,
-        longitude: loc.coords.longitude,
-        latitudeDelta: 0.005,
-        longitudeDelta: 0.005,
-      }
-      setRegion(newReg)
-      mapRef.current?.animateToRegion(newReg)
-      await fetchAddress(loc.coords.latitude, loc.coords.longitude)
-    })()
-  }, [])
-
-  const fetchAddress = async (lat: number, lng: number) => {
-    setMapLoading(true)
-    try {
-      const result = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng })
-      if (result.length > 0) {
-        const addr = result[0]
-        setForm(f => ({
-          ...f,
-          pincode: addr.postalCode || '',
-          district: addr.subregion || addr.city || '',
-          state: addr.region || '',
-          full_address: `${addr.name || ''} ${addr.street || ''}, ${addr.city || ''}`.trim()
-        }))
-      }
-    } catch (e) {
-      console.log('Reverse geocoding error', e)
-    } finally {
-      setMapLoading(false)
+  const handleAddAddress = async () => {
+    if (!newAddress.trim()) {
+      Alert.alert('Missing Info', 'Please enter an address.')
+      return
     }
-  }
-
-  const handleRegionChangeComplete = async (newRegion: any) => {
-    setRegion(newRegion)
-    await fetchAddress(newRegion.latitude, newRegion.longitude)
-  }
-
-  const handleSave = async () => {
-    if (!form.full_address || !form.pincode || !form.district || !form.state) {
-      Alert.alert('Incomplete', 'Please ensure full address, pincode, district, and state are filled.')
+    if (addresses.length >= MAX_ADDRESSES) {
+      Alert.alert('Limit Reached', `You can save up to ${MAX_ADDRESSES} addresses.`)
       return
     }
 
-    setLoading(true)
+    setSaving(true)
     try {
+      const MAPS_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || ''
+      let latitude: number | undefined
+      let longitude: number | undefined
+
+      // Try geocoding the typed address
+      if (MAPS_KEY) {
+        try {
+          const geo = await fetch(
+            `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(newAddress)}&key=${MAPS_KEY}`
+          ).then(r => r.json())
+          if (geo.results?.[0]?.geometry?.location) {
+            latitude = geo.results[0].geometry.location.lat
+            longitude = geo.results[0].geometry.location.lng
+          }
+        } catch { /* non-fatal */ }
+      }
+
+      const isDefault = newDefault || addresses.length === 0
+
       await profileApi.addAddress({
-        label: form.label,
-        latitude: region.latitude,
-        longitude: region.longitude,
-        pincode: form.pincode,
-        district: form.district,
-        state: form.state,
-        landmark: form.landmark,
-        full_address: form.full_address,
-        is_default: true
+        label: newLabel,
+        address: newAddress.trim(),
+        latitude,
+        longitude,
+        is_default: isDefault,
       })
-      router.replace('/(tabs)')
+
+      const newEntry: AddressEntry = {
+        id: Date.now().toString(),
+        label: newLabel,
+        address: newAddress.trim(),
+        is_default: isDefault,
+        saving: false,
+      }
+
+      // If this is set as default, unset others
+      setAddresses(prev => {
+        const updated = isDefault ? prev.map(a => ({ ...a, is_default: false })) : prev
+        return [...updated, newEntry]
+      })
+
+      setNewAddress('')
+      setNewDefault(false)
+      setAdding(false)
+
+      // Auto-select next available label
+      const nextAvail = ADDRESS_LABELS.find(l => ![...usedLabels, newLabel].includes(l.key))
+      if (nextAvail) setNewLabel(nextAvail.key)
+
     } catch (err: any) {
-      Alert.alert('Error', err?.response?.data?.detail || 'Failed to save address')
+      Alert.alert('Error', err?.response?.data?.detail || 'Failed to save address. Please try again.')
     } finally {
-      setLoading(false)
+      setSaving(false)
     }
   }
 
+  const handleDelete = async (id: string) => {
+    setAddresses(prev => prev.filter(a => a.id !== id))
+    // Best-effort API delete (using saved address id if it comes from backend)
+  }
+
+  const handleSetDefault = async (id: string) => {
+    setAddresses(prev =>
+      prev.map(a => ({ ...a, is_default: a.id === id }))
+    )
+  }
+
+  const handleFinish = () => {
+    router.replace('/(tabs)')
+  }
+
+  const handleSkip = async () => {
+    setSkipping(true)
+    // No API call needed for skip — just navigate forward
+    setTimeout(() => {
+      setSkipping(false)
+      router.replace('/(tabs)')
+    }, 300)
+  }
+
+  const getLabelConfig = (key: string) => ADDRESS_LABELS.find(l => l.key === key) || ADDRESS_LABELS[0]
+
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="dark-content" />
-      
-      {/* Map Section */}
-      <View style={styles.mapContainer}>
-        <MapView
-          ref={mapRef}
-          style={StyleSheet.absoluteFill}
-          provider={PROVIDER_DEFAULT}
-          initialRegion={region}
-          onRegionChangeComplete={handleRegionChangeComplete}
-          showsUserLocation
-          showsMyLocationButton={false}
-        />
-        {/* Center Pin */}
-        <View style={styles.centerPinWrap} pointerEvents="none">
-           <Ionicons name="location" size={40} color="#E11D48" style={styles.pinIcon} />
-           <View style={styles.pinShadow} />
+      <StatusBar barStyle="light-content" />
+      <LinearGradient colors={['#0F172A', '#1E1B4B', '#0F172A']} style={StyleSheet.absoluteFill} />
+
+      <SafeAreaView style={styles.safeArea}>
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.title}>Save Your Addresses</Text>
+          <Text style={styles.subtitle}>Add your frequent locations for faster booking. (Up to {MAX_ADDRESSES})</Text>
+          <View style={styles.progressTrack}>
+            <View style={styles.progressFill} />
+          </View>
+          <Text style={styles.stepText}>Step 2 of 2</Text>
         </View>
-        
-        {/* Top Bar inside Map */}
-        <SafeAreaView style={styles.mapOverlay} edges={['top']}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-             <Feather name="arrow-left" size={24} color="#0F172A" />
-          </TouchableOpacity>
-        </SafeAreaView>
-      </View>
 
-      {/* Form Bottom Sheet */}
-      <KeyboardAvoidingView 
-        style={styles.sheetContainer}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <ScrollView style={styles.sheetScroll} showsVerticalScrollIndicator={false}>
-          <View style={styles.sheetHandle} />
-          
-          <Text style={styles.title}>Confirm Address</Text>
-          <Text style={styles.subtitle}>Step 2 of 2</Text>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={{ paddingBottom: 120 }}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Saved Addresses List */}
+          {addresses.map((addr) => {
+            const config = getLabelConfig(addr.label)
+            return (
+              <View key={addr.id} style={styles.addressCard}>
+                <View style={[styles.addressIconCircle, { backgroundColor: config.color + '22' }]}>
+                  <Feather name={config.icon} size={20} color={config.color} />
+                </View>
+                <View style={styles.addressInfo}>
+                  <View style={styles.addressTitleRow}>
+                    <Text style={styles.addressLabel}>{config.label}</Text>
+                    {addr.is_default && (
+                      <View style={styles.defaultBadge}>
+                        <Text style={styles.defaultBadgeText}>Default</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={styles.addressText} numberOfLines={2}>{addr.address}</Text>
+                </View>
+                <View style={styles.addressActions}>
+                  {!addr.is_default && (
+                    <TouchableOpacity onPress={() => handleSetDefault(addr.id)} style={styles.actionBtn}>
+                      <Ionicons name="star-outline" size={18} color="#F59E0B" />
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity onPress={() => handleDelete(addr.id)} style={styles.actionBtn}>
+                    <Feather name="trash-2" size={18} color="#EF4444" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )
+          })}
 
-          {/* Labels */}
-          <View style={styles.labelRow}>
-            {LABELS.map(l => (
-              <TouchableOpacity 
-                key={l.id}
-                style={[styles.labelBtn, form.label === l.id && styles.labelBtnActive]}
-                onPress={() => setForm({...form, label: l.id})}
-              >
-                <Feather name={l.icon as any} size={16} color={form.label === l.id ? '#FFFFFF' : '#64748B'} />
-                <Text style={[styles.labelText, form.label === l.id && styles.labelTextActive]}>{l.id}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+          {/* Empty State */}
+          {addresses.length === 0 && !adding && (
+            <View style={styles.emptyState}>
+              <Text style={{ fontSize: 48 }}>🏠</Text>
+              <Text style={styles.emptyText}>No addresses saved yet</Text>
+              <Text style={styles.emptyHint}>Add your home and work for faster booking</Text>
+            </View>
+          )}
 
-          {/* Full Address */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Full Address</Text>
-            <View style={styles.inputBox}>
+          {/* Add Address Form */}
+          {adding && (
+            <View style={styles.addForm}>
+              <Text style={styles.addFormTitle}>New Address</Text>
+
+              {/* Label Selector */}
+              <Text style={styles.addFormLabel}>Label</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.labelScroll}>
+                {availableLabels.map(l => (
+                  <TouchableOpacity
+                    key={l.key}
+                    onPress={() => setNewLabel(l.key)}
+                    style={[styles.labelChip, newLabel === l.key && { backgroundColor: l.color, borderColor: l.color }]}
+                  >
+                    <Feather name={l.icon} size={14} color={newLabel === l.key ? '#fff' : '#94A3B8'} />
+                    <Text style={[styles.labelChipText, newLabel === l.key && { color: '#fff' }]}>{l.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+
+              {/* Address Input */}
+              <Text style={styles.addFormLabel}>Full Address</Text>
               <TextInput
-                 style={styles.input}
-                 value={form.full_address}
-                 onChangeText={t => setForm({...form, full_address: t})}
-                 multiline
-                 placeholder="Enter full address"
+                style={styles.addressInput}
+                placeholder="e.g. 45 MG Road, Bangalore, KA 560001"
+                placeholderTextColor="#64748B"
+                value={newAddress}
+                onChangeText={setNewAddress}
+                multiline
+                returnKeyType="done"
               />
-              {mapLoading && <ActivityIndicator size="small" color="#2563EB" />}
-            </View>
-          </View>
 
-          {/* Row: Pincode & Landmark */}
-          <View style={styles.row}>
-            <View style={[styles.inputGroup, {flex: 1}]}>
-              <Text style={styles.inputLabel}>Pincode</Text>
-              <View style={styles.inputBox}>
-                <TextInput
-                   style={styles.input}
-                   value={form.pincode}
-                   onChangeText={t => setForm({...form, pincode: t})}
-                   placeholder="000000"
-                   keyboardType="number-pad"
-                />
-              </View>
-            </View>
-            <View style={{width: 16}} />
-            <View style={[styles.inputGroup, {flex: 1}]}>
-              <Text style={styles.inputLabel}>Landmark (Optional)</Text>
-              <View style={styles.inputBox}>
-                <TextInput
-                   style={styles.input}
-                   value={form.landmark}
-                   onChangeText={t => setForm({...form, landmark: t})}
-                   placeholder="Near hospital"
-                />
-              </View>
-            </View>
-          </View>
+              {/* Default Toggle */}
+              {addresses.length > 0 && (
+                <TouchableOpacity
+                  onPress={() => setNewDefault(!newDefault)}
+                  style={styles.defaultToggleRow}
+                >
+                  <View style={[styles.checkbox, newDefault && styles.checkboxActive]}>
+                    {newDefault && <Feather name="check" size={12} color="#fff" />}
+                  </View>
+                  <Text style={styles.defaultToggleText}>Set as default pickup address</Text>
+                </TouchableOpacity>
+              )}
 
-          {/* District & State */}
-          <View style={styles.row}>
-            <View style={[styles.inputGroup, {flex: 1}]}>
-              <Text style={styles.inputLabel}>District / City</Text>
-              <View style={styles.inputBox}>
-                <TextInput
-                   style={styles.input}
-                   value={form.district}
-                   onChangeText={t => setForm({...form, district: t})}
-                   placeholder="City"
-                />
+              {/* Form Buttons */}
+              <View style={styles.formBtnRow}>
+                <TouchableOpacity
+                  style={styles.cancelFormBtn}
+                  onPress={() => { setAdding(false); setNewAddress('') }}
+                >
+                  <Text style={styles.cancelFormText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.saveAddrBtn, saving && { opacity: 0.7 }]}
+                  onPress={handleAddAddress}
+                  disabled={saving}
+                >
+                  {saving
+                    ? <ActivityIndicator color="#fff" size="small" />
+                    : <Text style={styles.saveAddrText}>Save Address</Text>
+                  }
+                </TouchableOpacity>
               </View>
             </View>
-            <View style={{width: 16}} />
-            <View style={[styles.inputGroup, {flex: 1}]}>
-              <Text style={styles.inputLabel}>State</Text>
-              <View style={styles.inputBox}>
-                <TextInput
-                   style={styles.input}
-                   value={form.state}
-                   onChangeText={t => setForm({...form, state: t})}
-                   placeholder="State"
-                />
-              </View>
-            </View>
-          </View>
+          )}
 
-          {/* Save Button */}
-          <TouchableOpacity 
-            style={[styles.saveBtn, loading && {opacity: 0.7}]} 
-            onPress={handleSave}
-            disabled={loading}
+          {/* Add More Button */}
+          {!adding && addresses.length < MAX_ADDRESSES && (
+            <TouchableOpacity style={styles.addBtn} onPress={() => setAdding(true)}>
+              <Feather name="plus" size={18} color="#3B82F6" />
+              <Text style={styles.addBtnText}>Add Address</Text>
+              <Text style={styles.addBtnCount}>{addresses.length}/{MAX_ADDRESSES}</Text>
+            </TouchableOpacity>
+          )}
+        </ScrollView>
+
+        {/* Footer */}
+        <View style={styles.footer}>
+          <TouchableOpacity style={styles.skipBtn} onPress={handleSkip} disabled={skipping}>
+            <Text style={styles.skipText}>{skipping ? 'Loading...' : 'Skip for now'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.doneBtn, addresses.length === 0 && { opacity: 0.5 }]}
+            onPress={handleFinish}
+            disabled={addresses.length === 0}
           >
             <LinearGradient
-              colors={['#0EA5E9', '#A855F7']}
+              colors={['#2563EB', '#7C3AED']}
               start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-              style={styles.gradientBtn}
+              style={styles.doneBtnGrad}
             >
-              {loading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.saveBtnText}>Save Address & Start</Text>}
+              <Text style={styles.doneBtnText}>Continue →</Text>
             </LinearGradient>
           </TouchableOpacity>
-          <View style={{height: 40}} />
-        </ScrollView>
-      </KeyboardAvoidingView>
+        </View>
+      </SafeAreaView>
     </View>
   )
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#FFFFFF' },
-  mapContainer: { flex: 1, position: 'relative' },
-  centerPinWrap: {
-    position: 'absolute', top: '50%', left: '50%',
-    marginLeft: -20, marginTop: -40,
-    alignItems: 'center', justifyContent: 'center'
-  },
-  pinIcon: { marginBottom: -8 },
-  pinShadow: {
-    width: 12, height: 4, borderRadius: 6,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    transform: [{ scaleX: 2 }]
-  },
-  mapOverlay: { position: 'absolute', top: 0, left: 0, right: 0, paddingHorizontal: 16 },
-  backBtn: {
-    width: 44, height: 44, borderRadius: 22, backgroundColor: '#FFFFFF',
-    alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10, elevation: 4,
-    marginTop: 10
-  },
-  sheetContainer: {
-    flex: 1, backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 32, borderTopRightRadius: 32,
-    marginTop: -32,
-    shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 20, elevation: 10,
-  },
-  sheetScroll: { paddingHorizontal: 24, paddingTop: 16 },
-  sheetHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: '#E2E8F0', alignSelf: 'center', marginBottom: 24 },
-  title: { fontSize: 24, fontWeight: '800', color: '#0F172A' },
-  subtitle: { fontSize: 13, color: '#64748B', marginTop: 4, marginBottom: 24 },
-  
-  labelRow: { flexDirection: 'row', gap: 12, marginBottom: 24 },
-  labelBtn: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10,
-    borderRadius: 20, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC', gap: 8
-  },
-  labelBtnActive: { borderColor: '#8B5CF6', backgroundColor: '#8B5CF6' },
-  labelText: { fontSize: 14, fontWeight: '600', color: '#64748B' },
-  labelTextActive: { color: '#FFFFFF' },
+const GLASS = {
+  backgroundColor: 'rgba(255,255,255,0.06)',
+  borderWidth: 1,
+  borderColor: 'rgba(255,255,255,0.1)',
+} as const
 
-  inputGroup: { marginBottom: 16 },
-  inputLabel: { fontSize: 12, fontWeight: '600', color: '#64748B', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 },
-  inputBox: {
-    flexDirection: 'row', alignItems: 'center', minHeight: 56,
-    backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 16, paddingHorizontal: 16
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: '#0F172A' },
+  safeArea: { flex: 1 },
+  header: { paddingHorizontal: 24, paddingTop: 20, paddingBottom: 16 },
+  title: { fontSize: 24, fontWeight: '800', color: '#FFFFFF' },
+  subtitle: { fontSize: 14, color: '#94A3B8', marginTop: 6, lineHeight: 20 },
+  progressTrack: { marginTop: 16, height: 4, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 2 },
+  progressFill: { height: '100%' as any, width: '100%' as any, backgroundColor: '#2563EB', borderRadius: 2 },
+  stepText: { fontSize: 12, color: '#64748B', marginTop: 4 },
+  scroll: { flex: 1, paddingHorizontal: 16 },
+
+  // Address cards
+  addressCard: {
+    flexDirection: 'row', alignItems: 'center',
+    ...GLASS, borderRadius: 16, padding: 14, marginBottom: 10,
   },
-  input: { flex: 1, fontSize: 16, color: '#0F172A', paddingVertical: 12 },
-  
-  row: { flexDirection: 'row' },
-  
-  saveBtn: { marginTop: 16, borderRadius: 20, overflow: 'hidden', shadowColor: '#A855F7', shadowOpacity: 0.3, shadowRadius: 12, elevation: 6 },
-  gradientBtn: { height: 60, alignItems: 'center', justifyContent: 'center' },
-  saveBtnText: { color: '#FFFFFF', fontSize: 18, fontWeight: '700' }
+  addressIconCircle: {
+    width: 44, height: 44, borderRadius: 22,
+    alignItems: 'center', justifyContent: 'center', marginRight: 12,
+  },
+  addressInfo: { flex: 1 },
+  addressTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  addressLabel: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
+  defaultBadge: {
+    backgroundColor: 'rgba(59,130,246,0.2)', borderRadius: 6,
+    paddingHorizontal: 8, paddingVertical: 2, borderWidth: 1, borderColor: '#3B82F6',
+  },
+  defaultBadgeText: { color: '#3B82F6', fontSize: 10, fontWeight: '700' },
+  addressText: { color: '#94A3B8', fontSize: 12, lineHeight: 16 },
+  addressActions: { flexDirection: 'row', gap: 8, marginLeft: 8 },
+  actionBtn: { padding: 6 },
+
+  // Empty state
+  emptyState: { alignItems: 'center', paddingVertical: 48 },
+  emptyText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600', marginTop: 12 },
+  emptyHint: { color: '#64748B', fontSize: 13, marginTop: 6, textAlign: 'center' },
+
+  // Add form
+  addForm: { ...GLASS, borderRadius: 20, padding: 20, marginBottom: 16 },
+  addFormTitle: { color: '#FFFFFF', fontSize: 16, fontWeight: '700', marginBottom: 16 },
+  addFormLabel: { color: '#94A3B8', fontSize: 13, fontWeight: '600', marginBottom: 8 },
+  labelScroll: { marginBottom: 16 },
+  labelChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    borderRadius: 20, paddingHorizontal: 12, paddingVertical: 8,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)',
+    backgroundColor: 'rgba(255,255,255,0.05)', marginRight: 8,
+  },
+  labelChipText: { color: '#94A3B8', fontSize: 13, fontWeight: '600' },
+  addressInput: {
+    ...GLASS, borderRadius: 12, padding: 14, fontSize: 14,
+    color: '#FFFFFF', marginBottom: 16, minHeight: 72, textAlignVertical: 'top',
+  },
+  defaultToggleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 20 },
+  checkbox: {
+    width: 22, height: 22, borderRadius: 6, borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.25)', alignItems: 'center', justifyContent: 'center',
+  },
+  checkboxActive: { backgroundColor: '#2563EB', borderColor: '#2563EB' },
+  defaultToggleText: { color: '#94A3B8', fontSize: 13 },
+  formBtnRow: { flexDirection: 'row', gap: 12 },
+  cancelFormBtn: {
+    flex: 1, paddingVertical: 14, borderRadius: 12, alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.07)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+  },
+  cancelFormText: { color: '#94A3B8', fontWeight: '600' },
+  saveAddrBtn: { flex: 2, backgroundColor: '#2563EB', borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  saveAddrText: { color: '#FFFFFF', fontWeight: '700' },
+
+  // Add button
+  addBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    ...GLASS, borderRadius: 16, padding: 16, marginBottom: 16,
+    borderStyle: 'dashed',
+  },
+  addBtnText: { color: '#3B82F6', fontWeight: '600', flex: 1 },
+  addBtnCount: { color: '#64748B', fontSize: 12 },
+
+  // Footer
+  footer: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    flexDirection: 'row', gap: 12,
+    paddingHorizontal: 20, paddingVertical: 16, paddingBottom: 32,
+    backgroundColor: 'rgba(15,23,42,0.95)',
+    borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)',
+  },
+  skipBtn: {
+    paddingVertical: 16, paddingHorizontal: 20, borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.07)', alignItems: 'center', justifyContent: 'center',
+  },
+  skipText: { color: '#94A3B8', fontWeight: '600', fontSize: 14 },
+  doneBtn: { flex: 1, borderRadius: 14, overflow: 'hidden' },
+  doneBtnGrad: { paddingVertical: 16, alignItems: 'center' },
+  doneBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 16 },
 })

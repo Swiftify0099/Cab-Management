@@ -13,16 +13,16 @@ const STATUS_COLORS: Record<string, string> = {
 }
 
 const DEMO_COUPONS = [
-  { id: 'cp1', code: 'SAVE50', discount_type: 'flat', discount_value: 50, min_order: 200, max_uses: 1000, used_count: 437, is_active: true, expires_at: '2025-12-31', description: '₹50 off on bookings above ₹200' },
-  { id: 'cp2', code: 'NEWUSER20', discount_type: 'percent', discount_value: 20, min_order: 100, max_uses: 500, used_count: 198, is_active: true, expires_at: '2025-09-30', description: '20% off for first-time users' },
-  { id: 'cp3', code: 'MONSOON30', discount_type: 'flat', discount_value: 30, min_order: 150, max_uses: 2000, used_count: 2000, is_active: false, expires_at: '2024-09-30', description: 'Monsoon season promo (expired)' },
-  { id: 'cp4', code: 'VIP100', discount_type: 'flat', discount_value: 100, min_order: 500, max_uses: 100, used_count: 23, is_active: true, expires_at: '2025-12-31', description: 'VIP customer exclusive — ₹100 off' },
-  { id: 'cp5', code: 'REFER15', discount_type: 'percent', discount_value: 15, min_order: 0, max_uses: -1, used_count: 342, is_active: true, expires_at: '2026-06-30', description: '15% off for referral bookings' },
+  { id: 'cp1', code: 'SAVE50', coupon_type: 'flat', discount_value: 50, min_trip_amount: 200, usage_limit: 1000, times_used: 437, is_active: true, end_date: '2025-12-31', description: '₹50 off on bookings above ₹200' },
+  { id: 'cp2', code: 'NEWUSER20', coupon_type: 'percentage', discount_value: 20, min_trip_amount: 100, usage_limit: 500, times_used: 198, is_active: true, end_date: '2025-09-30', description: '20% off for first-time users' },
+  { id: 'cp3', code: 'MONSOON30', coupon_type: 'flat', discount_value: 30, min_trip_amount: 150, usage_limit: 2000, times_used: 2000, is_active: false, end_date: '2024-09-30', description: 'Monsoon season promo (expired)' },
+  { id: 'cp4', code: 'VIP100', coupon_type: 'flat', discount_value: 100, min_trip_amount: 500, usage_limit: 100, times_used: 23, is_active: true, end_date: '2025-12-31', description: 'VIP customer exclusive — ₹100 off' },
+  { id: 'cp5', code: 'REFER15', coupon_type: 'percentage', discount_value: 15, min_trip_amount: 0, usage_limit: -1, times_used: 342, is_active: true, end_date: '2026-06-30', description: '15% off for referral bookings' },
 ]
 
 const EMPTY_FORM = {
-  code: '', description: '', discount_type: 'flat', discount_value: 0,
-  min_order: 0, max_uses: 100, expires_at: '',
+  code: '', description: '', coupon_type: 'flat', discount_value: 0,
+  min_trip_amount: 0, usage_limit: 100, end_date: '',
 }
 
 export function CouponsPage() {
@@ -48,7 +48,7 @@ export function CouponsPage() {
   useEffect(() => { load() }, [])
 
   const handleCreate = async () => {
-    if (!form.code || !form.discount_value || !form.expires_at) {
+    if (!form.code || !form.discount_value || !form.end_date) {
       toast.error('Please fill all required fields')
       return
     }
@@ -69,7 +69,7 @@ export function CouponsPage() {
   const handleToggle = async (couponId: string, active: boolean) => {
     setProcessing(couponId)
     try {
-      await adminApi.patch(`/admin/coupons/${couponId}`, { is_active: !active })
+      await adminApi.post(`/admin/coupons/${couponId}/toggle`, {})
       toast.success(`Coupon ${active ? 'deactivated' : 'activated'}`)
       load()
     } catch (e: any) {
@@ -99,16 +99,16 @@ export function CouponsPage() {
 
   const getStatus = (c: any) => {
     if (!c.is_active) return 'inactive'
-    if (new Date(c.expires_at) < new Date()) return 'expired'
+    if (new Date(c.end_date) < new Date()) return 'expired'
     return 'active'
   }
 
   const stats = {
     total: coupons.length,
     active: coupons.filter(c => c.is_active).length,
-    totalUses: coupons.reduce((s, c) => s + (c.used_count || 0), 0),
-    avgDiscount: coupons.filter(c => c.discount_type === 'flat').length > 0
-      ? Math.round(coupons.filter(c => c.discount_type === 'flat').reduce((s, c) => s + c.discount_value, 0) / coupons.filter(c => c.discount_type === 'flat').length)
+    totalUses: coupons.reduce((s, c) => s + (c.times_used || 0), 0),
+    avgDiscount: coupons.filter(c => c.coupon_type === 'flat').length > 0
+      ? Math.round(coupons.filter(c => c.coupon_type === 'flat').reduce((s, c) => s + c.discount_value, 0) / coupons.filter(c => c.coupon_type === 'flat').length)
       : 0,
   }
 
@@ -156,7 +156,7 @@ export function CouponsPage() {
         <div className="grid grid-cols-1 gap-4">
           {coupons.map(coupon => {
             const status = getStatus(coupon)
-            const usagePercent = coupon.max_uses > 0 ? Math.min(100, Math.round((coupon.used_count / coupon.max_uses) * 100)) : 0
+            const usagePercent = coupon.usage_limit > 0 ? Math.min(100, Math.round((coupon.times_used / coupon.usage_limit) * 100)) : 0
             return (
               <div key={coupon.id} className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
                 <div className="flex items-start justify-between">
@@ -201,23 +201,23 @@ export function CouponsPage() {
                   <div className="bg-slate-50 rounded-xl p-3">
                     <div className="text-xs text-slate-400 mb-1">Discount</div>
                     <div className="font-bold text-slate-900 text-sm">
-                      {coupon.discount_type === 'flat' ? `₹${coupon.discount_value}` : `${coupon.discount_value}%`}
+                      {coupon.coupon_type === 'flat' ? `₹${coupon.discount_value}` : `${coupon.discount_value}%`}
                     </div>
                   </div>
                   <div className="bg-slate-50 rounded-xl p-3">
                     <div className="text-xs text-slate-400 mb-1">Min Order</div>
-                    <div className="font-bold text-slate-900 text-sm">₹{coupon.min_order}</div>
+                    <div className="font-bold text-slate-900 text-sm">₹{coupon.min_trip_amount || 0}</div>
                   </div>
                   <div className="bg-slate-50 rounded-xl p-3">
                     <div className="text-xs text-slate-400 mb-1">Uses</div>
                     <div className="font-bold text-slate-900 text-sm">
-                      {coupon.used_count} {coupon.max_uses > 0 ? `/ ${coupon.max_uses}` : '/ ∞'}
+                      {coupon.times_used} {coupon.usage_limit > 0 ? `/ ${coupon.usage_limit}` : '/ ∞'}
                     </div>
                   </div>
                   <div className="bg-slate-50 rounded-xl p-3">
                     <div className="text-xs text-slate-400 mb-1">Expires</div>
                     <div className="font-bold text-slate-900 text-sm">
-                      {new Date(coupon.expires_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      {new Date(coupon.end_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
                     </div>
                   </div>
                   <div className="bg-slate-50 rounded-xl p-3">
@@ -269,11 +269,11 @@ export function CouponsPage() {
                   <label className="block text-xs font-semibold text-slate-500 mb-1.5">Discount Type *</label>
                   <select
                     className="w-full border border-slate-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                    value={form.discount_type}
-                    onChange={e => setForm(f => ({ ...f, discount_type: e.target.value }))}
+                    value={form.coupon_type}
+                    onChange={e => setForm(f => ({ ...f, coupon_type: e.target.value }))}
                   >
                     <option value="flat">Flat (₹)</option>
-                    <option value="percent">Percent (%)</option>
+                    <option value="percentage">Percent (%)</option>
                   </select>
                 </div>
                 <div>
@@ -281,7 +281,7 @@ export function CouponsPage() {
                   <input
                     type="number" min={1}
                     className="w-full border border-slate-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                    placeholder={form.discount_type === 'flat' ? '₹50' : '20%'}
+                    placeholder={form.coupon_type === 'flat' ? '₹50' : '20%'}
                     value={form.discount_value || ''}
                     onChange={e => setForm(f => ({ ...f, discount_value: Number(e.target.value) }))}
                   />
@@ -293,8 +293,8 @@ export function CouponsPage() {
                   <input
                     type="number" min={0}
                     className="w-full border border-slate-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                    value={form.min_order || ''}
-                    onChange={e => setForm(f => ({ ...f, min_order: Number(e.target.value) }))}
+                    value={form.min_trip_amount || ''}
+                    onChange={e => setForm(f => ({ ...f, min_trip_amount: Number(e.target.value) }))}
                   />
                 </div>
                 <div>
@@ -302,8 +302,8 @@ export function CouponsPage() {
                   <input
                     type="number"
                     className="w-full border border-slate-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                    value={form.max_uses}
-                    onChange={e => setForm(f => ({ ...f, max_uses: Number(e.target.value) }))}
+                    value={form.usage_limit}
+                    onChange={e => setForm(f => ({ ...f, usage_limit: Number(e.target.value) }))}
                   />
                 </div>
               </div>
@@ -312,8 +312,8 @@ export function CouponsPage() {
                 <input
                   type="date"
                   className="w-full border border-slate-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                  value={form.expires_at}
-                  onChange={e => setForm(f => ({ ...f, expires_at: e.target.value }))}
+                  value={form.end_date}
+                  onChange={e => setForm(f => ({ ...f, end_date: e.target.value }))}
                 />
               </div>
             </div>

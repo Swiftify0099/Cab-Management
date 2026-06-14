@@ -21,6 +21,7 @@ import { useLocalSearchParams, router } from 'expo-router'
 import { Feather, Ionicons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 
+import MapView from 'react-native-maps'
 import { DriverMap }     from '../src/components/map/DriverMap'
 import { SpeedAlert }    from '../src/components/map/SpeedAlert'
 import { SOSButton }     from '../src/components/map/SOSButton'
@@ -67,6 +68,13 @@ export default function NavigationScreen() {
   const currentStep = route?.steps[currentStepIndex]
   const etaText     = route ? formatETA(route.etaTimestamp) : '--'
 
+  // ✅ locationRef lets handleSOS always read the latest GPS without being
+  // a dependency — prevents handleSOS from being recreated every 3 seconds.
+  const locationRef = useRef(location)
+  useEffect(() => {
+    locationRef.current = location
+  }, [location])
+
   // ✅ Stable callback reference prevents useLiveLocation re-render loops
   const handleLocationUpdate = useCallback((loc: LiveLocation | null) => {
     if (!loc) return
@@ -94,8 +102,9 @@ export default function NavigationScreen() {
   }, [location, voiceEnabled, currentStep])
 
   const handleSOS = useCallback((payload: any) => {
-    emitSOS({ trip_id: tripId, lat: location?.lat ?? 0, lng: location?.lng ?? 0 })
-  }, [location, tripId])
+    const loc = locationRef.current
+    emitSOS({ trip_id: tripId, lat: loc?.lat ?? 0, lng: loc?.lng ?? 0 })
+  }, [emitSOS, tripId])  // ← no `location` dep — read from ref instead
 
   const handleEndTrip = () => {
     emitTripCompleted(tripId)

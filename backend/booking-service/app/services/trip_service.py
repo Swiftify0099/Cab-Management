@@ -39,6 +39,7 @@ class TripService:
         window_seat_charge: float = 0.0,
         notes: Optional[str] = None,
         route_stops: Optional[list] = None,
+        non_stop: bool = False,
     ) -> dict:
         """Driver creates a new trip offering."""
         # Resolve driver record
@@ -49,10 +50,11 @@ class TripService:
         if not driver:
             # Auto-create mock driver profile for testing purposes
             driver = Driver(
-                id=str(uuid.uuid4()),
+                id=uuid.uuid4(),
                 user_id=uuid.UUID(driver_user_id),
+                full_name="Mock Driver",
                 license_number=f"MOCK-{uuid.uuid4().hex[:8].upper()}",
-                status=DriverStatus.ACTIVE,
+                status=DriverStatus.ONLINE,
                 rating=5.0,
                 total_trips=0
             )
@@ -66,7 +68,7 @@ class TripService:
         dest_point = WKTElement(f"POINT({destination_lng} {destination_lat})", srid=4326)
 
         trip = Trip(
-            id=str(uuid.uuid4()),
+            id=uuid.uuid4(),
             driver_id=driver.id,
             pickup_location=pickup_point,
             pickup_latitude=pickup_lat,
@@ -86,8 +88,9 @@ class TripService:
             vehicle_type=vehicle_type,
             parcel_enabled=parcel_enabled,
             women_only=women_only,
-            status=TripStatus.DRAFT,
+            status=TripStatus.PUBLISHED,
             notes=notes,
+            non_stop=non_stop,
         )
         self.db.add(trip)
         await self.db.flush()  # Get trip.id
@@ -97,7 +100,7 @@ class TripService:
             for i, stop in enumerate(route_stops):
                 stop_point = WKTElement(f"POINT({stop['longitude']} {stop['latitude']})", srid=4326)
                 rs = RouteStop(
-                    id=str(uuid.uuid4()),
+                    id=uuid.uuid4(),
                     trip_id=trip.id,
                     stop_type=stop.get("stop_type", "pickup"),
                     location=stop_point,
@@ -117,7 +120,7 @@ class TripService:
     async def publish_trip(self, trip_id: str, driver_user_id: str) -> Optional[dict]:
         """Move trip from DRAFT → PUBLISHED, then trigger forward matching."""
         trip = await self._get_driver_trip(trip_id, driver_user_id)
-        if not trip or trip.status != TripStatus.DRAFT:
+        if not trip or trip.status not in (TripStatus.DRAFT, TripStatus.PUBLISHED):
             return None
         trip.status = TripStatus.PUBLISHED
         await self.db.commit()
@@ -131,23 +134,44 @@ class TripService:
 
     async def _trigger_forward_match(self, trip_id: str) -> None:
         """Call matching-service to scan pending_bookings for this newly published trip."""
+        import httpx, structlog as _log
+        log = _log.get_logger(__name__)
+
+        # Try local gateway first (local dev), then Docker hostname (container)
+        for url in [
+            f"http://localhost:8001/api/v1/matching/internal/match-trip/{trip_id}",
+            f"http://matching-service:8003/internal/match-trip/{trip_id}",
+        ]:
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.post(url)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        log.info("Forward match completed", trip_id=trip_id, matches=data.get("matches", 0), url=url)
+                        return
+                    else:
+                        log.warning("Forward match non-200", url=url, status=resp.status_code)
+            except Exception as e:
+                log.warning("Forward match attempt failed", url=url, error=str(e))
+
+        # Last resort: direct in-process call
         try:
-            import httpx
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(
-                    f"http://matching-service:8003/internal/match-trip/{trip_id}"
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    import structlog
-                    structlog.get_logger(__name__).info(
-                        "Forward match completed",
-                        trip_id=trip_id,
-                        matches=data.get("matches", 0),
-                    )
+            import os, sys, importlib.util
+            _root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+            _matching_path = os.path.join(_root, "matching-service")
+            _spec = importlib.util.spec_from_file_location(
+                "_pms_direct",
+                os.path.join(_matching_path, "app", "services", "pending_matching.py"),
+            )
+            _mod = importlib.util.module_from_spec(_spec)
+            _spec.loader.exec_module(_mod)
+            from common.database import async_session_maker
+            async with async_session_maker() as db:
+                svc = _mod.PendingMatchingService(db)
+                matches = await svc.match_pending_bookings(trip_id)
+                log.info("Forward match via direct call", trip_id=trip_id, matches=len(matches))
         except Exception as e:
-            import structlog
-            structlog.get_logger(__name__).warning("Forward match trigger failed", exc_info=e)
+            log.error("Forward match all methods failed", exc_info=e)
 
     async def start_trip(self, trip_id: str, driver_user_id: str) -> Optional[dict]:
         """Move trip from PUBLISHED  IN_PROGRESS."""
@@ -265,8 +289,18 @@ class TripService:
 
     @staticmethod
     def _serialize(trip: Trip) -> dict:
+        import math
+        distance = trip.distance_km or 0
+        eta_minutes = int(math.ceil(distance * 1.5))  # rough estimate: 1.5 min per km
+        vehicle = trip.vehicle_type if isinstance(trip.vehicle_type, str) else (trip.vehicle_type.value if trip.vehicle_type else "sedan")
+        # Build human-readable city labels from coordinates or notes
+        pickup_label = f"{trip.pickup_latitude:.4f},{trip.pickup_longitude:.4f}"
+        dest_label = f"{trip.destination_latitude:.4f},{trip.destination_longitude:.4f}"
         return {
             "id": str(trip.id),
+            "vehicle_type": vehicle,
+            "pickup_city": pickup_label,
+            "destination_city": dest_label,
             "pickup_lat": trip.pickup_latitude,
             "pickup_lng": trip.pickup_longitude,
             "destination_lat": trip.destination_latitude,
@@ -276,7 +310,8 @@ class TripService:
             "available_seats": trip.available_seats,
             "base_fare": float(trip.base_fare),
             "per_km_rate": float(trip.per_km_rate),
-            "distance_km": trip.distance_km,
+            "distance_km": distance,
+            "eta_minutes": eta_minutes,
             "parcel_enabled": trip.parcel_enabled,
             "women_only": trip.women_only,
             "window_seats": trip.window_seats,

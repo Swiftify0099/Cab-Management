@@ -10,6 +10,7 @@ from common.models.all_models import UserRole
 
 class OTPSendRequest(BaseModel):
     phone: str = Field(..., min_length=10, max_length=15, description="Mobile number with country code")
+    role: Optional[UserRole] = UserRole.CUSTOMER  # role requested by the client app
 
     @field_validator("phone")
     @classmethod
@@ -59,6 +60,14 @@ class RefreshTokenRequest(BaseModel):
 class LogoutRequest(BaseModel):
     refresh_token: str
     access_token_jti: Optional[str] = None
+
+
+class GoogleSignInRequest(BaseModel):
+    id_token: str = Field(..., min_length=10)
+    role: Optional[UserRole] = UserRole.CUSTOMER
+    device_id: Optional[str] = None
+    device_name: Optional[str] = None
+
 
 
 class AdminLoginRequest(BaseModel):

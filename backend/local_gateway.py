@@ -1,5 +1,5 @@
-"""
-CabBooking — Combined Local Dev Gateway  (port 8001 / 80)
+﻿"""
+CabBooking â€” Combined Local Dev Gateway  (port 8001 / 80)
 Loads auth + booking + matching routers into one FastAPI app.
 
 Run:
@@ -72,17 +72,17 @@ def _load_service_module(service_dir: str, module_path: str):
     return mod
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Simpler approach: just prepend each service path and import normally,
 # but use importlib.reload to switch context between services.
-# ─────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 
-# ── 1. Load AUTH service routers ─────────────────────────────────────────────
+# â”€â”€ 1. Load AUTH service routers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _auth_path = os.path.join(_ROOT, "auth-service")
 sys.path.insert(0, _auth_path)
 sys.path.insert(0, os.path.join(_ROOT, "common"))
@@ -103,13 +103,14 @@ for k in _auth_mods:
 sys.path.remove(_auth_path)
 
 
-# ── 2. Load BOOKING service routers ──────────────────────────────────────────
+# â”€â”€ 2. Load BOOKING service routers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _booking_path = os.path.join(_ROOT, "booking-service")
 sys.path.insert(0, _booking_path)
 
 try:
     from app.api.v1 import booking_router, fare_router, trip_router
     from app.api.v1.subscriptions import router as subscription_router
+    from app.services.pending_match_bridge import run_reverse_match as _PRMB
     _booking_ok = True
     print("[BOOKING] [OK] trips / bookings / fare / subscriptions")
 except Exception as _e:
@@ -122,7 +123,7 @@ for k in _booking_mods:
 sys.path.remove(_booking_path)
 
 
-# ── 3. Load MATCHING service routers ─────────────────────────────────────────
+# â”€â”€ 3. Load MATCHING service routers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _matching_path = os.path.join(_ROOT, "matching-service")
 sys.path.insert(0, _matching_path)
 
@@ -133,8 +134,10 @@ try:
     # Without this, the lazy import inside get_corridor_customers() fails at
     # request-time because 'app' then resolves to auth-service's namespace.
     from app.services.corridor_matcher import CorridorMatchingService as _CMSCheck
+    # Also eagerly load PendingMatchingService for the reverse-match bridge fallback.
+    from app.services.pending_matching import PendingMatchingService as _PMSCheck
     _matching_ok = True
-    print("[MATCHING] [OK] matching + corridor_matcher")
+    print("[MATCHING] [OK] matching + corridor_matcher + pending_matching")
 except Exception as _e:
     _matching_ok = False
     print(f"[MATCHING] [ERR] {_e}")
@@ -144,7 +147,7 @@ _matching_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.starts
 for k in list(sys.modules.keys()):
     if k == "app" or k.startswith("app."):
         del sys.modules[k]
-# ── 4. Load PAYMENT service router ─────────────────────────────────────────
+# â”€â”€ 4. Load PAYMENT service router â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _payment_path = os.path.join(_ROOT, "payment-service")
 sys.path.insert(0, _payment_path)
 # Load the payment-service .env so Razorpay keys are visible
@@ -163,23 +166,75 @@ _payment_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.startsw
 for k in list(sys.modules.keys()):
     if k == "app" or k.startswith("app."):
         del sys.modules[k]
+sys.path.remove(_payment_path)
+
+# â”€â”€ 4.5. Load ADMIN, ANALYTICS, PARCEL services â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+_admin_path = os.path.join(_ROOT, "admin-service")
+sys.path.insert(0, _admin_path)
+try:
+    from app.api.v1.admin import router as admin_router
+    from app.api.v1.themes import router as themes_router
+    _admin_ok = True
+    print("[ADMIN]    [OK] admin / themes")
+except Exception as _e:
+    _admin_ok = False
+    print(f"[ADMIN]    [ERR] {_e}")
+
+_admin_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.startswith("app.")}
+for k in list(sys.modules.keys()):
+    if k == "app" or k.startswith("app."): del sys.modules[k]
+sys.path.remove(_admin_path)
+
+_analytics_path = os.path.join(_ROOT, "analytics-service")
+sys.path.insert(0, _analytics_path)
+try:
+    from app.api.v1.reports import router as reports_router
+    _analytics_ok = True
+    print("[ANALYTICS][OK] reports")
+except Exception as _e:
+    _analytics_ok = False
+    print(f"[ANALYTICS][ERR] {_e}")
+
+_analytics_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.startswith("app.")}
+for k in list(sys.modules.keys()):
+    if k == "app" or k.startswith("app."): del sys.modules[k]
+sys.path.remove(_analytics_path)
+
+_parcel_path = os.path.join(_ROOT, "parcel-service")
+sys.path.insert(0, _parcel_path)
+try:
+    from app.api.v1.parcels import router as parcel_router
+    _parcel_ok = True
+    print("[PARCEL]   [OK] parcels")
+except Exception as _e:
+    _parcel_ok = False
+    print(f"[PARCEL]   [ERR] {_e}")
+
+_parcel_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.startswith("app.")}
+for k in list(sys.modules.keys()):
+    if k == "app" or k.startswith("app."): del sys.modules[k]
+sys.path.remove(_parcel_path)
 
 # Restore auth + matching modules
 sys.path.insert(0, _auth_path)
 sys.modules.update(_auth_mods)
+sys.modules.update(_booking_mods)
 sys.modules.update(_matching_mods)
 sys.modules.update(_payment_mods)
+sys.modules.update(_admin_mods)
+sys.modules.update(_analytics_mods)
+sys.modules.update(_parcel_mods)
 
 
-# ── 5. Build FastAPI app ───────────────────────────────────────────────
+# â”€â”€ 5. Build FastAPI app â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("\n[LOCAL-GATEWAY] Running on port 8001 — auth + booking + matching + payment\n")
+    print("\n[LOCAL-GATEWAY] Running on port 8001 â€” auth + booking + matching + payment\n")
     yield
 
 
 app = FastAPI(
-    title="CabBooking — Local Gateway",
+    title="CabBooking â€” Local Gateway",
     version="1.0.0",
     lifespan=lifespan,
     docs_url="/docs",
@@ -211,6 +266,16 @@ if _matching_ok:
 if _payment_ok:
     app.include_router(payment_router, prefix="/api/v1", tags=["Payment"])
 
+if _admin_ok:
+    app.include_router(admin_router, prefix="/api/v1", tags=["Admin"])
+    app.include_router(themes_router, prefix="/api/v1", tags=["Themes"])
+
+if _analytics_ok:
+    app.include_router(reports_router, tags=["Analytics"])
+
+if _parcel_ok:
+    app.include_router(parcel_router, prefix="/api/v1/parcels", tags=["Parcels"])
+
 
 @app.get("/health")
 async def health():
@@ -220,6 +285,9 @@ async def health():
         "booking":  _booking_ok,
         "matching": _matching_ok,
         "payment":  _payment_ok,
+        "admin":    _admin_ok,
+        "analytics": _analytics_ok,
+        "parcel":   _parcel_ok,
     }
 
 @app.post("/payment-success")
@@ -244,7 +312,7 @@ async def payment_success(
             html = """
             <html><body style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;text-align:center;background:#f0f9ff;color:#0369a1;">
             <div>
-                <h1 style="font-size:3rem;margin-bottom:10px;">✅</h1>
+                <h1 style="font-size:3rem;margin-bottom:10px;">âœ…</h1>
                 <h2>Payment Successful!</h2>
                 <p>Your payment has been captured.<br>You can safely close this window to return to the app.</p>
             </div>
@@ -259,7 +327,7 @@ async def payment_success(
     html = """
     <html><body style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;text-align:center;background:#fff1f2;color:#be123c;">
     <div>
-        <h1 style="font-size:3rem;margin-bottom:10px;">❌</h1>
+        <h1 style="font-size:3rem;margin-bottom:10px;">âŒ</h1>
         <h2>Payment Failed</h2>
         <p>There was an issue processing your payment.<br>Please close this window and try again.</p>
     </div>
@@ -271,3 +339,288 @@ async def payment_success(
 @app.get("/api/v1/health")
 async def api_health():
     return {"status": "healthy"}
+
+
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# Socket.IO WebSocket Gateway â€” Redis pub/sub â†’ Socket.IO rooms
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+# Declare at module scope so `global` inside nested functions resolves correctly
+_redis_task_started = False
+
+try:
+    import socketio as _sio_lib
+    import json as _json
+    import asyncio as _asyncio
+    import importlib
+    import importlib.util  # must be explicit â€” `import importlib` doesn't load .util
+
+    # Create Socket.IO async server
+    sio = _sio_lib.AsyncServer(
+        async_mode='asgi',
+        cors_allowed_origins='*',
+        logger=False,
+        engineio_logger=False,
+    )
+
+    # Wrap FastAPI app with Socket.IO ASGI
+    app = _sio_lib.ASGIApp(sio, other_asgi_app=app, socketio_path='/socket.io')
+
+    # â”€â”€ Connection registry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    _sid_to_user: dict = {}
+
+    @sio.event
+    async def connect(sid, environ, auth):
+        print(f"[WS] Client connected: {sid}")
+        await sio.emit('CONNECTED', {'message': 'Connected to CabBooking Gateway'}, room=sid)
+
+    @sio.event
+    async def disconnect(sid):
+        _sid_to_user.pop(sid, None)
+        print(f"[WS] Client disconnected: {sid}")
+
+    # â”€â”€ Driver online / offline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    @sio.event
+    async def DRIVER_ONLINE(sid, data):
+        driver_id = data.get('driver_id', '')
+        if driver_id and driver_id != 'unknown':
+            room = f"driver:{driver_id}"
+            await sio.enter_room(sid, room)
+            _sid_to_user[sid] = {"role": "driver", "id": driver_id}
+            print(f"[WS] Driver {driver_id} online â†’ room {room}")
+
+    @sio.event
+    async def DRIVER_OFFLINE(sid, data):
+        driver_id = data.get('driver_id', '')
+        if driver_id:
+            await sio.leave_room(sid, f"driver:{driver_id}")
+
+    # â”€â”€ Customer joins their personal notification room â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    @sio.event
+    async def JOIN_CUSTOMER_ROOM(sid, data):
+        customer_id = data.get('customer_id', '')
+        if customer_id:
+            room = f"customer:{customer_id}"
+            await sio.enter_room(sid, room)
+            _sid_to_user[sid] = {"role": "customer", "id": customer_id}
+            print(f"[WS] Customer {customer_id} joined room {room}")
+
+    # â”€â”€ Driver joins scan room for a specific trip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    @sio.event
+    async def join_driver_scan(sid, data):
+        trip_id = data.get('trip_id', '')
+        if trip_id:
+            room = f"driver_scan:{trip_id}"
+            await sio.enter_room(sid, room)
+            print(f"[WS] Driver joined scan room {room}")
+
+    # â”€â”€ Customer joins trip tracking room (two name aliases) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    @sio.event
+    async def join_trip_room(sid, data):
+        trip_id = data.get('trip_id', '')
+        if trip_id:
+            await sio.enter_room(sid, f"trip:{trip_id}")
+
+    @sio.event
+    async def join_trip(sid, data):
+        trip_id = data.get('trip_id', '')
+        if trip_id:
+            await sio.enter_room(sid, f"trip:{trip_id}")
+            print(f"[WS] Customer joined trip room: trip:{trip_id}")
+
+    @sio.event
+    async def leave_trip(sid, data):
+        trip_id = data.get('trip_id', '')
+        if trip_id:
+            await sio.leave_room(sid, f"trip:{trip_id}")
+
+    # â”€â”€ GPS location update (driver â†’ persist + broadcast to trip room) â”€â”€â”€â”€â”€â”€
+    @sio.event
+    async def LOCATION_UPDATE(sid, data):
+        trip_id = data.get('trip_id', '')
+        if trip_id:
+            await sio.emit('LOCATION_UPDATE', data, room=f"trip:{trip_id}", skip_sid=sid)
+        try:
+            from common.utils.redis_client import get_redis
+            r = await get_redis()
+            await r.publish("live:location:updates", _json.dumps({
+                "trip_id":    trip_id or "",
+                "driver_id":  data.get("driver_id", ""),
+                "latitude":   data.get("lat", 0),
+                "longitude":  data.get("lng", 0),
+                "speed_kmh":  data.get("speed", 0),
+                "heading":    data.get("heading", 0),
+                "accuracy_m": data.get("accuracy", 0),
+            }))
+        except Exception as _e:
+            print(f"[WS] LOCATION_UPDATE Redis publish error: {_e}")
+
+    # â”€â”€ Heartbeat â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    @sio.event
+    async def heartbeat(sid, data):
+        pass  # silently ack
+
+    # â”€â”€ Customer GPS update â†’ corridor matching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    @sio.event
+    async def CUSTOMER_LOCATION_UPDATE(sid, data):
+        customer_id = data.get('customer_id', '')
+        lat = data.get('lat', 0.0)
+        lng = data.get('lng', 0.0)
+        if not customer_id or not lat or not lng:
+            return
+
+        # 1. Publish to Redis for any external consumers
+        try:
+            from common.utils.redis_client import get_redis
+            r = await get_redis()
+            await r.publish('customer:location:updates', _json.dumps({
+                'customer_id': customer_id,
+                'lat': lat,
+                'lng': lng,
+            }))
+        except Exception as _ce:
+            print(f'[WS] CUSTOMER_LOCATION_UPDATE Redis publish error: {_ce}')
+
+        # 2. Run corridor match as a non-blocking background task
+        async def _run_corridor_match():
+            try:
+                from common.database import async_session_maker
+                _ms_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'matching-service')
+                _cm_file = os.path.join(_ms_path, 'app', 'services', 'corridor_matcher.py')
+                _spec = importlib.util.spec_from_file_location('__gw_corridor_matcher', _cm_file)
+                _mod = importlib.util.module_from_spec(_spec)
+                if _ms_path not in sys.path:
+                    sys.path.insert(0, _ms_path)
+                _spec.loader.exec_module(_mod)
+                CorridorMatchingService = _mod.CorridorMatchingService
+                async with async_session_maker() as _db:
+                    _svc = CorridorMatchingService(_db)
+                    await _svc.update_customer_location(
+                        customer_id=customer_id,
+                        lat=lat,
+                        lng=lng,
+                    )
+            except Exception as _ce2:
+                print(f'[WS] Corridor match error: {_ce2}')
+
+        _asyncio.ensure_future(_run_corridor_match())
+
+    # â”€â”€ Driver booking response (accept/reject via WebSocket) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    @sio.event
+    async def BOOKING_RESPONSE(sid, data):
+        booking_id = data.get('booking_id', '')
+        driver_id  = data.get('driver_id', '')
+        accepted   = data.get('accepted', False)
+        if booking_id and driver_id:
+            try:
+                from common.utils.redis_client import get_redis
+                r = await get_redis()
+                key = f"dispatch:response:{booking_id}:{driver_id}"
+                await r.setex(key, 120, "accepted" if accepted else "rejected")
+                print(f"[WS] Driver {driver_id} {'accepted' if accepted else 'rejected'} booking {booking_id}")
+            except Exception as _e:
+                print(f"[WS] BOOKING_RESPONSE error: {_e}")
+
+    # â”€â”€ Redis pub/sub consumer â€” forward events to Socket.IO rooms â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    async def _redis_to_socketio():
+        """
+        Subscribe to all Redis event channels and forward messages
+        to the correct Socket.IO rooms.  Runs as a long-lived background task.
+        Reconnects automatically on Redis disconnect.
+        """
+        from common.utils.redis_client import get_redis
+
+        while True:
+            try:
+                r = await get_redis()
+                pubsub = r.pubsub()
+                await pubsub.psubscribe(
+                    "driver:*:events",
+                    "customer:*:events",
+                    "driver_scan:*",
+                    "trip:*:events",
+                    "notification:events",
+                )
+                await pubsub.subscribe("corridor:match")
+                print("[WS] Redis pub/sub consumer started â€” forwarding to Socket.IO")
+
+                async for message in pubsub.listen():
+                    if message["type"] not in ("pmessage", "message"):
+                        continue
+                    try:
+                        channel = message.get("channel", b"")
+                        if isinstance(channel, bytes):
+                            channel = channel.decode()
+                        raw = message.get("data", b"")
+                        if isinstance(raw, (bytes, bytearray)):
+                            raw = raw.decode()
+                        payload = _json.loads(raw)
+                        event_name = payload.get("event", "EVENT")
+
+                        # Route to the correct Socket.IO room
+                        if channel.startswith("driver:") and channel.endswith(":events"):
+                            driver_id = channel.split(":")[1]
+                            room = f"driver:{driver_id}"
+                            await sio.emit(event_name, payload, room=room)
+                            print(f"[WSâ†’sio] {event_name} â†’ room {room}")
+
+                        elif channel.startswith("customer:") and channel.endswith(":events"):
+                            cid = channel.split(":")[1]
+                            room = f"customer:{cid}"
+                            await sio.emit(event_name, payload, room=room)
+                            print(f"[WSâ†’sio] {event_name} â†’ room {room}")
+
+                        elif channel.startswith("driver_scan:"):
+                            trip_id = channel.replace("driver_scan:", "")
+                            room = f"driver_scan:{trip_id}"
+                            await sio.emit(event_name, payload, room=room)
+                            print(f"[WSâ†’sio] {event_name} â†’ room {room}")
+
+                        elif channel.startswith("trip:") and channel.endswith(":events"):
+                            trip_id = channel.split(":")[1]
+                            room = f"trip:{trip_id}"
+                            await sio.emit(event_name, payload, room=room)
+
+                    except Exception as _msg_err:
+                        print(f"[WS] pub/sub message error: {_msg_err}")
+
+            except Exception as _conn_err:
+                print(f"[WS] Redis pub/sub disconnected: {_conn_err} â€” retrying in 3s")
+                await _asyncio.sleep(3)
+
+    # â”€â”€ Reliable startup: ASGI lifespan wrapper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # sio.ASGIApp doesn't forward @app.on_event("startup"), so we wrap the
+    # ASGI callable ourselves and start the Redis consumer on first startup.
+
+    _original_app = app
+
+    async def _lifespan_wrapper(scope, receive, send):
+        global _redis_task_started
+        if scope["type"] == "lifespan":
+            async def _patched_receive():
+                msg = await receive()
+                if msg["type"] == "lifespan.startup" and not _redis_task_started:
+                    _redis_task_started = True
+                    _asyncio.ensure_future(_redis_to_socketio())
+                    print("[WS] Redis consumer started via lifespan.startup")
+                return msg
+            await _original_app(scope, _patched_receive, send)
+        else:
+            # HTTP / WebSocket request â€” start consumer if not yet running
+            if not _redis_task_started:
+                _redis_task_started = True
+                _asyncio.ensure_future(_redis_to_socketio())
+                print("[WS] Redis consumer started via first request")
+            await _original_app(scope, receive, send)
+
+    app = _lifespan_wrapper
+    print("[WS] Socket.IO gateway initialized âœ“")
+
+except ImportError as _sio_err:
+    print(f"[WS] python-socketio not installed: {_sio_err}")
+    print("[WS] Install with: pip install python-socketio[asyncio_client] aioredis")
+except Exception as _sio_init_err:
+    print(f"[WS] Socket.IO init failed: {_sio_init_err}")
+    import traceback
+    traceback.print_exc()
+

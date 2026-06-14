@@ -83,7 +83,7 @@ class TrackingService:
         if trip:
             distance_remaining_km, eta_minutes = estimate_eta(
                 latitude, longitude,
-                trip.destination_lat, trip.destination_lng,
+                trip.destination_latitude, trip.destination_longitude,
                 speed_kmh,
             )
 
@@ -230,13 +230,13 @@ async def consume_location_updates(db_factory):
             async with db_factory() as db:
                 service = TrackingService(db)
                 await service.record_location(
-                    trip_id=data["trip_id"],
-                    driver_id=data["driver_id"],
-                    latitude=data["latitude"],
-                    longitude=data["longitude"],
-                    speed_kmh=data.get("speed_kmh", 0.0),
-                    heading=data.get("heading", 0.0),
-                    accuracy_m=data.get("accuracy_m", 0.0),
+                    trip_id=data.get("trip_id") or data.get("trip_id", ""),
+                    driver_id=data.get("driver_id", ""),
+                    latitude=float(data.get("lat") or data.get("latitude", 0)),
+                    longitude=float(data.get("lng") or data.get("longitude", 0)),
+                    speed_kmh=float(data.get("speed") or data.get("speed_kmh", 0.0)),
+                    heading=float(data.get("heading", 0.0)),
+                    accuracy_m=float(data.get("accuracy") or data.get("accuracy_m", 0.0)),
                     altitude_m=data.get("altitude_m"),
                     booking_id=data.get("booking_id"),
                 )

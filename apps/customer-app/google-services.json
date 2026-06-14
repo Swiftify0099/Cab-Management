@@ -1,26 +1,36 @@
 {
   "project_info": {
-    "project_number": "000000000000",
-    "project_id": "cabooking-customer-dev",
-    "storage_bucket": "cabooking-customer-dev.appspot.com"
+    "project_number": "514560559715",
+    "project_id": "cabbookingsystem-d0065",
+    "storage_bucket": "cabbookingsystem-d0065.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:000000000000:android:0000000000000000",
+        "mobilesdk_app_id": "1:514560559715:android:0a5663748c5e481d600656",
         "android_client_info": {
-          "package_name": "com.cabooking.customer"
+          "package_name": "com.cab.Saaj"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "514560559715-ffbetgaeamcv7lq4soj0opug5tgbh1kj.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
-          "current_key": "AIzaSyCZw4DVNyJwP85ZeDG1y_x8DLQ7bF8J0EU"
+          "current_key": "AIzaSyAvNlWl9sDtJHmFpDFp5GhVbGg34qIKLMg"
         }
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "514560559715-ffbetgaeamcv7lq4soj0opug5tgbh1kj.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

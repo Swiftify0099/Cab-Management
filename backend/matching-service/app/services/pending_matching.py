@@ -310,6 +310,28 @@ class PendingMatchingService:
                     "trip_id": row["trip_id"],
                 })
 
+            driver_payload = {
+                "event":                       "NEW_PENDING_CUSTOMER",
+                "booking_id":                  str(pb.id),
+                "customer_name":               pb.customer_name,
+                "pickup_address":              pb.pickup_address,
+                "pickup_lat":                  float(pb.pickup_lat),
+                "pickup_lng":                  float(pb.pickup_lng),
+                "destination_address":         pb.destination_address,
+                "destination_lat":             float(pb.destination_lat),
+                "destination_lng":             float(pb.destination_lng),
+                "seats_required":              pb.seats_required,
+                "parcel":                      pb.parcel,
+                "from_time":                   str(pb.from_time),
+                "to_time":                     str(pb.to_time),
+                "women_only":                  pb.women_only,
+                "pickup_distance_km":          round(float(row["pickup_dist_m"]) / 1000, 2),
+                "destination_distance_km":     round(float(row["dest_dist_m"]) / 1000, 2),
+                "pickup_distance_meters":      float(row["pickup_dist_m"]),
+                "destination_distance_meters": float(row["dest_dist_m"]),
+            }
+            await publish_event(f"driver_scan:{row['trip_id']}", driver_payload)
+
             matched.append(dict(row))
 
         return matched
@@ -366,11 +388,11 @@ class PendingMatchingService:
                     pb.destination_location::geography,
                     ST_MakePoint(:dest_lng, :dest_lat)::geography
                 ) <= :dest_radius_m
-                -- Exclude rejections from this driver (DB-persisted, industry standard)
+                -- Exclude rejections from this driver
                 AND pb.id NOT IN (
                     SELECT dr.pending_booking_id
                     FROM driver_rejections dr
-                    WHERE dr.driver_id = :driver_id
+                    WHERE dr.driver_id = :driver_id AND dr.pending_booking_id IS NOT NULL
                 )
                 -- Women-only safety filter
                 AND (
@@ -381,6 +403,37 @@ class PendingMatchingService:
                     (pb.women_only = FALSE)
                     OR (:trip_women_only = TRUE)
                 )
+
+            UNION ALL
+
+            SELECT
+                b.id::text               AS booking_id,
+                cp.full_name             AS customer_name,
+                b.pickup_address         AS pickup_address,
+                :trip_lat                AS pickup_lat,
+                :trip_lng                AS pickup_lng,
+                b.drop_address           AS destination_address,
+                :dest_lat                AS destination_lat,
+                :dest_lng                AS destination_lng,
+                b.seat_count             AS seats_required,
+                b.has_parcel             AS parcel,
+                :trip_time               AS from_time,
+                :trip_time               AS to_time,
+                FALSE                    AS women_only,
+                0.0                      AS pickup_dist_m,
+                0.0                      AS dest_dist_m
+            FROM bookings b
+            JOIN customer_profiles cp ON cp.id = b.customer_id
+            JOIN users u ON u.id = cp.user_id
+            WHERE
+                b.trip_id = :trip_id_uuid
+                AND b.status IN ('PENDING', 'PAID', 'CONFIRMED', 'DRIVER_ACCEPTED')
+                AND b.id NOT IN (
+                    SELECT dr.booking_id
+                    FROM driver_rejections dr
+                    WHERE dr.driver_id = :driver_id AND dr.booking_id IS NOT NULL
+                )
+
             ORDER BY pickup_dist_m ASC
         """)
 
@@ -390,10 +443,12 @@ class PendingMatchingService:
             "dest_lat":        trip.destination_latitude,
             "dest_lng":        trip.destination_longitude,
             "travel_date":     trip.departure_time.date(),
+            "trip_time":       trip.departure_time.time(),
             "available_seats": trip.available_seats,
             "pickup_radius_m": PICKUP_RADIUS_M,
             "dest_radius_m":   DESTINATION_RADIUS_M,
             "driver_id":       str(driver_id),
+            "trip_id_uuid":    uuid.UUID(trip_id),
             "trip_women_only": trip.women_only,
         })
         rows = result.mappings().all()
@@ -480,31 +535,51 @@ class PendingMatchingService:
                     "distance_km":  round(dist_km, 2),
                     "eta_minutes":  eta_min,
                 }
-                await publish_event(
-                    f"customer:{str(booking.customer_id)}:events",
-                    alert_payload,
-                )
 
-                # Fetch driver info for push notification
+
+
+                # Fetch driver phone + customer user_id for proper routing
                 trip = await self._get_trip(trip_id)
+                driver_phone = None
                 driver_name = "Your driver"
                 if trip:
                     driver = await self._get_driver(trip.driver_id)
                     if driver:
                         driver_name = driver.full_name
+                        # Get phone from linked User record
+                        try:
+                            driver_user_res = await self.db.execute(
+                                select(User).where(User.id == driver.user_id)
+                            )
+                            driver_user = driver_user_res.scalar_one_or_none()
+                            if driver_user:
+                                driver_phone = driver_user.phone
+                        except Exception:
+                            pass
 
-                # FCM push
+                # Resolve customer user_id (Socket.IO rooms use user_id, not profile id)
                 from common.models.all_models import CustomerProfile
                 cp_res = await self.db.execute(
                     select(CustomerProfile).where(CustomerProfile.id == booking.customer_id)
                 )
                 cp = cp_res.scalar_one_or_none()
+                customer_user_id = str(cp.user_id) if cp else str(booking.customer_id)
+
+                # Include driver phone only in the arrival alert (10km threshold reveal)
+                alert_payload["driver_phone"] = driver_phone
+
+                # Publish to customer's user_id room (not profile id)
+                await publish_event(
+                    f"customer:{customer_user_id}:events",
+                    alert_payload,
+                )
+
                 if cp:
                     user = await self._get_user(cp.user_id)
                     if user and user.device_token:
                         await publish_event("notification:events", {
                             "event":        "ARRIVAL_ALERT",
-                            "user_id":      str(cp.user_id),
+                            "user_id":      customer_user_id,
                             "user_type":    "customer",
                             "device_token": user.device_token,
                             "title":        "🚗 Driver is almost here!",

@@ -17,6 +17,8 @@ from app.schemas.profile import (
     CustomerProfileCreate,
     CustomerProfileResponse,
     CustomerProfileUpdate,
+    SavedRouteCreate,
+    SavedRouteResponse,
 )
 from app.services.profile_service import (
     create_address,
@@ -33,7 +35,7 @@ from common.middleware.auth import (
     get_current_active_customer,
     get_current_user,
 )
-from common.models.all_models import CustomerProfile, SavedAddress
+from common.models.all_models import CustomerProfile, SavedAddress, SavedRoute
 from common.schemas.response import APIResponse, MessageResponse
 from common.utils.storage import (
     ALLOWED_IMAGE_TYPES,
@@ -282,3 +284,81 @@ async def delete_saved_address(
     await delete_address(db=db, address=address)
     await db.commit()
     return MessageResponse(message="Address deleted")
+
+
+# ============================================================
+# SAVED ROUTES
+# ============================================================
+
+@router.get(
+    "/me/routes",
+    response_model=APIResponse[List[SavedRouteResponse]],
+    summary="Get all saved routes",
+)
+async def list_routes(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(SavedRoute).where(SavedRoute.user_id == current_user.id)
+    )
+    routes = result.scalars().all()
+    data = [SavedRouteResponse.model_validate(r) for r in routes]
+    return APIResponse(message="Routes fetched", data=data)
+
+
+@router.post(
+    "/me/routes",
+    response_model=APIResponse[SavedRouteResponse],
+    summary="Save a pickup+drop route pair",
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_route(
+    data: SavedRouteCreate,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    route = SavedRoute(
+        user_id=current_user.id,
+        route_name=data.route_name,
+        pickup_label=data.pickup_label,
+        pickup_address=data.pickup_address,
+        pickup_lat=data.pickup_lat,
+        pickup_lon=data.pickup_lon,
+        drop_label=data.drop_label,
+        drop_address=data.drop_address,
+        drop_lat=data.drop_lat,
+        drop_lon=data.drop_lon,
+    )
+    db.add(route)
+    await db.commit()
+    await db.refresh(route)
+    return APIResponse(
+        message="Route saved",
+        data=SavedRouteResponse.model_validate(route),
+    )
+
+
+@router.delete(
+    "/me/routes/{route_id}",
+    response_model=MessageResponse,
+    summary="Delete a saved route",
+)
+async def delete_saved_route(
+    route_id: uuid.UUID,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(SavedRoute).where(
+            SavedRoute.id == route_id,
+            SavedRoute.user_id == current_user.id,
+        )
+    )
+    route = result.scalar_one_or_none()
+    if not route:
+        raise HTTPException(status_code=404, detail="Route not found")
+
+    await db.delete(route)
+    await db.commit()
+    return MessageResponse(message="Route deleted")

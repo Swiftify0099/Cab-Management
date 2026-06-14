@@ -53,7 +53,7 @@ export default function VehicleScreen() {
     if (!validate()) return
     setLoading(true)
     try {
-      await api.post('/driver/vehicle', {
+      await api.post('/driver/me/vehicle', {
         ...form,
         year: Number(form.year),
       })

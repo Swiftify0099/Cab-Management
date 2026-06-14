@@ -2,6 +2,7 @@
 All SQLAlchemy models for CabBooking SuperApp.
 Complete production schema with PostGIS geography columns.
 """
+print("EXECUTING ALL MODELS", __name__)
 import uuid
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -30,6 +31,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from common.database import Base
+Base.metadata.clear()
 from common.models.base import SoftDeleteMixin, TimestampMixin, UUIDMixin
 
 
@@ -226,6 +228,7 @@ class User(Base, UUIDMixin, TimestampMixin, SoftDeleteMixin):
     driver_profile: Mapped[Optional["Driver"]] = relationship(back_populates="user", uselist=False)
     admin_profile: Mapped[Optional["AdminProfile"]] = relationship(back_populates="user", uselist=False)
     saved_addresses: Mapped[List["SavedAddress"]] = relationship(back_populates="user")
+    saved_routes: Mapped[List["SavedRoute"]] = relationship(back_populates="user")
     notifications: Mapped[List["Notification"]] = relationship(back_populates="user")
 
 
@@ -284,18 +287,39 @@ class SavedAddress(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "saved_addresses"
 
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    address_type: Mapped[str] = mapped_column(String(20), default="general", server_default="general", nullable=False)  # "general", "pickup", "drop"
     label: Mapped[str] = mapped_column(String(100), nullable=False)  # Home, Office, etc.
     location: Mapped[object] = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=False)
     latitude: Mapped[float] = mapped_column(Float, nullable=False)
     longitude: Mapped[float] = mapped_column(Float, nullable=False)
-    pincode: Mapped[str] = mapped_column(String(10), nullable=False)
-    district: Mapped[str] = mapped_column(String(100), nullable=False)
-    state: Mapped[str] = mapped_column(String(100), nullable=False)
+    pincode: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    district: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    state: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     landmark: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     full_address: Mapped[str] = mapped_column(Text, nullable=False)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
 
     user: Mapped["User"] = relationship(back_populates="saved_addresses")
+
+
+class SavedRoute(Base, UUIDMixin, TimestampMixin):
+    """A saved pickup+drop route pair for quick cab booking."""
+    __tablename__ = "saved_routes"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    route_name: Mapped[str] = mapped_column(String(150), nullable=False)  # e.g. "Home → Office"
+    # Pickup
+    pickup_label: Mapped[str] = mapped_column(String(100), nullable=False)
+    pickup_address: Mapped[str] = mapped_column(Text, nullable=False)
+    pickup_lat: Mapped[float] = mapped_column(Float, nullable=False)
+    pickup_lon: Mapped[float] = mapped_column(Float, nullable=False)
+    # Drop
+    drop_label: Mapped[str] = mapped_column(String(100), nullable=False)
+    drop_address: Mapped[str] = mapped_column(Text, nullable=False)
+    drop_lat: Mapped[float] = mapped_column(Float, nullable=False)
+    drop_lon: Mapped[float] = mapped_column(Float, nullable=False)
+
+    user: Mapped["User"] = relationship(back_populates="saved_routes")
 
 
 # ============================================================
@@ -307,12 +331,19 @@ class Driver(Base, UUIDMixin, TimestampMixin):
 
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    phone: Mapped[Optional[str]] = mapped_column(String(15), nullable=True, index=True)
     gender: Mapped[Optional[Gender]] = mapped_column(Enum(Gender), nullable=True)
     profile_photo: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     aadhaar_number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     license_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     kyc_status: Mapped[KYCStatus] = mapped_column(Enum(KYCStatus), default=KYCStatus.PENDING)
     status: Mapped[DriverStatus] = mapped_column(Enum(DriverStatus), default=DriverStatus.OFFLINE)
+    # is_online / is_active / is_verified — derived from status & kyc_status for backwards-compat
+    _is_online: Mapped[bool] = mapped_column("is_online", Boolean, default=False, nullable=False)
+    _is_active: Mapped[bool] = mapped_column("is_active", Boolean, default=True, nullable=False)
+    _is_verified: Mapped[bool] = mapped_column("is_verified", Boolean, default=False, nullable=False)
+    vehicle_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    current_trip_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("trips.id"), nullable=True)
     rating: Mapped[float] = mapped_column(Float, default=5.0)
     total_trips: Mapped[int] = mapped_column(Integer, default=0)
     total_earnings: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
@@ -323,11 +354,35 @@ class Driver(Base, UUIDMixin, TimestampMixin):
     home_city: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     referral_code: Mapped[Optional[str]] = mapped_column(String(20), unique=True, nullable=True)
 
+    @property
+    def is_online(self) -> bool:
+        return self._is_online or self.status == DriverStatus.ONLINE
+
+    @is_online.setter
+    def is_online(self, value: bool):
+        self._is_online = value
+
+    @property
+    def is_active(self) -> bool:
+        return self._is_active
+
+    @is_active.setter
+    def is_active(self, value: bool):
+        self._is_active = value
+
+    @property
+    def is_verified(self) -> bool:
+        return self._is_verified or self.kyc_status == KYCStatus.APPROVED
+
+    @is_verified.setter
+    def is_verified(self, value: bool):
+        self._is_verified = value
+
     # Relationships
     user: Mapped["User"] = relationship(back_populates="driver_profile")
     vehicle: Mapped[Optional["Vehicle"]] = relationship(back_populates="driver", uselist=False)
     documents: Mapped[List["DriverDocument"]] = relationship(back_populates="driver")
-    trips: Mapped[List["Trip"]] = relationship(back_populates="driver")
+    trips: Mapped[List["Trip"]] = relationship(back_populates="driver", foreign_keys="[Trip.driver_id]")
     penalties: Mapped[List["DriverPenalty"]] = relationship(back_populates="driver")
 
 
@@ -421,7 +476,7 @@ class Trip(Base, UUIDMixin, TimestampMixin):
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Relationships
-    driver: Mapped["Driver"] = relationship(back_populates="trips")
+    driver: Mapped["Driver"] = relationship(back_populates="trips", foreign_keys="[Trip.driver_id]")
     bookings: Mapped[List["Booking"]] = relationship(back_populates="trip")
     route_stops: Mapped[List["RouteStop"]] = relationship(back_populates="trip", order_by="RouteStop.sequence_order")
     live_tracking: Mapped[Optional["LiveTracking"]] = relationship(back_populates="trip", uselist=False)
@@ -512,21 +567,43 @@ class LiveTracking(Base, UUIDMixin, TimestampMixin):
 class Parcel(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "parcels"
 
-    booking_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("bookings.id", ondelete="CASCADE"), unique=True, nullable=False)
-    weight_kg: Mapped[float] = mapped_column(Float, nullable=False)
+    # Optional legacy link to a seat booking (may be NULL for standalone parcels)
+    booking_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("bookings.id", ondelete="CASCADE"), unique=True, nullable=True)
+    # Direct links for parcel-service usage
+    trip_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("trips.id"), nullable=True, index=True)
+    customer_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
+    driver_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("drivers.id"), nullable=True, index=True)
+    # Tracking
+    tracking_number: Mapped[Optional[str]] = mapped_column(String(50), unique=True, nullable=True, index=True)
+    # Sender info
+    sender_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    sender_phone: Mapped[Optional[str]] = mapped_column(String(15), nullable=True)
+    # Receiver info
+    receiver_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    receiver_phone: Mapped[Optional[str]] = mapped_column(String(15), nullable=True)
+    receiver_address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Parcel details
+    weight_kg: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     length_cm: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     width_cm: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     height_cm: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     dimensions: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    is_fragile: Mapped[bool] = mapped_column(Boolean, default=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    image_path: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
-    status: Mapped[ParcelStatus] = mapped_column(Enum(ParcelStatus), default=ParcelStatus.PENDING)
-    receiver_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    receiver_phone: Mapped[Optional[str]] = mapped_column(String(15), nullable=True)
+    is_fragile: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_urgent: Mapped[bool] = mapped_column(Boolean, default=False)
+    declared_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), nullable=True)
+    # Pricing
+    fare: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
     parcel_charge: Mapped[Decimal] = mapped_column(Numeric(8, 2), default=0)
+    # Status & delivery
+    status: Mapped[ParcelStatus] = mapped_column(Enum(ParcelStatus), default=ParcelStatus.PENDING)
+    delivery_otp: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    proof_image: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    image_path: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    parcel_photo: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
 
-    booking: Mapped["Booking"] = relationship(back_populates="parcel")
+    booking: Mapped[Optional["Booking"]] = relationship(back_populates="parcel")
 
 
 # ============================================================
@@ -903,7 +980,7 @@ class PendingBooking(Base, UUIDMixin, TimestampMixin):
 
     # Status
     status:     Mapped[PendingBookingStatus] = mapped_column(
-        Enum(PendingBookingStatus), default=PendingBookingStatus.WAITING, index=True
+        Enum(PendingBookingStatus, native_enum=False, length=50, values_callable=lambda obj: [e.value for e in obj]), default=PendingBookingStatus.WAITING, index=True
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -1096,3 +1173,107 @@ class CustomerLocation(Base, UUIDMixin, TimestampMixin):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+# ============================================================
+# RATINGS & REVIEWS
+# ============================================================
+
+class Rating(Base, UUIDMixin, TimestampMixin):
+    """
+    Ratings for trips. Customers rate drivers, and drivers rate customers.
+    """
+    __tablename__ = "ratings"
+    __table_args__ = (UniqueConstraint("booking_id", "from_user_id", name="uq_rating_booking_user"),)
+
+    booking_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("bookings.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    from_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    to_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    score: Mapped[int] = mapped_column(Integer, nullable=False) # 1 to 5
+    feedback: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    booking: Mapped["Booking"] = relationship("Booking", foreign_keys=[booking_id])
+
+
+
+
+# ============================================================
+# PROMOTIONS & COUPONS
+# ============================================================
+
+
+
+class UserCoupon(Base, UUIDMixin, TimestampMixin):
+    """
+    Tracks which users have used which coupons (to prevent multi-use if limited).
+    """
+    __tablename__ = "user_coupons"
+    __table_args__ = (UniqueConstraint("user_id", "coupon_id", name="uq_user_coupon"),)
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    coupon_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("coupons.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    booking_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("bookings.id", ondelete="CASCADE"), nullable=False
+    )
+    discount_applied: Mapped[float] = mapped_column(Float, nullable=False)
+
+    user: Mapped["User"] = relationship("User", foreign_keys=[user_id])
+    coupon: Mapped["Coupon"] = relationship("Coupon", foreign_keys=[coupon_id])
+    booking: Mapped["Booking"] = relationship("Booking", foreign_keys=[booking_id])
+
+
+# ============================================================
+# DRIVER LOCATION (live GPS table — one row per driver)
+# ============================================================
+
+class DriverLocation(Base, UUIDMixin):
+    """
+    Live driver GPS, upserted on every LOCATION_UPDATE WebSocket event.
+    One row per driver (unique constraint on driver_id).
+    """
+    __tablename__ = "driver_locations"
+    __table_args__ = (UniqueConstraint("driver_id"),)
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    latitude: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    speed_kmh: Mapped[float] = mapped_column(Float, default=0.0)
+    heading: Mapped[float] = mapped_column(Float, default=0.0)
+    accuracy_m: Mapped[float] = mapped_column(Float, default=0.0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+# ============================================================
+# COMPATIBILITY ALIASES
+# (admin-service and parcel-service import these names)
+# ============================================================
+
+# Alias: Customer -> CustomerProfile
+Customer = CustomerProfile
+
+# Alias: Payment -> Transaction (Transaction holds all payment records)
+Payment = Transaction
+
+# Alias: KYCDocument -> DriverDocument
+KYCDocument = DriverDocument
+
+# Alias: ComplaintStatus -> TicketStatus (Complaint.status uses TicketStatus)
+ComplaintStatus = TicketStatus
+
+# Alias: CouponType -> DiscountType
+CouponType = DiscountType

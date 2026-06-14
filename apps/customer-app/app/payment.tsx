@@ -1,7 +1,6 @@
 /**
  * Payment Screen — Customer App
- * Pixel-perfect UI from stitch: detailed_trip_fare_breakdown
- * All Razorpay/wallet/coupon logic preserved.
+ * Phase 2: Razorpay + Wallet + Reward Points (1pt = ₹1), real breakdown
  */
 import { useState, useEffect } from 'react'
 import {
@@ -12,24 +11,22 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { router, useLocalSearchParams } from 'expo-router'
 import * as WebBrowser from 'expo-web-browser'
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons'
-import axios from 'axios'
-import * as SecureStore from 'expo-secure-store'
-
-const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1'
+import { api } from '../src/api/client'
 
 export default function PaymentScreen() {
-  const { bookingId } = useLocalSearchParams<{ bookingId: string }>()
+  const { bookingId, mode } = useLocalSearchParams<{ bookingId: string; mode?: string }>()
   const [booking, setBooking] = useState<any>(null)
   const [wallet, setWallet] = useState({ balance: 0, reward_points: 0 })
   const [couponCode, setCouponCode] = useState('')
   const [discount, setDiscount] = useState(0)
   const [useWallet, setUseWallet] = useState(false)
+  const [usePoints, setUsePoints] = useState(false)   // 1 point = ₹1
   const [loading, setLoading] = useState(true)
   const [validating, setValidating] = useState(false)
   const [paying, setPaying] = useState(false)
 
   const getHeaders = async () => {
-    const token = await SecureStore.getItemAsync('access_token')
+    const token = await (await import('expo-secure-store')).getItemAsync('access_token')
     return token ? { Authorization: `Bearer ${token}` } : {}
   }
 
@@ -38,22 +35,26 @@ export default function PaymentScreen() {
   }, [])
 
   const load = async () => {
+    // Wallet top-up mode — just load wallet
+    if (mode === 'topup') {
+      try {
+        const res = await api.get('/wallet')
+        setWallet(res.data?.data || { balance: 0, reward_points: 0 })
+      } catch { }
+      setLoading(false)
+      return
+    }
     try {
-      const headers = await getHeaders()
-      const [bRes, wRes] = await Promise.all([
-        axios.get(`${API}/bookings/${bookingId}`, { headers }),
-        axios.get(`${API}/wallet`, { headers }),
+      const [bRes, wRes] = await Promise.allSettled([
+        api.get(`/bookings/${bookingId}`),
+        api.get('/wallet'),
       ])
-      setBooking(bRes.data.data)
-      setWallet(wRes.data.data || { balance: 0, reward_points: 0 })
-    } catch {
-      setBooking({
-        id: bookingId,
-        total_fare: 980,
-        seat_count: 2,
-        trip: { pickup_city: 'Pune', destination_city: 'Mumbai', distance_km: 149 },
-      })
-      setWallet({ balance: 250, reward_points: 120 })
+      if (bRes.status === 'fulfilled') setBooking(bRes.value.data?.data || bRes.value.data)
+      if (wRes.status === 'fulfilled') setWallet(wRes.value.data?.data || { balance: 0, reward_points: 0 })
+      if (bRes.status === 'rejected' && wRes.status === 'rejected') {
+        // Both failed (offline / no bookingId) — show placeholder UI
+        setBooking({ id: bookingId, total_fare: 0, trip: {} })
+      }
     } finally {
       setLoading(false)
     }
@@ -63,69 +64,71 @@ export default function PaymentScreen() {
     if (!couponCode.trim()) return
     setValidating(true)
     try {
-      const headers = await getHeaders()
-      const res = await axios.post(`${API}/coupons/validate`, {
+      const res = await api.post('/coupons/validate', {
         code: couponCode.trim().toUpperCase(),
         booking_amount: booking?.total_fare,
-      }, { headers })
-      setDiscount(res.data.data.discount_amount)
-      Alert.alert('✅ Coupon Applied', `You saved ₹${res.data.data.discount_amount}!`)
+      })
+      setDiscount(res.data?.data?.discount_amount || 0)
+      Alert.alert('✅ Coupon Applied', `You saved ₹${res.data?.data?.discount_amount}!`)
     } catch (e: any) {
       Alert.alert('Invalid Coupon', e?.response?.data?.detail || 'Coupon not found')
       setDiscount(0)
-    } finally {
-      setValidating(false) }
+    } finally { setValidating(false) }
   }
 
   const handlePay = async () => {
     if (!booking) return
     setPaying(true)
 
-    const walletDeduction = useWallet ? Math.min(wallet.balance, finalAmount) : 0
-    const rzpAmount = Math.max(finalAmount - walletDeduction, 0)
+    // ₹1 reward point = ₹1 deduction
+    const pointsDeduction = usePoints ? Math.min(wallet.reward_points, finalAmount) : 0
+    const afterPoints = Math.max(finalAmount - pointsDeduction, 0)
+    const walletDeduction = useWallet ? Math.min(wallet.balance, afterPoints) : 0
+    const rzpAmount = Math.max(afterPoints - walletDeduction, 0)
 
     try {
-      const headers = await getHeaders()
-
-      // If fully covered by wallet
+      // If fully covered by wallet + points
       if (rzpAmount === 0) {
-        await axios.post(`${API}/payments/wallet-pay`, {
-          booking_id: bookingId, amount: finalAmount,
-        }, { headers })
+        await api.post('/payments/wallet-pay', {
+          booking_id: bookingId,
+          amount: finalAmount,
+          wallet_amount: walletDeduction,
+          points_used: pointsDeduction,
+        })
         Alert.alert('✅ Payment Done!', 'Your trip is confirmed.', [
-          { text: 'View Trips', onPress: () => router.replace('/(tabs)/trips') },
+          { text: 'Track Trip', onPress: () => router.replace({ pathname: '/track', params: { bookingId } } as any) },
         ])
         return
       }
 
       // Create Razorpay order
-      const orderRes = await axios.post(`${API}/payments/create-order`, {
+      const orderRes = await api.post('/payments/create-order', {
         booking_id: bookingId,
         amount: rzpAmount,
-      }, { headers })
-      const order = orderRes.data.data
+        wallet_amount: walletDeduction,
+        points_used: pointsDeduction,
+      })
+      const order = orderRes.data?.data
 
-      // Open Razorpay checkout page in browser
-      // (Native Razorpay SDK requires ejecting from Expo — WebBrowser is the managed workflow approach)
-      const checkoutUrl = `${API}/payments/checkout.html`
+      const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1'
+      const checkoutUrl = `${API_URL}/payments/checkout.html`
       const params = new URLSearchParams({
         key_id: order.key_id,
         order_id: order.order_id,
         amount: String(order.amount_paise),
         currency: 'INR',
-        name: 'CabBooking',
-        description: `${booking.trip?.pickup_city} → ${booking.trip?.destination_city}`,
-        callback_url: `${API}/payments/payment-success?booking_id=${bookingId}`,
+        name: 'Swiftify',
+        description: `${booking.trip?.pickup_city || ''} → ${booking.trip?.destination_city || ''}`,
+        callback_url: `${API_URL}/payments/payment-success?booking_id=${bookingId}`,
       })
 
       const result = await WebBrowser.openBrowserAsync(`${checkoutUrl}?${params}`)
 
       if (result.type === 'dismiss') {
-        // Verify payment status on backend
-        const verifyRes = await axios.get(`${API}/payments/status/${order.order_id}`, { headers })
-        if (verifyRes.data.data?.status === 'captured') {
+        const verifyRes = await api.get(`/payments/status/${order.order_id}`)
+        if (verifyRes.data?.data?.status === 'captured') {
           Alert.alert('✅ Payment Successful!', 'Your booking is confirmed.', [
-            { text: 'Track Trip', onPress: () => router.push({ pathname: '/track', params: { bookingId } } as any) },
+            { text: 'Track Trip', onPress: () => router.replace({ pathname: '/track', params: { bookingId } } as any) },
           ])
         } else {
           Alert.alert('Payment Incomplete', 'Please try again or contact support.')
@@ -147,8 +150,11 @@ export default function PaymentScreen() {
 
   const totalFare = booking?.total_fare || 0
   const finalAmount = Math.max(totalFare - discount, 0)
-  const walletUsed = useWallet ? Math.min(wallet.balance, finalAmount) : 0
-  const rzpDue = Math.max(finalAmount - walletUsed, 0)
+  // Reward points: 1pt = ₹1
+  const pointsValue = usePoints ? Math.min(wallet.reward_points, finalAmount) : 0
+  const afterPoints = Math.max(finalAmount - pointsValue, 0)
+  const walletUsed = useWallet ? Math.min(wallet.balance, afterPoints) : 0
+  const rzpDue = Math.max(afterPoints - walletUsed, 0)
 
   return (
     <SafeAreaView style={styles.container}>
@@ -290,7 +296,6 @@ export default function PaymentScreen() {
             <View>
               <Text style={styles.cardTitle}>👛 Use Wallet Balance</Text>
               <Text style={styles.walletBalance}>₹{wallet.balance.toFixed(2)} available</Text>
-              <Text style={styles.rewardPoints}>🌟 {wallet.reward_points} reward points</Text>
             </View>
             <Switch
               value={useWallet}
@@ -304,11 +309,32 @@ export default function PaymentScreen() {
           )}
         </View>
 
+        {/* Reward Points */}
+        <View style={styles.card}>
+          <View style={styles.walletRow}>
+            <View>
+              <Text style={styles.cardTitle}>⭐ Use Reward Points</Text>
+              <Text style={styles.walletBalance}>{wallet.reward_points} pts available</Text>
+              <Text style={styles.rewardPoints}>1 point = ₹1 discount</Text>
+            </View>
+            <Switch
+              value={usePoints}
+              onValueChange={setUsePoints}
+              trackColor={{ false: '#E2E8F0', true: '#F59E0B' }}
+              thumbColor="#FFFFFF"
+            />
+          </View>
+          {usePoints && pointsValue > 0 && (
+            <Text style={styles.discountNote}>✅ {pointsValue} pts (₹{pointsValue}) will be redeemed</Text>
+          )}
+        </View>
+
         {/* Bill Summary */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>💰 Bill Summary</Text>
           <BillRow label="Booking fare" value={`₹${totalFare}`} />
           {discount > 0 && <BillRow label="Coupon discount" value={`-₹${discount}`} green />}
+          {usePoints && pointsValue > 0 && <BillRow label={`Reward pts (${pointsValue})`} value={`-₹${pointsValue}`} green />}
           {useWallet && walletUsed > 0 && <BillRow label="Wallet deduction" value={`-₹${walletUsed.toFixed(2)}`} green />}
           <View style={styles.divider} />
           <BillRow label="Pay via Razorpay" value={`₹${rzpDue.toFixed(2)}`} bold />

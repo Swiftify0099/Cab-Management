@@ -76,8 +76,8 @@ class GeoSearchService:
 
         # Build dynamic WHERE conditions
         conditions = [
-            "d.status = 'online'",
-            "d.kyc_status = 'approved'",
+            "d.status = 'ONLINE'",
+            "d.kyc_status = 'APPROVED'",
             f"ST_DWithin(d.current_location::geography, ST_GeogFromText('{point_wkt}'), {radius_m})",
         ]
 
@@ -102,7 +102,6 @@ class GeoSearchService:
                 d.id::text AS driver_id,
                 d.full_name,
                 d.rating,
-                d.phone,
                 v.vehicle_type,
                 v.make,
                 v.model,
@@ -131,7 +130,6 @@ class GeoSearchService:
                 "driver_id": row["driver_id"],
                 "full_name": row["full_name"],
                 "rating": float(row["rating"] or 5.0),
-                "phone": row["phone"],
                 "vehicle_type": row["vehicle_type"],
                 "vehicle": f"{row['make']} {row['model']} ({row['color']})",
                 "registration_number": row["registration_number"],
@@ -153,15 +151,14 @@ class GeoSearchService:
         heading: float = 0.0,
     ) -> None:
         """Update driver's live location in PostgreSQL + Redis (TTL 30s)."""
-        # Update PostGIS column
-        point_wkt = WKTElement(f"POINT({longitude} {latitude})", srid=4326)
+        # Update PostGIS column — driver_id here is user_id (from current_user.user_id_str)
         await self.db.execute(
             text("""
                 UPDATE drivers
                 SET current_location = ST_GeogFromText(:wkt)
-                WHERE id = :driver_id
+                WHERE user_id = :driver_user_id
             """),
-            {"wkt": f"SRID=4326;POINT({longitude} {latitude})", "driver_id": driver_id}
+            {"wkt": f"SRID=4326;POINT({longitude} {latitude})", "driver_user_id": driver_id}
         )
         await self.db.commit()
 

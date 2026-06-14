@@ -16,6 +16,7 @@ import {
   ScrollView,
   Platform,
 } from 'react-native'
+import * as SplashScreen from 'expo-splash-screen'
 import { LinearGradient } from 'expo-linear-gradient'
 import { Ionicons, Feather } from '@expo/vector-icons'
 import type { PermissionStatus } from '../hooks/useStartupPermissions'
@@ -115,6 +116,11 @@ export function PermissionGate({ status, onRequestAll, isChecking }: Props) {
   const fadeAnim  = useRef(new Animated.Value(0)).current
   const slideAnim = useRef(new Animated.Value(40)).current
   const pulseAnim = useRef(new Animated.Value(1)).current
+
+  // Hide splash screen as soon as the permission UI is ready to show
+  useEffect(() => {
+    SplashScreen.hideAsync().catch(() => {})
+  }, [])
 
   useEffect(() => {
     Animated.parallel([

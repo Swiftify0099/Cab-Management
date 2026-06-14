@@ -85,7 +85,8 @@ class RazorpayService:
             currency="INR",
             status=PaymentStatus.PENDING,
             payment_method=PaymentMethod.RAZORPAY,
-            ledger_type=LedgerType.BOOKING if not booking_id.startswith("wallet_") else LedgerType.WALLET_CREDIT
+            ledger_type=LedgerType.BOOKING if not booking_id.startswith("wallet_") else LedgerType.WALLET_CREDIT,
+            tx_metadata=notes or {}
         )
         self.db.add(tx)
         await self.db.commit()
@@ -152,11 +153,38 @@ class RazorpayService:
         if not tx:
             raise ValueError(f"Transaction not found for order {razorpay_order_id}")
 
-        # Update payment
         tx.gateway_ref = razorpay_payment_id
-        tx.tx_metadata = {"signature": razorpay_signature}
+        tx.tx_metadata["signature"] = razorpay_signature
         tx.status = PaymentStatus.CAPTURED
         await self.db.commit()
+
+        # Deduct wallet and points if specified in metadata
+        wallet_amount = Decimal(str(tx.tx_metadata.get("wallet_amount", "0.0") or "0.0"))
+        points_used = int(float(tx.tx_metadata.get("points_used", "0") or "0"))
+
+        if wallet_amount > 0 or points_used > 0:
+            from app.services.wallet_service import WalletService
+            wallet_service = WalletService(self.db)
+            
+            if points_used > 0:
+                await wallet_service.redeem_points(
+                    customer_id=str(tx.user_id),
+                    points=points_used
+                )
+                await wallet_service.deduct_wallet(
+                    customer_id=str(tx.user_id),
+                    amount=Decimal(str(round(points_used * payment_settings.REWARD_RUPEE_VALUE, 2))),
+                    description=f"Points redeemed for booking {tx.booking_id}",
+                    reference_id=str(tx.booking_id) if tx.booking_id else None
+                )
+
+            if wallet_amount > 0:
+                await wallet_service.deduct_wallet(
+                    customer_id=str(tx.user_id),
+                    amount=wallet_amount,
+                    description=f"Payment for booking {tx.booking_id}",
+                    reference_id=str(tx.booking_id) if tx.booking_id else None
+                )
 
         if tx.booking_id:
             # Update booking status
@@ -184,6 +212,11 @@ class RazorpayService:
                         "points_earned": int(float(tx.amount) * payment_settings.REWARD_POINTS_PER_RUPEE),
                     },
                 )
+
+                # ── Re-notify driver after payment so siren fires ──────────────
+                # The initial INCOMING_TRIP_REQUEST was sent at booking creation (PENDING).
+                # After customer pays, we must re-emit so driver app gets the paid alert.
+                await self._notify_driver_payment_confirmed(booking)
 
         logger.info(
             "Payment captured",
@@ -258,9 +291,9 @@ class RazorpayService:
         driver_earning = Decimal(str(tx.amount)) * Decimal("0.90")
         platform_fee = Decimal(str(tx.amount)) - driver_earning
 
-        # Find driver
+        # Find driver — trip.driver_id is FK to drivers.id (not user_id)
         result = await self.db.execute(
-            select(Driver).where(Driver.user_id == trip.driver_id)
+            select(Driver).where(Driver.id == trip.driver_id)
         )
         driver = result.scalar_one_or_none()
 
@@ -305,3 +338,84 @@ class RazorpayService:
         if customer:
             customer.reward_points = (customer.reward_points or 0) + points
             await self.db.commit()
+
+    async def _notify_driver_payment_confirmed(self, booking: Booking) -> None:
+        """
+        Re-emit INCOMING_TRIP_REQUEST and NEW_PENDING_CUSTOMER to driver after payment.
+        This fires the siren / vibration again so the driver is alerted that a customer
+        has *paid* and is confirmed — not just pending.
+        """
+        from common.models.all_models import Trip, Driver
+        from datetime import datetime
+
+        try:
+            # Load trip
+            trip_result = await self.db.execute(
+                select(Trip).where(Trip.id == booking.trip_id)
+            )
+            trip = trip_result.scalar_one_or_none()
+            if not trip or not trip.driver_id:
+                return
+
+            # Load driver
+            driver_result = await self.db.execute(
+                select(Driver).where(Driver.id == trip.driver_id)
+            )
+            driver = driver_result.scalar_one_or_none()
+            if not driver:
+                return
+
+            driver_user_id = str(driver.user_id)
+            booking_id = str(booking.id)
+
+            # Re-send INCOMING_TRIP_REQUEST (with PAID flag so driver knows it is confirmed)
+            await publish_event(
+                f"driver:{driver_user_id}:events",
+                {
+                    "event": "INCOMING_TRIP_REQUEST",
+                    "booking_id": booking_id,
+                    "pickup_address": booking.pickup_address or "Pickup point",
+                    "destination_address": booking.drop_address or "Destination",
+                    "pickup_lat": trip.pickup_latitude,
+                    "pickup_lng": trip.pickup_longitude,
+                    "seats": booking.seat_count,
+                    "parcel": booking.has_parcel,
+                    "fare": float(booking.total_fare),
+                    "paid": True,  # marks this as a confirmed paid request
+                    "timeout_sec": 40,
+                    "timestamp": datetime.utcnow().isoformat(),
+                },
+            )
+
+            # Also push to driver_scan radar room (so dot appears on radar)
+            await publish_event(
+                f"driver_scan:{str(trip.id)}",
+                {
+                    "event": "NEW_PENDING_CUSTOMER",
+                    "booking_id": booking_id,
+                    "customer_name": "Paid Customer",
+                    "pickup_address": booking.pickup_address or "Pickup",
+                    "pickup_lat": trip.pickup_latitude,
+                    "pickup_lng": trip.pickup_longitude,
+                    "destination_address": booking.drop_address or "Drop",
+                    "destination_lat": trip.destination_latitude,
+                    "destination_lng": trip.destination_longitude,
+                    "seats_required": booking.seat_count,
+                    "parcel": booking.has_parcel,
+                    "from_time": datetime.utcnow().isoformat(),
+                    "to_time": datetime.utcnow().isoformat(),
+                    "women_only": False,
+                    "pickup_distance_km": 0,
+                    "destination_distance_km": 0,
+                    "paid": True,
+                },
+            )
+
+            logger.info(
+                "Driver re-notified after payment",
+                booking_id=booking_id,
+                driver_user_id=driver_user_id,
+            )
+        except Exception as e:
+            logger.warning("Failed to re-notify driver after payment", exc_info=e)
+

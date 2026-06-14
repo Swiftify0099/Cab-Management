@@ -19,12 +19,14 @@ from app.schemas.auth import (
     TokenResponse,
     RefreshTokenRequest,
     LogoutRequest,
+    GoogleSignInRequest,
 )
 from app.services.auth_service import (
     create_user_if_not_exists,
     issue_tokens,
     rotate_refresh_token,
     revoke_refresh_token,
+    create_or_get_google_user,
 )
 from common.database import get_db
 from common.models.all_models import OTPRecord, User, UserRole
@@ -37,6 +39,8 @@ from common.utils.redis_client import (
     blacklist_token,
 )
 from common.utils.security import generate_otp
+from common.middleware.auth import AuthenticatedUser, get_current_user
+from pydantic import BaseModel
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -69,7 +73,18 @@ async def send_otp(
     user = result.scalar_one_or_none()
 
     if user and user.is_active:
-        # Existing active user -> Bypass OTP and auto-verify
+        # Existing active user → Bypass OTP and auto-verify.
+        # Honour the requested role: if the user is logging in via the driver
+        # app (role=driver) but was originally created as a customer, upgrade
+        # the role in DB before issuing the token.  Never allow upgrading to
+        # admin via this path.
+        requested_role = payload.role or UserRole.CUSTOMER
+        if requested_role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+            if user.role != requested_role and user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+                user.role = requested_role
+                await db.flush()
+                logger.info("User role updated on auto-verify", user_id=str(user.id), new_role=requested_role.value)
+
         access_token, refresh_token = await issue_tokens(
             db=db,
             user=user,
@@ -212,8 +227,85 @@ async def verify_otp(
 
 
 # ============================================================
+# GOOGLE SIGN-IN
+# ============================================================
+
+import httpx
+
+@router.post(
+    "/google/verify",
+    response_model=APIResponse[TokenResponse],
+    summary="Verify Google ID Token and login/register",
+)
+async def google_verify(
+    payload: GoogleSignInRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Verify Google id_token with Google tokeninfo endpoint.
+    If valid, get or create the user and issue JWT.
+    """
+    # 1. Verify token with Google
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"https://oauth2.googleapis.com/tokeninfo?id_token={payload.id_token}"
+            )
+            if resp.status_code != 200:
+                raise ValueError("Invalid id_token")
+            token_info = resp.json()
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Google token. Please try again."
+        )
+
+    # 2. Extract info
+    email = token_info.get("email")
+    sub = token_info.get("sub")
+    if not sub:
+        raise HTTPException(status_code=400, detail="Token missing subject ID")
+
+    # 3. Create or get user
+    user, is_new = await create_or_get_google_user(
+        db=db,
+        email=email,
+        sub=sub,
+        role=payload.role or UserRole.CUSTOMER,
+    )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is suspended. Contact support.",
+        )
+
+    # 4. Issue tokens
+    access_token, refresh_token = await issue_tokens(
+        db=db,
+        user=user,
+        device_id=payload.device_id,
+        device_name=payload.device_name,
+    )
+
+    return APIResponse(
+        message="Google Login successful",
+        data=TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            token_type="bearer",
+            user_id=str(user.id),
+            role=user.role.value,
+            is_new_user=is_new,
+            profile_complete=user.is_profile_complete,
+        ),
+    )
+
+
+# ============================================================
 # REFRESH TOKEN
 # ============================================================
+
 
 @router.post(
     "/token/refresh",
@@ -265,3 +357,34 @@ async def logout(
         access_token_jti=payload.access_token_jti,
     )
     return MessageResponse(message="Logged out successfully")
+
+
+# ============================================================
+# DEVICE TOKEN (PUSH NOTIFICATIONS)
+# ============================================================
+
+class DeviceTokenRequest(BaseModel):
+    token: str
+
+@router.post(
+    "/device-token",
+    response_model=MessageResponse,
+    summary="Register FCM Device Token",
+)
+async def register_device_token(
+    payload: DeviceTokenRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Save the FCM push token to the user's profile."""
+    # Since we need to update the User object, we get it from DB
+    result = await db.execute(select(User).where(User.id == current_user.id))
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    user.device_token = payload.token
+    await db.commit()
+    
+    return MessageResponse(message="Device token registered successfully")

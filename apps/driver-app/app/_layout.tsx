@@ -3,18 +3,41 @@
  * ─────────────────────────────────────────────────────────────
  * Wraps all screens with:
  *  1. ErrorBoundary — catches any render crash
- *  2. PermissionGate — requests startup permissions before
+ *  2. SplashScreen — held open until permissions are resolved
+ *  3. PermissionGate — requests startup permissions before
  *     allowing navigation into the app
+ *  4. useDriverNotifications — registered AFTER permissions are
+ *     granted so it never fires before the native modules are ready
  */
+import { useEffect } from 'react'
 import { Stack } from 'expo-router'
+import * as SplashScreen from 'expo-splash-screen'
 import { ErrorBoundary } from '../src/components/ErrorBoundary'
 import { PermissionGate } from '../src/components/PermissionGate'
 import { useStartupPermissions } from '../src/hooks/useStartupPermissions'
+import { useDriverNotifications } from '../src/hooks/useDriverNotifications'
 
+// Keep the splash screen visible while permissions are being checked.
+// This prevents the flash of unstyled content between splash and PermissionGate.
+SplashScreen.preventAutoHideAsync()
+
+// ── Inner component: runs after permissions are confirmed ──────────────────────
+function AppReady() {
+  // P3.2 — Register for push notifications ONLY after app is fully initialised
+  useDriverNotifications()
+
+  // Hide splash now that we have the correct screen to show
+  useEffect(() => {
+    SplashScreen.hideAsync()
+  }, [])
+
+  return <Stack screenOptions={{ headerShown: false }} />
+}
+
+// ── Outer component: handles permission gate ───────────────────────────────────
 function AppWithPermissions() {
   const { status, requestAll } = useStartupPermissions()
 
-  // Show permission gate while checking OR if critical perms not granted
   if (status.isChecking || !status.allCriticalGranted) {
     return (
       <PermissionGate
@@ -25,7 +48,7 @@ function AppWithPermissions() {
     )
   }
 
-  return <Stack screenOptions={{ headerShown: false }} />
+  return <AppReady />
 }
 
 export default function RootLayout() {
@@ -35,4 +58,3 @@ export default function RootLayout() {
     </ErrorBoundary>
   )
 }
-

@@ -1,6 +1,6 @@
 /**
  * Customer App — Activity History (My Trips)
- * Pixel-perfect from stitch: comprehensive_activity_history
+ * Phase 2: 12h cancellation policy, Pay Now → payment screen, useFocusEffect
  */
 import { useState, useCallback } from 'react'
 import {
@@ -9,11 +9,9 @@ import {
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
+import { useFocusEffect } from 'expo-router'
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons'
-import axios from 'axios'
-import * as SecureStore from 'expo-secure-store'
-
-const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1'
+import { api } from '../../src/api/client'
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
   pending:         { label: 'Pending',          color: '#B45309', bg: '#FFFBEB' },
@@ -37,56 +35,59 @@ export default function TripsTab() {
   const [cancelModal, setCancelModal] = useState<string | null>(null)
   const [cancelReason, setCancelReason] = useState('')
   const [cancelling, setCancelling] = useState(false)
-
-  const getAuthHeader = async () => {
-    const token = await SecureStore.getItemAsync('access_token')
-    return token ? { Authorization: `Bearer ${token}` } : {}
-  }
+  // For 12h policy warning
+  const [cancelTarget, setCancelTarget] = useState<any>(null)
 
   const load = useCallback(async () => {
     try {
-      const headers = await getAuthHeader()
-      const res = await axios.get(`${API}/bookings/my-trips`, { headers })
-      setBookings(res.data.data || [])
+      const res = await api.get('/bookings/my-trips')
+      setBookings(res.data?.data || [])
     } catch {
-      setBookings([
-        {
-          id: 'b1', type: 'ride', trip_id: 't1', seat_count: 2, has_parcel: false,
-          base_fare: 960, platform_fee: 20, total_fare: 980,
-          status: 'completed', created_at: new Date(Date.now() - 86400000).toISOString(),
-          trip: { pickup_city: 'Seattle', destination_city: 'Portland', departure_time: new Date(Date.now() - 86400000).toISOString() },
-        },
-        {
-          id: 'b2', type: 'parcel', trip_id: 't2', seat_count: 1, has_parcel: true,
-          base_fare: 480, platform_fee: 10, total_fare: 540,
-          status: 'pending', created_at: new Date().toISOString(),
-          trip: { pickup_city: 'San Francisco', destination_city: 'Los Angeles', departure_time: new Date(Date.now() + 7200000).toISOString() },
-        },
-        {
-          id: 'b3', type: 'ride', trip_id: 't3', seat_count: 1, has_parcel: false,
-          base_fare: 800, platform_fee: 15, total_fare: 815,
-          status: 'completed', created_at: new Date(Date.now() - 172800000).toISOString(),
-          trip: { pickup_city: 'Austin', destination_city: 'Dallas', departure_time: new Date(Date.now() - 172800000).toISOString() },
-        },
-      ])
+      setBookings([])
     } finally {
       setLoading(false); setRefreshing(false)
     }
   }, [])
 
-  useState(() => { load() })
+  // Refresh every time tab comes into focus
+  useFocusEffect(useCallback(() => { load() }, [load]))
 
   const onRefresh = () => { setRefreshing(true); load() }
+
+  // Check 12h cancellation policy
+  const checkCancelPolicy = (booking: any) => {
+    const depTime = booking.trip?.departure_time
+    if (!depTime) return { canCancel: true, withinWindow: false }
+    const hoursUntilDep = (new Date(depTime).getTime() - Date.now()) / (1000 * 60 * 60)
+    const withinWindow = hoursUntilDep <= 12 && hoursUntilDep > 0
+    return { canCancel: true, withinWindow, hoursUntilDep }
+  }
+
+  const openCancelModal = (booking: any) => {
+    const { withinWindow } = checkCancelPolicy(booking)
+    setCancelTarget(booking)
+    if (withinWindow) {
+      Alert.alert(
+        '⚠️ Cancellation Policy',
+        'Your trip departs within 12 hours. A cancellation fee of 20% will be deducted. Remaining amount will be refunded to your wallet.',
+        [
+          { text: 'Go Back', style: 'cancel' },
+          { text: 'Proceed to Cancel', style: 'destructive', onPress: () => setCancelModal(booking.id) },
+        ]
+      )
+    } else {
+      setCancelModal(booking.id)
+    }
+  }
 
   const handleCancel = async () => {
     if (!cancelModal || !cancelReason.trim()) return
     setCancelling(true)
     try {
-      const headers = await getAuthHeader()
-      await axios.post(`${API}/bookings/${cancelModal}/cancel`, { reason: cancelReason }, { headers })
-      setCancelModal(null); setCancelReason('')
+      await api.post(`/bookings/${cancelModal}/cancel`, { reason: cancelReason })
+      setCancelModal(null); setCancelReason(''); setCancelTarget(null)
       load()
-      Alert.alert('Cancelled', 'Your booking has been cancelled.')
+      Alert.alert('✅ Cancelled', 'Your booking has been cancelled. Any refund will appear in your wallet within 24h.')
     } catch (e: any) {
       Alert.alert('Error', e?.response?.data?.detail || 'Cannot cancel this booking')
     } finally { setCancelling(false) }
@@ -180,12 +181,15 @@ export default function TripsTab() {
 
                 {/* Actions */}
                 {booking.status === 'payment_pending' && (
-                  <TouchableOpacity style={styles.payBtn}>
+                  <TouchableOpacity
+                    style={styles.payBtn}
+                    onPress={() => router.push(`/payment?bookingId=${booking.id}` as any)}
+                  >
                     <Text style={styles.payBtnText}>💳 Pay ₹{booking.total_fare} Now</Text>
                   </TouchableOpacity>
                 )}
                 {canCancel && (
-                  <TouchableOpacity onPress={() => setCancelModal(booking.id)} style={styles.cancelBtn}>
+                  <TouchableOpacity onPress={() => openCancelModal(booking)} style={styles.cancelBtn}>
                     <Text style={styles.cancelBtnText}>Cancel Booking</Text>
                   </TouchableOpacity>
                 )}

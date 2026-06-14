@@ -1,7 +1,6 @@
 /**
  * Cab Seat Preference & Confirmation Screen
- * Pixel-perfect match with stitch: cab_seat_preference_selection/screen.png
- * 7-seater illustrated top-down car view with interactive seat selection.
+ * Phase 2: wired to real bookingId from params, ₹ prices
  */
 import React, { useState } from 'react'
 import {
@@ -10,30 +9,32 @@ import {
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons'
-import { router } from 'expo-router'
+import { router, useLocalSearchParams } from 'expo-router'
 
 const { width } = Dimensions.get('window')
 
 type SeatId = 'front' | 'mid1' | 'mid2' | 'mid3' | 'back1' | 'back2'
 
-const SEAT_CONFIG: Record<SeatId, { label: string; price: number; isWindow: boolean }> = {
-  front:  { label: 'Front Seat',       price: 8, isWindow: false },
-  mid1:   { label: 'Mid Left Seat',    price: 3, isWindow: true  },
-  mid2:   { label: 'Mid Center Seat',  price: 0, isWindow: false },
-  mid3:   { label: 'Mid Right Seat',   price: 3, isWindow: true  },
-  back1:  { label: 'Back Left Seat',   price: 3, isWindow: true  },
-  back2:  { label: 'Back Right Seat',  price: 3, isWindow: true  },
+const SEAT_CONFIG: Record<SeatId, { label: string; surcharge: number; isWindow: boolean }> = {
+  front:  { label: 'Front Seat',       surcharge: 8,  isWindow: false },
+  mid1:   { label: 'Mid Left Seat',    surcharge: 3,  isWindow: true  },
+  mid2:   { label: 'Mid Center Seat',  surcharge: 0,  isWindow: false },
+  mid3:   { label: 'Mid Right Seat',   surcharge: 3,  isWindow: true  },
+  back1:  { label: 'Back Left Seat',   surcharge: 3,  isWindow: true  },
+  back2:  { label: 'Back Right Seat',  surcharge: 3,  isWindow: true  },
 }
 
-const BASE_FARE = 172
-
 export default function SeatSelectionScreen() {
+  const { bookingId, fare } = useLocalSearchParams<{ bookingId: string; fare: string }>()
+  // Base fare from booking params; fallback = 0 (unknown until API)
+  const baseFare = parseInt(fare || '0', 10)
+
   const [quietRide, setQuietRide] = useState(true)
   const [tempControl, setTempControl] = useState(true)
   const [selectedSeat, setSelectedSeat] = useState<SeatId>('front')
 
   const config = SEAT_CONFIG[selectedSeat]
-  const totalFare = BASE_FARE + config.price
+  const totalFare = baseFare + config.surcharge
 
   const seatStyle = (id: SeatId) => {
     const active = selectedSeat === id
@@ -200,63 +201,50 @@ export default function SeatSelectionScreen() {
 
           {/* ── Tooltips (outside carBody, absolutely positioned) ── */}
 
-          {/* Front: Extra Legroom tooltip */}
+          {/* +₹8 tooltip */}
           <View style={styles.tooltipFront}>
             <View style={styles.ttBubble}>
-              <Text style={styles.ttPrice}>+$8</Text>
+              <Text style={styles.ttPrice}>+₹8</Text>
               <Text style={styles.ttText}>Extra{'\n'}Legroom</Text>
               <View style={styles.ttTriangle} />
             </View>
-            <MaterialCommunityIcons
-              name="crown"
-              size={26}
-              color="#F59E0B"
-              style={styles.ttCrown}
-            />
+            <MaterialCommunityIcons name="crown" size={26} color="#F59E0B" style={styles.ttCrown} />
           </View>
 
           {/* Mid Left */}
           <View style={[styles.windowBadge, styles.windowBadgeMidLeft]}>
             <Text style={styles.wbText}>Window{'\n'}Seat</Text>
             <View style={styles.wbIcon}>
-              <View style={styles.customWindowIcon}>
-                <View style={styles.customWindowInner} />
-              </View>
+              <View style={styles.customWindowIcon}><View style={styles.customWindowInner} /></View>
             </View>
-            <View style={styles.wbPill}><Text style={styles.wbPillText}>+$3</Text></View>
+            <View style={styles.wbPill}><Text style={styles.wbPillText}>+₹3</Text></View>
           </View>
 
           {/* Mid Right */}
           <View style={[styles.windowBadge, styles.windowBadgeMidRight]}>
             <Text style={styles.wbText}>Window{'\n'}Seat</Text>
             <View style={styles.wbIcon}>
-              <View style={styles.customWindowIcon}>
-                <View style={styles.customWindowInner} />
-              </View>
+              <View style={styles.customWindowIcon}><View style={styles.customWindowInner} /></View>
             </View>
-            <View style={styles.wbPill}><Text style={styles.wbPillText}>+$3</Text></View>
+            <View style={styles.wbPill}><Text style={styles.wbPillText}>+₹3</Text></View>
           </View>
 
           {/* Back Left */}
           <View style={[styles.windowBadge, styles.windowBadgeBackLeft]}>
             <Text style={styles.wbText}>Window{'\n'}Seat</Text>
             <View style={styles.wbIcon}>
-              <View style={styles.customWindowIcon}>
-                <View style={styles.customWindowInner} />
-              </View>
+              <View style={styles.customWindowIcon}><View style={styles.customWindowInner} /></View>
             </View>
-            <View style={styles.wbPill}><Text style={styles.wbPillText}>+$3</Text></View>
+            <View style={styles.wbPill}><Text style={styles.wbPillText}>+₹3</Text></View>
           </View>
 
           {/* Back Right */}
           <View style={[styles.windowBadge, styles.windowBadgeBackRight]}>
             <Text style={styles.wbText}>Window{'\n'}Seat</Text>
             <View style={styles.wbIcon}>
-              <View style={styles.customWindowIcon}>
-                <View style={styles.customWindowInner} />
-              </View>
+              <View style={styles.customWindowIcon}><View style={styles.customWindowInner} /></View>
             </View>
-            <View style={styles.wbPill}><Text style={styles.wbPillText}>+$3</Text></View>
+            <View style={styles.wbPill}><Text style={styles.wbPillText}>+₹3</Text></View>
           </View>
 
         </View>
@@ -304,13 +292,21 @@ export default function SeatSelectionScreen() {
           </View>
           <View style={{ alignItems: 'flex-end' }}>
             <Text style={styles.bottomLabel}>Total Fare:</Text>
-            <Text style={styles.bottomValue}>${totalFare}</Text>
+            <Text style={styles.bottomValue}>
+              {baseFare > 0 ? `₹${totalFare}` : `Base + ₹${config.surcharge} surcharge`}
+            </Text>
           </View>
         </View>
 
         <TouchableOpacity
           style={styles.confirmBtn}
-          onPress={() => router.push('/payment?bookingId=40928' as any)}
+          onPress={() => {
+            if (!bookingId) {
+              router.back()
+              return
+            }
+            router.push(`/payment?bookingId=${bookingId}` as any)
+          }}
           activeOpacity={0.9}
         >
           <Text style={styles.confirmBtnText}>Confirm Selection</Text>

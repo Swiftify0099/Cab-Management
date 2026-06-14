@@ -62,11 +62,13 @@ async def global_exc(request: Request, exc: Exception):
 
 #  Mount all routers 
 from app.api.v1.subscriptions import router as subscription_router
+from app.api.v1.support import router as support_router
 
 app.include_router(trip_router,    prefix="/api/v1/trips",         tags=["Trips"])
 app.include_router(booking_router, prefix="/api/v1/bookings",      tags=["Seat Booking"])
 app.include_router(fare_router,    prefix="/api/v1/bookings/fare", tags=["Fare Engine"])
-app.include_router(subscription_router)
+app.include_router(subscription_router, prefix="/api/v1", tags=["Subscriptions"])
+app.include_router(support_router, prefix="/api/v1", tags=["Support & Ratings"])
 
 
 @app.get("/health", tags=["Health"])

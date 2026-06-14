@@ -118,7 +118,8 @@ interface UseCustomerSocketReturn {
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 export function useCustomerSocket(): UseCustomerSocketReturn {
-  const socketRef = useRef<Socket | null>(null)
+  const socketRef   = useRef<Socket | null>(null)
+  const customerRef = useRef<string>('')   // customer user_id from SecureStore
   const [connected,      setConnected]      = useState(false)
   const [matchFound,     setMatchFound]     = useState<MatchFoundPayload | null>(null)
   const [tripAccepted,   setTripAccepted]   = useState<TripAcceptedPayload | null>(null)
@@ -144,9 +145,22 @@ export function useCustomerSocket(): UseCustomerSocketReturn {
 
       socketRef.current = socket
 
-      socket.on('connect', () => {
+      socket.on('connect', async () => {
         setConnected(true)
         console.log('[CustomerSocket] Connected:', socket!.id)
+        // Load customer user_id and join personal room for event delivery
+        try {
+          const raw = await SecureStore.getItemAsync('user_data')
+          if (raw) {
+            const u = JSON.parse(raw)
+            const cid = u.id || u.user_id || ''
+            customerRef.current = cid
+            if (cid) {
+              socket!.emit('JOIN_CUSTOMER_ROOM', { customer_id: cid })
+              console.log('[CustomerSocket] Joined customer room:', cid)
+            }
+          }
+        } catch { /* ignore */ }
       })
 
       socket.on('disconnect', (reason) => {
@@ -195,7 +209,8 @@ export function useCustomerSocket(): UseCustomerSocketReturn {
     return () => {
       socket?.disconnect()
       socketRef.current = null
-      setConnected(false)
+      // NOTE: Do NOT call setConnected(false) here.
+      // The component is unmounting; state updates after unmount cause crashes in React 19.
     }
   }, [])
 
@@ -230,7 +245,12 @@ export function useCustomerSocket(): UseCustomerSocketReturn {
    * Backend responds with MATCH_FOUND if customer enters a trip's 3KM corridor.
    */
   const sendLocationUpdate = useCallback((lat: number, lng: number) => {
-    socketRef.current?.emit('CUSTOMER_LOCATION_UPDATE', { lat, lng })
+    if (!socketRef.current) return
+    socketRef.current.emit('CUSTOMER_LOCATION_UPDATE', {
+      customer_id: customerRef.current,
+      lat,
+      lng,
+    })
   }, [])
 
   return {

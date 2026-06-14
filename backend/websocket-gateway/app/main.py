@@ -79,7 +79,23 @@ async def _redis_listener():
             # driver:DRIVER_ID:events  room "driver:DRIVER_ID"
             # customer:CUSTOMER_ID:events  room "user:CUSTOMER_ID"
             # trip:TRIP_ID:events  room "trip:TRIP_ID"
+            # driver_scan:TRIP_ID  room "driver_scan:TRIP_ID"  ← only 2 parts
             parts = channel.split(":")
+
+            # Handle 2-part channels (driver_scan:TRIP_ID, corridor:DRIVER_ID)
+            if len(parts) == 2:
+                entity = parts[0]
+                entity_id = parts[1]
+                if entity == "driver_scan":
+                    room = f"driver_scan:{entity_id}"
+                elif entity == "corridor":
+                    room = f"driver:{entity_id}"
+                else:
+                    continue
+                await sio.emit(event_type, data, room=room)
+                logger.debug("Event forwarded", event=event_type, room=room)
+                continue
+
             if len(parts) >= 3:
                 entity = parts[0]   # driver, customer, trip
                 entity_id = parts[1]
@@ -90,16 +106,12 @@ async def _redis_listener():
                     room = f"user:{entity_id}"
                 elif entity == "trip":
                     room = f"trip:{entity_id}"
-                elif entity == "driver_scan":
-                    room = f"driver_scan:{entity_id}"
-                elif entity == "corridor":
-                    # corridor:{driver_user_id} → emit to driver's room
-                    room = f"driver:{entity_id}"
                 else:
                     continue
 
                 await sio.emit(event_type, data, room=room)
                 logger.debug("Event forwarded", event=event_type, room=room)
+
         except Exception as e:
             logger.error("Redis listener error", exc_info=e)
 

@@ -2,6 +2,7 @@
   "expo": {
     "name": "CabBooking",
     "slug": "cabooking-customer",
+    "scheme": "cabooking-customer",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -14,7 +15,8 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.cabooking.customer",
+      "bundleIdentifier": "com.cab.ios.Saaj",
+      "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "We need your location to find nearby drivers and show your pickup/drop points.",
         "NSLocationAlwaysUsageDescription": "Background location is used to track your ride in real-time.",
@@ -23,7 +25,8 @@
       }
     },
     "android": {
-      "package": "com.cabooking.customer",
+      "package": "com.cab.Saaj",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundImage": "./assets/android-icon-background.png",
@@ -39,6 +42,11 @@
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE"
       ],
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyCZw4DVNyJwP85ZeDG1y_x8DLQ7bF8J0EU"
+        }
+      },
       "useNextNotificationsApi": true
     },
     "web": {
@@ -47,14 +55,37 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "We need your location to find nearby drivers and show your pickup/drop points.",
+          "locationAlwaysPermission": "Background location is used to track your ride in real-time."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#2563EB",
+          "sounds": [
+            "./assets/customer_siren.mp3"
+          ]
+        }
+      ],
+      [
+        "react-native-maps",
+        {
+          "googleMapsApiKey": "AIzaSyCZw4DVNyJwP85ZeDG1y_x8DLQ7bF8J0EU"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
     },
     "extra": {
-      "apiUrl": "http://10.0.2.2:8001/api/v1",
-      "wsUrl": "http://10.0.2.2:8010"
+      "apiUrl": "http://192.168.43.157:8001/api/v1",
+      "wsUrl": "http://192.168.43.157:8010"
     }
   }
 }

@@ -455,15 +455,24 @@ async def update_driver_status(
     current_user: AuthenticatedUser = Depends(get_current_active_driver),
     db: AsyncSession = Depends(get_db),
 ):
-    """Marks driver as online or offline. Used by home tab toggle."""
+    """Marks driver as online or offline. Auto-creates profile if none exists."""
     driver_result = await db.execute(
         select(Driver).where(Driver.user_id == current_user.id)
     )
     driver = driver_result.scalar_one_or_none()
     if not driver:
-        raise HTTPException(status_code=404, detail="Driver profile not found")
+        # Auto-create a minimal driver profile so the status toggle works
+        # even before the driver has completed full onboarding.
+        import uuid as _uuid
+        driver = Driver(
+            id=_uuid.uuid4(),
+            user_id=current_user.id,
+            full_name=current_user.phone,  # placeholder until onboarding
+            license_number=f"PENDING-{str(current_user.id)[:8].upper()}",
+            is_active=False,
+        )
+        db.add(driver)
 
-    # Store status in a simple way — extend model if needed
     driver.is_active = (data.status == "online")
     await db.commit()
 
@@ -472,3 +481,403 @@ async def update_driver_status(
         data={"status": data.status},
     )
 
+
+# ============================================================
+# MY VEHICLES  (called by create-trip Step 2)
+# ============================================================
+
+@router.get(
+    "/my-vehicles",
+    response_model=APIResponse[list],
+    summary="Get driver's registered vehicles",
+)
+async def get_my_vehicles(
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+    db: AsyncSession = Depends(get_db),
+):
+    """Returns driver's vehicles with verification status derived from KYC."""
+    driver_result = await db.execute(
+        select(Driver).where(Driver.user_id == current_user.id)
+    )
+    driver = driver_result.scalar_one_or_none()
+    if not driver:
+        return APIResponse(message="No vehicles found", data=[])
+
+    vehicle_result = await db.execute(
+        select(Vehicle).where(Vehicle.driver_id == driver.id)
+    )
+    vehicles = vehicle_result.scalars().all()
+
+    # A vehicle is considered "verified" when driver KYC is approved
+    is_verified = driver.kyc_status.value == "approved"
+
+    data = [
+        {
+            "id": str(v.id),
+            "vehicle_type": v.vehicle_type.value,
+            "make": v.make,
+            "model": v.model,
+            "year": v.year,
+            "color": v.color,
+            "registration_number": v.registration_number,
+            "seat_capacity": v.seat_capacity,
+            "parcel_capable": v.parcel_capable,
+            "parcel_capacity_kg": v.parcel_capacity_kg,
+            "has_ac": v.has_ac,
+            "insurance_expiry": str(v.insurance_expiry) if v.insurance_expiry else None,
+            "pollution_expiry": str(v.pollution_expiry) if v.pollution_expiry else None,
+            "photos": [get_file_url(p) for p in (v.photos or [])],
+            "is_verified": is_verified,
+        }
+        for v in vehicles
+    ]
+    return APIResponse(message="Vehicles fetched", data=data)
+
+
+# ============================================================
+# VERIFICATION STATUS  (called by driver profile badge)
+# ============================================================
+
+@router.get(
+    "/verification/status",
+    response_model=APIResponse[dict],
+    summary="Get driver KYC and vehicle verification status",
+)
+async def get_verification_status(
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+    db: AsyncSession = Depends(get_db),
+):
+    """Returns comprehensive verification status for the driver profile badge."""
+    driver_result = await db.execute(
+        select(Driver).where(Driver.user_id == current_user.id)
+    )
+    driver = driver_result.scalar_one_or_none()
+    if not driver:
+        return APIResponse(
+            message="Verification status",
+            data={
+                "kyc_status": "pending",
+                "vehicle_status": "not_registered",
+                "documents": [],
+                "all_verified": False,
+            },
+        )
+
+    # Documents
+    docs_result = await db.execute(
+        select(DriverDocument).where(DriverDocument.driver_id == driver.id)
+    )
+    docs = docs_result.scalars().all()
+
+    # Vehicle
+    vehicle_result = await db.execute(
+        select(Vehicle).where(Vehicle.driver_id == driver.id)
+    )
+    vehicle = vehicle_result.scalar_one_or_none()
+
+    doc_list = [
+        {
+            "doc_type": d.doc_type.value,
+            "is_verified": d.is_verified,
+            "rejection_reason": d.rejection_reason,
+            "uploaded": True,
+        }
+        for d in docs
+    ]
+
+    required_docs = [r.value for r in REQUIRED_DOCUMENTS]
+    uploaded_types = {d.doc_type.value for d in docs}
+    missing_docs = [r for r in required_docs if r not in uploaded_types]
+
+    return APIResponse(
+        message="Verification status fetched",
+        data={
+            "kyc_status": driver.kyc_status.value,
+            "vehicle_status": "registered" if vehicle else "not_registered",
+            "documents": doc_list,
+            "required_documents": required_docs,
+            "missing_documents": missing_docs,
+            "all_docs_uploaded": len(missing_docs) == 0,
+            "all_verified": driver.kyc_status.value == "approved" and vehicle is not None,
+            "rating": float(driver.rating or 5.0),
+        },
+    )
+
+
+# ============================================================
+# DRIVER STATS  (called by driver dashboard)
+# ============================================================
+
+@router.get(
+    "/stats",
+    response_model=APIResponse[dict],
+    summary="Get driver stats — rating, trips, earnings",
+)
+async def get_driver_stats(
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+    db: AsyncSession = Depends(get_db),
+):
+    """Returns real-time driver stats aggregated from trips and bookings."""
+    from common.models.all_models import Booking, BookingStatus, Trip
+    from datetime import date, timedelta
+
+    driver_result = await db.execute(
+        select(Driver).where(Driver.user_id == current_user.id)
+    )
+    driver = driver_result.scalar_one_or_none()
+    if not driver:
+        return APIResponse(
+            message="Stats",
+            data={
+                "rating": 5.0,
+                "trips_today": 0,
+                "distance_km_today": 0,
+                "earnings_today": 0,
+                "earnings_this_month": 0,
+                "total_trips": 0,
+                "total_earnings": 0,
+            },
+        )
+
+    today = date.today()
+    month_start = today.replace(day=1)
+
+    # Get all trips for this driver
+    trips_result = await db.execute(
+        select(Trip).where(
+            Trip.driver_id == driver.id,
+            Trip.status.in_(["completed", "in_progress"]),
+        )
+    )
+    all_trips = trips_result.scalars().all()
+    trip_ids = [t.id for t in all_trips]
+
+    trips_today = sum(
+        1 for t in all_trips
+        if t.departure_time and t.departure_time.date() == today
+    )
+    distance_today = sum(
+        (t.distance_km or 0) for t in all_trips
+        if t.departure_time and t.departure_time.date() == today
+    )
+
+    earnings_today = 0.0
+    earnings_month = 0.0
+    total_earnings = float(driver.total_earnings or 0)
+
+    if trip_ids:
+        bookings_result = await db.execute(
+            select(Booking).where(
+                Booking.trip_id.in_(trip_ids),
+                Booking.status == BookingStatus.COMPLETED,
+            )
+        )
+        for booking in bookings_result.scalars().all():
+            fare = float(booking.total_fare or 0)
+            trip = next((t for t in all_trips if t.id == booking.trip_id), None)
+            if trip and trip.departure_time:
+                dep = trip.departure_time.date()
+                if dep == today:
+                    earnings_today += fare
+                if dep >= month_start:
+                    earnings_month += fare
+
+    return APIResponse(
+        message="Stats fetched",
+        data={
+            "rating": float(driver.rating or 5.0),
+            "trips_today": trips_today,
+            "distance_km_today": round(distance_today, 1),
+            "earnings_today": round(earnings_today, 2),
+            "earnings_this_month": round(earnings_month, 2),
+            "total_trips": driver.total_trips or len(all_trips),
+            "total_earnings": total_earnings,
+        },
+    )
+
+
+# ============================================================
+# FCM TOKEN  (called on app startup by useDriverNotifications)
+# ============================================================
+
+from pydantic import BaseModel as _FCMBaseModel
+
+class _FCMTokenUpdate(_FCMBaseModel):
+    fcm_token: str
+
+
+@router.post(
+    "/fcm-token",
+    response_model=APIResponse[dict],
+    summary="Register FCM push token for the driver",
+)
+async def register_fcm_token(
+    data: _FCMTokenUpdate,
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stores the FCM device token on the User record for push notifications."""
+    from common.models.all_models import User
+    user_result = await db.execute(
+        select(User).where(User.id == current_user.id)
+    )
+    user = user_result.scalar_one_or_none()
+    if user:
+        user.device_token = data.fcm_token
+        await db.commit()
+    return APIResponse(message="FCM token registered", data={"registered": True})
+
+
+# ============================================================
+# DRIVER TRANSACTIONS  (called by earnings tab)
+# ============================================================
+
+@router.get(
+    "/transactions",
+    response_model=APIResponse[dict],
+    summary="Get paginated driver earnings transactions",
+)
+async def get_driver_transactions(
+    page: int = 1,
+    page_size: int = 20,
+    period: str = "all",  # today | week | month | all
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+    db: AsyncSession = Depends(get_db),
+):
+    """Returns paginated list of completed bookings that generated earnings for this driver."""
+    from common.models.all_models import Booking, BookingStatus, Trip
+    from datetime import date, timedelta
+
+    driver_result = await db.execute(
+        select(Driver).where(Driver.user_id == current_user.id)
+    )
+    driver = driver_result.scalar_one_or_none()
+    if not driver:
+        return APIResponse(message="Transactions", data={"items": [], "total": 0, "page": page})
+
+    today = date.today()
+    date_filter = None
+    if period == "today":
+        date_filter = today
+    elif period == "week":
+        date_filter = today - timedelta(days=7)
+    elif period == "month":
+        date_filter = today.replace(day=1)
+
+    trips_result = await db.execute(
+        select(Trip).where(
+            Trip.driver_id == driver.id,
+            Trip.status.in_(["completed", "in_progress"]),
+        )
+    )
+    all_trips = trips_result.scalars().all()
+    trip_map = {t.id: t for t in all_trips}
+
+    if date_filter:
+        filtered_trips = {
+            t.id for t in all_trips
+            if t.departure_time and (
+                t.departure_time.date() >= date_filter
+                if period in ("week", "month")
+                else t.departure_time.date() == date_filter
+            )
+        }
+    else:
+        filtered_trips = set(trip_map.keys())
+
+    if not filtered_trips:
+        return APIResponse(message="Transactions", data={"items": [], "total": 0, "page": page})
+
+    bookings_result = await db.execute(
+        select(Booking).where(
+            Booking.trip_id.in_(list(filtered_trips)),
+            Booking.status == BookingStatus.COMPLETED,
+        )
+    )
+    bookings = bookings_result.scalars().all()
+    total = len(bookings)
+
+    # Paginate
+    offset = (page - 1) * page_size
+    paginated = bookings[offset: offset + page_size]
+
+    items = []
+    for b in paginated:
+        trip = trip_map.get(b.trip_id)
+        items.append({
+            "id": str(b.id),
+            "trip_id": str(b.trip_id),
+            "amount": float(b.total_fare or 0),
+            "seats": b.seat_count,
+            "has_parcel": b.has_parcel,
+            "pickup": trip.pickup_latitude if trip else None,
+            "destination": trip.destination_latitude if trip else None,
+            "departure_time": trip.departure_time.isoformat() if trip and trip.departure_time else None,
+            "status": b.status.value,
+            "created_at": b.created_at.isoformat() if b.created_at else None,
+        })
+
+    return APIResponse(
+        message="Transactions fetched",
+        data={
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "pages": (total + page_size - 1) // page_size,
+        },
+    )
+
+
+
+# ============================================================
+# CLAIM DRIVER ROLE  — fixes users whose DB role is still
+#  'customer' because they registered before the role-fix.
+#  Called automatically on driver app startup.
+# ============================================================
+
+from common.middleware.auth import get_current_user  # noqa: E402 (avoid circular at module level)
+
+@router.post(
+    "/claim-driver-role",
+    response_model=APIResponse[dict],
+    summary="Upgrade current user's role to 'driver' (safe, non-admin only)",
+)
+async def claim_driver_role(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Idempotent endpoint: if the authenticated user's role is not driver
+    (and not admin/super_admin), update it to driver in the DB.
+    Called by the driver app on startup to heal old tokens with wrong roles.
+    """
+    from common.models.all_models import User as _User
+
+    # Never downgrade admins
+    if current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+        return APIResponse(
+            message="Role unchanged",
+            data={"role": current_user.role.value, "updated": False},
+        )
+
+    if current_user.role == UserRole.DRIVER:
+        return APIResponse(
+            message="Already a driver",
+            data={"role": "driver", "updated": False},
+        )
+
+    # Upgrade customer → driver
+    result = await db.execute(select(_User).where(_User.id == current_user.id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.role = UserRole.DRIVER
+    await db.commit()
+    logger.info("User role upgraded to driver via claim-driver-role", user_id=str(user.id))
+
+    return APIResponse(
+        message="Role upgraded to driver",
+        data={"role": "driver", "updated": True},
+    )

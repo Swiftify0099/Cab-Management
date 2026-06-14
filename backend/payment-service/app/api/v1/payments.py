@@ -4,6 +4,7 @@ Routes: payments, wallet, coupons, referrals, rewards.
 """
 from decimal import Decimal
 from typing import Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Request, status
 from fastapi.responses import HTMLResponse
@@ -25,6 +26,8 @@ router = APIRouter()
 class CreateOrderRequest(BaseModel):
     booking_id: str
     amount: float = Field(..., gt=0, description="Amount in rupees")
+    wallet_amount: float = Field(0.0, description="Amount deducted from wallet")
+    points_used: int = Field(0, description="Reward points redeemed")
 
 
 class CapturePaymentRequest(BaseModel):
@@ -70,6 +73,10 @@ async def create_payment_order(
         booking_id=request.booking_id,
         amount_rupees=Decimal(str(request.amount)),
         customer_id=current_user.user_id_str,
+        notes={
+            "wallet_amount": str(request.wallet_amount),
+            "points_used": str(request.points_used)
+        }
     )
     return SuccessResponse(success=True, message="Order created", data=order)
 
@@ -110,26 +117,56 @@ async def wallet_pay(
     wallet_service = WalletService(db)
     
     try:
+        # Redeem points if used
+        if request.points_used > 0:
+            await wallet_service.redeem_points(
+                customer_id=current_user.user_id_str,
+                points=request.points_used
+            )
+            # After redeeming, deduct the equivalent amount for the booking
+            from app.core.config import payment_settings
+            await wallet_service.deduct_wallet(
+                customer_id=current_user.user_id_str,
+                amount=Decimal(str(round(request.points_used * payment_settings.REWARD_RUPEE_VALUE, 2))),
+                description=f"Points redeemed for booking {request.booking_id}",
+                reference_id=request.booking_id
+            )
+
         # Deduct wallet
-        await wallet_service.deduct_wallet(
-            customer_id=current_user.user_id_str,
-            amount=Decimal(str(request.amount)),
-            description=f"Payment for booking {request.booking_id}",
-            reference_id=request.booking_id
-        )
+        if request.wallet_amount > 0:
+            await wallet_service.deduct_wallet(
+                customer_id=current_user.user_id_str,
+                amount=Decimal(str(request.wallet_amount)),
+                description=f"Payment for booking {request.booking_id}",
+                reference_id=request.booking_id
+            )
         
         # Update booking status to PAID
         from common.models.all_models import Booking, BookingStatus
         from sqlalchemy import select
-        result = await db.execute(select(Booking).where(Booking.id == request.booking_id))
-        booking = result.scalar_one_or_none()
+        try:
+            booking_uuid = UUID(request.booking_id)
+        except (ValueError, AttributeError):
+            booking_uuid = None
+        booking = None
+        if booking_uuid:
+            result = await db.execute(select(Booking).where(Booking.id == booking_uuid))
+            booking = result.scalar_one_or_none()
         if booking:
             booking.status = BookingStatus.PAID
             await db.commit()
-            
+
+            # Re-notify driver so siren fires (same as Razorpay capture path)
+            try:
+                razorpay_svc = RazorpayService(db)
+                await razorpay_svc._notify_driver_payment_confirmed(booking)
+            except Exception as _e:
+                pass  # Non-critical — don't fail payment if driver notify fails
+
         return SuccessResponse(success=True, message="Payment done via wallet", data={})
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
 
 
 @router.get(

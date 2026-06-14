@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from common.database import get_db
 from common.middleware.auth import get_current_user, get_current_active_driver, AuthenticatedUser
 from common.schemas.base import SuccessResponse
+from common.utils.storage import save_upload, ALLOWED_IMAGE_TYPES, get_file_url
 from app.services.parcel_service import ParcelService
 
 router = APIRouter()
@@ -137,6 +138,51 @@ async def track_parcel(
         raise HTTPException(status_code=404, detail=str(e))
 
 
+class ParcelRespondRequest(BaseModel):
+    parcel_id: str
+    action: str  # accept | decline
+
+
+# ============================================================
+# DRIVER ROUTES
+# ============================================================
+
+@router.get(
+    "/parcels/driver-requests",
+    response_model=SuccessResponse,
+    summary="Driver: Get pending parcel requests",
+)
+async def get_driver_requests(
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    service = ParcelService(db)
+    requests = await service.get_driver_requests(current_user.user_id_str)
+    return SuccessResponse(success=True, message="OK", data=requests)
+
+
+@router.post(
+    "/parcels/respond",
+    response_model=SuccessResponse,
+    summary="Driver: Accept or decline a parcel request",
+)
+async def respond_to_parcel(
+    request: ParcelRespondRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    service = ParcelService(db)
+    try:
+        result = await service.respond_to_request(
+            parcel_id=request.parcel_id,
+            driver_id=current_user.user_id_str,
+            action=request.action,
+        )
+        return SuccessResponse(success=True, message=f"Parcel {request.action}ed", data=result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.post(
     "/parcels/status",
     response_model=SuccessResponse,
@@ -189,4 +235,48 @@ async def get_parcel(
         "is_fragile": parcel.is_fragile,
         "is_urgent": parcel.is_urgent,
         "delivery_otp": parcel.delivery_otp if str(parcel.customer_id) == current_user.user_id_str else None,
+        "parcel_photo": get_file_url(parcel.parcel_photo) if getattr(parcel, 'parcel_photo', None) else None,
     })
+
+
+@router.post(
+    "/parcels/{parcel_id}/photo",
+    response_model=SuccessResponse,
+    summary="Upload a photo for a parcel",
+)
+async def upload_parcel_photo(
+    parcel_id: str,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    from sqlalchemy import select
+    from uuid import UUID
+    from common.models.all_models import Parcel
+    
+    result = await db.execute(select(Parcel).where(Parcel.id == UUID(parcel_id)))
+    parcel = result.scalar_one_or_none()
+    if not parcel:
+        raise HTTPException(status_code=404, detail="Parcel not found")
+        
+    if str(parcel.customer_id) != current_user.user_id_str:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    relative_path = await save_upload(
+        file=file,
+        category="parcels",
+        allowed_types=ALLOWED_IMAGE_TYPES,
+        max_size=5 * 1024 * 1024,
+    )
+
+    # Note: Ensure parcel model has 'parcel_photo' column. Assuming it does or will be added dynamically in DB.
+    # Currently assuming setting an attribute if missing. 
+    setattr(parcel, 'parcel_photo', relative_path)
+    await db.commit()
+
+    return SuccessResponse(
+        success=True,
+        message="Photo uploaded successfully",
+        data={"photo_url": get_file_url(relative_path)},
+    )
+

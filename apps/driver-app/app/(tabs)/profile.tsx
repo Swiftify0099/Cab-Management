@@ -1,17 +1,19 @@
 /**
- * Driver Profile + Settings Hub — pixel-perfect from stitch:
- * driver_profile_settings + driver_ratings_overview_ui
+ * Driver Profile + Settings Hub
+ * Phase 4 (P4.3): Document verification status from API, real driver stats, dynamic rating.
  */
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   View, Text, TouchableOpacity, ScrollView,
-  StyleSheet, StatusBar, Alert,
+  StyleSheet, StatusBar, Alert, ActivityIndicator, RefreshControl,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { router } from 'expo-router'
+import { useFocusEffect } from 'expo-router'
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import { api } from '../../src/api/client'
 
 const MENU_SECTIONS = [
   {
@@ -51,16 +53,102 @@ const MENU_SECTIONS = [
   },
 ]
 
+// ── Verification status shape ─────────────────────────────────────────────────
+type VerifyStatus = 'verified' | 'pending' | 'not_submitted' | 'rejected'
+
+interface DriverProfile {
+  full_name?: string
+  initials?: string
+  rating?: number
+  total_trips?: number
+  monthly_trips?: number
+  total_earnings?: number
+  kyc_status?: VerifyStatus
+  vehicle_status?: VerifyStatus
+  is_online?: boolean
+}
+
 const RATING_BARS = [
-  { star: 5, count: 142, pct: 0.85 },
-  { star: 4, count: 18, pct: 0.11 },
-  { star: 3, count: 5, pct: 0.03 },
-  { star: 2, count: 1, pct: 0.006 },
+  { star: 5, count: 0, pct: 0 },
+  { star: 4, count: 0, pct: 0 },
+  { star: 3, count: 0, pct: 0 },
+  { star: 2, count: 0, pct: 0 },
   { star: 1, count: 0, pct: 0 },
 ]
 
+function verificationBadge(kyc: VerifyStatus, vehicle: VerifyStatus) {
+  if (kyc === 'verified' && vehicle === 'verified') {
+    return { label: '✅ KYC Verified', bg: 'rgba(59,130,246,0.2)', border: '#3B82F6', text: '#93C5FD' }
+  }
+  if (kyc === 'pending' || vehicle === 'pending') {
+    return { label: '⏳ Verification Pending', bg: 'rgba(234,179,8,0.2)', border: '#EAB308', text: '#FDE68A' }
+  }
+  if (kyc === 'rejected' || vehicle === 'rejected') {
+    return { label: '❌ Action Required', bg: 'rgba(239,68,68,0.2)', border: '#EF4444', text: '#FCA5A5' }
+  }
+  return { label: '📋 Docs Not Submitted', bg: 'rgba(148,163,184,0.2)', border: '#94A3B8', text: '#CBD5E1' }
+}
+
 export default function ProfileScreen() {
   const [activeTab, setActiveTab] = useState<'profile' | 'ratings'>('profile')
+  const [driverProfile, setDriverProfile] = useState<DriverProfile>({})
+  const [ratingBars, setRatingBars] = useState(RATING_BARS)
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+
+  const loadProfile = useCallback(async () => {
+    try {
+      const [profileRes, verifyRes] = await Promise.allSettled([
+        api.get('/driver/me'),
+        api.get('/driver/verification/status'),
+      ])
+
+      const pData = profileRes.status === 'fulfilled'
+        ? (profileRes.value.data?.data || profileRes.value.data || {})
+        : {}
+
+      const vData = verifyRes.status === 'fulfilled'
+        ? (verifyRes.value.data?.data || verifyRes.value.data || {})
+        : {}
+
+      const name = pData.full_name || 'Driver'
+      const initials = name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)
+
+      setDriverProfile({
+        full_name: name,
+        initials,
+        rating: pData.rating || pData.average_rating || 0,
+        total_trips: pData.total_trips || 0,
+        monthly_trips: pData.monthly_trips || 0,
+        total_earnings: pData.total_earnings || 0,
+        kyc_status: vData.kyc_status || 'not_submitted',
+        vehicle_status: vData.vehicle_status || 'not_submitted',
+        is_online: pData.is_online ?? false,
+      })
+
+      // Build rating bars from API
+      if (pData.rating_distribution) {
+        const dist = pData.rating_distribution
+        const total = Object.values(dist as Record<string, number>).reduce((a: number, b: number) => a + b, 0) || 1
+        setRatingBars(
+          [5, 4, 3, 2, 1].map(star => ({
+            star,
+            count: dist[star] || 0,
+            pct: (dist[star] || 0) / (total as number),
+          }))
+        )
+      }
+    } catch (e) {
+      console.warn('[DriverProfile] Load error:', e)
+    } finally {
+      setLoading(false)
+      setRefreshing(false)
+    }
+  }, [])
+
+  useFocusEffect(useCallback(() => { loadProfile() }, [loadProfile]))
+
+  const onRefresh = () => { setRefreshing(true); loadProfile() }
 
   const handleLogout = async () => {
     Alert.alert('Logout', 'Are you sure you want to logout?', [
@@ -74,6 +162,11 @@ export default function ProfileScreen() {
     ])
   }
 
+  const badge = verificationBadge(
+    driverProfile.kyc_status || 'not_submitted',
+    driverProfile.vehicle_status || 'not_submitted',
+  )
+
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor="#090C15" />
@@ -83,18 +176,33 @@ export default function ProfileScreen() {
         <SafeAreaView edges={['top']}>
           <View style={styles.bannerContent}>
             <View style={styles.avatar}>
-              <Text style={styles.avatarInitials}>RD</Text>
+              {loading
+                ? <ActivityIndicator color="#fff" />
+                : <Text style={styles.avatarInitials}>{driverProfile.initials || 'RD'}</Text>
+              }
             </View>
             <View style={styles.bannerInfo}>
-              <Text style={styles.driverName}>Rahul D.</Text>
+              <Text style={styles.driverName}>
+                {loading ? '...' : (driverProfile.full_name || 'Driver')}
+              </Text>
               <View style={styles.ratingRow}>
                 <Ionicons name="star" size={14} color="#EAB308" />
-                <Text style={styles.ratingText}>4.9 · 166 trips</Text>
+                <Text style={styles.ratingText}>
+                  {driverProfile.rating?.toFixed(1) || '—'} · {driverProfile.total_trips || 0} trips
+                </Text>
               </View>
               <View style={styles.badgeRow}>
-                <View style={styles.badge}><Text style={styles.badgeText}>✅ KYC Verified</Text></View>
-                <View style={[styles.badge, { backgroundColor: 'rgba(16,185,129,0.2)', borderColor: '#10B981' }]}>
-                  <Text style={[styles.badgeText, { color: '#10B981' }]}>🟢 Online</Text>
+                {/* P4.3 — Dynamic KYC/Vehicle verification badge */}
+                <TouchableOpacity
+                  style={[styles.badge, { backgroundColor: badge.bg, borderColor: badge.border }]}
+                  onPress={() => router.push('/kyc/status' as any)}
+                >
+                  <Text style={[styles.badgeText, { color: badge.text }]}>{badge.label}</Text>
+                </TouchableOpacity>
+                <View style={[styles.badge, { backgroundColor: driverProfile.is_online ? 'rgba(16,185,129,0.2)' : 'rgba(100,116,139,0.2)', borderColor: driverProfile.is_online ? '#10B981' : '#64748B' }]}>
+                  <Text style={[styles.badgeText, { color: driverProfile.is_online ? '#10B981' : '#94A3B8' }]}>
+                    {driverProfile.is_online ? '🟢 Online' : '⚫ Offline'}
+                  </Text>
                 </View>
               </View>
             </View>
@@ -121,15 +229,20 @@ export default function ProfileScreen() {
         </SafeAreaView>
       </LinearGradient>
 
-      <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+      <ScrollView
+        style={styles.scroll}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 40 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      >
         {activeTab === 'profile' ? (
           <>
-            {/* Stats Row */}
+            {/* Stats Row — real data */}
             <View style={styles.statsRow}>
               {[
-                { label: 'Total Trips', value: '166', icon: 'car-side' },
-                { label: 'This Month', value: '24', icon: 'calendar' },
-                { label: 'Earnings', value: '₹22k', icon: 'cash' },
+                { label: 'Total Trips', value: loading ? '…' : String(driverProfile.total_trips ?? 0), icon: 'car-side' },
+                { label: 'This Month', value: loading ? '…' : String(driverProfile.monthly_trips ?? 0), icon: 'calendar' },
+                { label: 'Earnings', value: loading ? '…' : `₹${((driverProfile.total_earnings || 0) / 1000).toFixed(0)}k`, icon: 'cash' },
               ].map((s, i) => (
                 <View key={i} style={styles.statCard}>
                   <MaterialCommunityIcons name={s.icon as any} size={22} color="#3B82F6" />
@@ -168,22 +281,20 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           </>
         ) : (
-          /* Ratings Tab */
+          /* Ratings Tab — dynamic from API */
           <View style={styles.ratingsWrap}>
-            {/* Big Rating */}
             <View style={styles.ratingBig}>
-              <Text style={styles.ratingBigNum}>4.9</Text>
+              <Text style={styles.ratingBigNum}>{driverProfile.rating?.toFixed(1) || '—'}</Text>
               <View style={styles.ratingStars}>
                 {[1, 2, 3, 4, 5].map(s => (
-                  <Ionicons key={s} name="star" size={20} color="#EAB308" />
+                  <Ionicons key={s} name={s <= Math.round(driverProfile.rating || 0) ? 'star' : 'star-outline'} size={20} color="#EAB308" />
                 ))}
               </View>
-              <Text style={styles.ratingBigSub}>Based on 166 ratings</Text>
+              <Text style={styles.ratingBigSub}>Based on {driverProfile.total_trips || 0} ratings</Text>
             </View>
 
-            {/* Breakdown bars */}
             <View style={styles.ratingBars}>
-              {RATING_BARS.map(rb => (
+              {ratingBars.map(rb => (
                 <View key={rb.star} style={styles.ratingBarRow}>
                   <Text style={styles.ratingBarStar}>{rb.star} ★</Text>
                   <View style={styles.ratingBarTrack}>
@@ -198,7 +309,6 @@ export default function ProfileScreen() {
               ))}
             </View>
 
-            {/* Review Tags */}
             <Text style={styles.menuSectionTitle}>Passenger Feedback</Text>
             <View style={styles.tagRow}>
               {['Safe Driver', 'Punctual', 'Clean Vehicle', 'Helpful', 'Great Music', 'Smooth Ride'].map(tag => (

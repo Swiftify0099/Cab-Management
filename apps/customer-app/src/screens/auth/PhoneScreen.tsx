@@ -1,27 +1,49 @@
 /**
  * OTP Phone Entry Screen — Customer App
- * Pixel-perfect UI from stitch: mobile_otp_login
- * All auth logic preserved.
+ * Auth: Mobile OTP (primary) + Google Sign-In (secondary via expo-auth-session)
  */
 import React, { useState, useRef } from 'react'
 import {
   View, Text, TextInput, TouchableOpacity,
   KeyboardAvoidingView, Platform, ActivityIndicator,
-  Animated, StyleSheet, StatusBar,
+  Animated, StyleSheet, StatusBar, Alert,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
 import { Feather, FontAwesome5 } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
+import * as WebBrowser from 'expo-web-browser'
+import * as Google from 'expo-auth-session/providers/google'
 import { authApi } from '../../api/client'
 import { useAuthStore } from '../../store/auth.store'
+
+WebBrowser.maybeCompleteAuthSession()
 
 export default function PhoneScreen() {
   const [phone, setPhone] = useState('')
   const [loading, setLoading] = useState(false)
+  const [googleLoading, setGoogleLoading] = useState(false)
   const [error, setError] = useState('')
   const shakeAnim = useRef(new Animated.Value(0)).current
   const login = useAuthStore((s) => s.login)
+
+  // Google OAuth via expo-auth-session
+  const [request, response, promptAsync] = Google.useAuthRequest({
+    webClientId:     process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
+    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
+    iosClientId:     process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
+  })
+
+  // Handle Google auth response
+  React.useEffect(() => {
+    if (response?.type === 'success') {
+      const idToken = response.authentication?.idToken
+      if (idToken) handleGoogleToken(idToken)
+    } else if (response?.type === 'error') {
+      setGoogleLoading(false)
+      Alert.alert('Google Sign-In Failed', response.error?.message || 'Try again')
+    }
+  }, [response])
 
   const shake = () => {
     Animated.sequence([
@@ -45,17 +67,17 @@ export default function PhoneScreen() {
     try {
       const res = await authApi.sendOtp(fullPhone)
       const data = res.data.data
-      
+
       if (data.is_existing && data.tokens) {
         await login(
-          { 
-            userId: data.tokens.user_id, 
-            role: data.tokens.role, 
-            phone: fullPhone, 
-            isNewUser: data.tokens.is_new_user, 
-            profileComplete: data.tokens.profile_complete 
+          {
+            userId: data.tokens.user_id,
+            role: data.tokens.role,
+            phone: fullPhone,
+            isNewUser: data.tokens.is_new_user,
+            profileComplete: data.tokens.profile_complete,
           },
-          data.tokens.access_token, 
+          data.tokens.access_token,
           data.tokens.refresh_token
         )
         if (!data.tokens.profile_complete) {
@@ -72,6 +94,52 @@ export default function PhoneScreen() {
       shake()
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleGoogleSignIn = async () => {
+    if (!process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID) {
+      Alert.alert(
+        'Google Sign-In Not Configured',
+        'Add EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID to your .env file to enable Google login.',
+        [{ text: 'OK' }]
+      )
+      return
+    }
+    setGoogleLoading(true)
+    try {
+      await promptAsync()
+      // Response handled in useEffect above
+    } catch {
+      setGoogleLoading(false)
+      Alert.alert('Error', 'Could not open Google Sign-In.')
+    }
+  }
+
+  const handleGoogleToken = async (idToken: string) => {
+    try {
+      const res = await authApi.googleSignIn(idToken)
+      const data = res.data?.data
+      await login(
+        {
+          userId: data.user_id,
+          role: data.role || 'customer',
+          phone: data.phone || '',
+          isNewUser: data.is_new_user,
+          profileComplete: data.profile_complete,
+        },
+        data.access_token,
+        data.refresh_token,
+      )
+      if (!data.profile_complete) {
+        router.replace('/auth/profile-setup')
+      } else {
+        router.replace('/(tabs)')
+      }
+    } catch (e: any) {
+      Alert.alert('Sign-In Error', e?.response?.data?.detail || 'Google sign-in failed. Please try OTP.')
+    } finally {
+      setGoogleLoading(false)
     }
   }
 
@@ -144,28 +212,37 @@ export default function PhoneScreen() {
                 start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
                 style={styles.otpGradient}
               >
-                {loading ? (
-                  <ActivityIndicator color="white" />
-                ) : (
-                  <Text style={styles.otpBtnText}>Get OTP</Text>
-                )}
+                {loading
+                  ? <ActivityIndicator color="white" />
+                  : <Text style={styles.otpBtnText}>Get OTP</Text>
+                }
               </LinearGradient>
             </TouchableOpacity>
 
-            {/* Social Login */}
-            <Text style={styles.orText}>Or continue with social media</Text>
-
-            <View style={styles.socialRow}>
-              <TouchableOpacity style={[styles.socialBtn, { backgroundColor: '#FFFFFF' }]}>
-                <FontAwesome5 name="apple" size={28} color="black" />
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.socialBtn, { backgroundColor: '#FFFFFF' }]}>
-                <Text style={styles.googleG}>G</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.socialBtn, { backgroundColor: '#1877F2', borderColor: '#FFFFFF', borderWidth: 2 }]}>
-                <FontAwesome5 name="facebook-f" size={26} color="white" />
-              </TouchableOpacity>
+            {/* Divider */}
+            <View style={styles.dividerRow}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>or continue with</Text>
+              <View style={styles.dividerLine} />
             </View>
+
+            {/* Google Sign-In — only active option */}
+            <TouchableOpacity
+              style={styles.googleBtn}
+              onPress={handleGoogleSignIn}
+              disabled={googleLoading}
+              activeOpacity={0.85}
+            >
+              {googleLoading
+                ? <ActivityIndicator color="#4285F4" />
+                : (
+                  <>
+                    <Text style={styles.googleG}>G</Text>
+                    <Text style={styles.googleBtnText}>Continue with Google</Text>
+                  </>
+                )
+              }
+            </TouchableOpacity>
 
             {/* Terms */}
             <Text style={styles.terms}>
@@ -219,21 +296,25 @@ const styles = StyleSheet.create({
 
   // OTP Button
   otpBtn: {
-    width: '100%', borderRadius: 50, overflow: 'hidden', marginBottom: 36,
+    width: '100%', borderRadius: 50, overflow: 'hidden', marginBottom: 28,
     shadowColor: '#A855F7', shadowOpacity: 0.35, shadowRadius: 12, elevation: 6,
   },
   otpGradient: { height: 60, alignItems: 'center', justifyContent: 'center' },
   otpBtnText: { color: '#FFFFFF', fontSize: 20, fontWeight: '700' },
 
-  orText: { color: '#9CA3AF', fontSize: 15, marginBottom: 24 },
+  // Divider
+  dividerRow: { flexDirection: 'row', alignItems: 'center', width: '100%', marginBottom: 20 },
+  dividerLine: { flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.12)' },
+  dividerText: { color: '#6B7280', fontSize: 14, marginHorizontal: 12 },
 
-  socialRow: { flexDirection: 'row', gap: 20, marginBottom: 'auto' as any },
-  socialBtn: {
-    width: 64, height: 64, borderRadius: 32,
-    alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 8, elevation: 5,
+  // Google Button
+  googleBtn: {
+    width: '100%', height: 56, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#FFFFFF', borderRadius: 28, gap: 12, marginBottom: 'auto' as any,
+    shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 8, elevation: 4,
   },
-  googleG: { color: '#3B82F6', fontSize: 28, fontWeight: '900' },
+  googleG: { color: '#4285F4', fontSize: 22, fontWeight: '900' },
+  googleBtnText: { color: '#1E293B', fontSize: 16, fontWeight: '600' },
 
   terms: {
     color: '#6B7280', textAlign: 'center', fontSize: 13, lineHeight: 20,

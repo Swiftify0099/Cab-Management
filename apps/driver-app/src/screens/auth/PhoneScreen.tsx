@@ -18,6 +18,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
 import { authApi } from '../../api/client'
+import * as SecureStore from 'expo-secure-store'
 
 export default function DriverPhoneScreen() {
   const [phone, setPhone] = useState('')
@@ -47,7 +48,31 @@ export default function DriverPhoneScreen() {
     const fullPhone = `+91${cleaned}`
 
     try {
-      await authApi.sendOtp(fullPhone)
+      const res = await authApi.sendOtp(fullPhone)
+      const responseData = res.data?.data
+
+      // If backend auto-verified an existing user and returned tokens directly,
+      // store them and navigate without going through the OTP screen.
+      if (responseData?.is_existing && responseData?.tokens) {
+        const { access_token, refresh_token, user_id, role, profile_complete } = responseData.tokens
+        await SecureStore.setItemAsync('access_token', access_token)
+        await SecureStore.setItemAsync('refresh_token', refresh_token)
+        await SecureStore.setItemAsync('driver_user', JSON.stringify({
+          userId: user_id,
+          phone: fullPhone,
+          role,
+          isNewUser: false,
+          profileComplete: profile_complete,
+        }))
+        if (!profile_complete) {
+          router.replace('/onboarding/profile')
+        } else {
+          router.replace('/(tabs)')
+        }
+        return
+      }
+
+      // Normal flow — navigate to OTP entry screen
       router.push({ pathname: '/auth/otp', params: { phone: fullPhone } })
     } catch (e: any) {
       const msg = e?.response?.data?.detail || 'Failed to send OTP'

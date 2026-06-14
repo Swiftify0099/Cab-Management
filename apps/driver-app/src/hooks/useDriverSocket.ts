@@ -23,11 +23,22 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
 import { Vibration } from 'react-native'
 import { io, Socket } from 'socket.io-client'
-import AsyncStorage from '@react-native-async-storage/async-storage'
+import * as SecureStore from 'expo-secure-store'
 import * as Location from 'expo-location'
+import * as Notifications from 'expo-notifications'
 
-const WS_URL = (process.env.EXPO_PUBLIC_WS_URL || 'http://10.0.2.2:80').replace(/\/api\/v1$/, '')
-const API    = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1'
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+})
+
+// Port 8001 = local_gateway.py (all services in one process)
+// In production, override EXPO_PUBLIC_WS_URL to point to the WebSocket gateway
+const WS_URL = (process.env.EXPO_PUBLIC_WS_URL || 'http://10.0.2.2:8001').replace(/\/api\/v1$/, '')
+const API    = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:8001/api/v1'
 
 // ─── Types ────────────────────────────────────────────────────
 export interface IncomingRequest {
@@ -118,8 +129,11 @@ interface UseDriverSocketReturn {
   emitParcelPicked:    (parcelId: string, tripId: string) => void
   emitParcelDelivered: (parcelId: string, tripId: string) => void
 
-  // Scan room
   joinDriverScan:      (tripId: string) => void
+
+  // Generic Event Listeners
+  on:  (event: string, callback: (...args: any[]) => void) => void
+  off: (event: string, callback?: (...args: any[]) => void) => void
 }
 
 // ─── Hook ─────────────────────────────────────────────────────
@@ -140,6 +154,16 @@ export function useDriverSocket(): UseDriverSocketReturn {
       Vibration.cancel()
       // Finite pattern: 200ms buzz, 100ms pause — 3 times (NOT repeating)
       Vibration.vibrate([0, 200, 100, 200, 100, 200])
+
+      Notifications.scheduleNotificationAsync({
+        content: {
+          title: "New Ride Request! 🚕",
+          body: "A passenger needs a ride. Tap to view.",
+          sound: true,
+          priority: Notifications.AndroidNotificationPriority.HIGH,
+        },
+        trigger: null,
+      })
     } catch (e) {
       console.warn('[DriverSocket] Vibration failed:', e)
     }
@@ -155,12 +179,12 @@ export function useDriverSocket(): UseDriverSocketReturn {
     let socket: Socket | null = null
 
     const connect = async () => {
-      const token = await AsyncStorage.getItem('access_token')
+      const token = await SecureStore.getItemAsync('access_token')
       if (!token) return
 
-      // Load driver ID
+      // Load driver ID from SecureStore (stored as JSON string during OTP login)
       try {
-        const raw = await AsyncStorage.getItem('user_data')
+        const raw = await SecureStore.getItemAsync('user_data')
         if (raw) {
           const u = JSON.parse(raw)
           driverIdRef.current = u.id || u.driver_id || 'unknown'
@@ -178,6 +202,14 @@ export function useDriverSocket(): UseDriverSocketReturn {
 
       socketRef.current = socket
 
+      // Request notification permission once (needed for Android 13+ to show alerts)
+      try {
+        const { status: notifStatus } = await Notifications.requestPermissionsAsync()
+        if (notifStatus !== 'granted') {
+          console.warn('[DriverSocket] Notification permission not granted')
+        }
+      } catch { /* ignore on simulators */ }
+
       socket.on('connect', () => {
         setConnected(true)
         console.log('[DriverSocket] Connected:', socket!.id)
@@ -191,16 +223,48 @@ export function useDriverSocket(): UseDriverSocketReturn {
         console.log('[DriverSocket] Disconnected')
       })
 
-      socket.on('INCOMING_TRIP_REQUEST', (data: IncomingRequest) => {
+      socket.on('INCOMING_TRIP_REQUEST', (data: any) => {
         console.log('[DriverSocket] Incoming request:', data.booking_id)
-        setIncomingRequest(data)
+        // Normalize: backend may send nested {trip:{from,to,...}} or flat fields
+        const normalized: IncomingRequest = {
+          booking_id: data.booking_id,
+          driver_id:  data.driver_id || '',
+          trip: data.trip || {
+            from:           data.pickup_address || data.from || '',
+            to:             data.destination_address || data.to || '',
+            departure_time: data.timestamp || new Date().toISOString(),
+            distance_km:    data.distance_km || 0,
+            seats:          data.seats || data.seat_count || 1,
+            has_parcel:     data.parcel || data.has_parcel || false,
+            fare:           data.fare || 0,
+          },
+          customer:    data.customer || { id: '' },
+          timeout_sec: data.timeout_sec || 40,
+          paid:        data.paid || false,
+        } as any
+        setIncomingRequest(normalized)
         playSiren()
       })
 
       // New events
-      socket.on('TRIP_REQUEST', (data: IncomingRequest) => {
+      socket.on('TRIP_REQUEST', (data: any) => {
         console.log('[DriverSocket] TRIP_REQUEST:', data.booking_id)
-        setIncomingRequest(data)
+        const normalized: IncomingRequest = {
+          booking_id: data.booking_id,
+          driver_id:  data.driver_id || '',
+          trip: data.trip || {
+            from:           data.pickup_address || '',
+            to:             data.destination_address || '',
+            departure_time: data.timestamp || new Date().toISOString(),
+            distance_km:    data.distance_km || 0,
+            seats:          data.seats || 1,
+            has_parcel:     data.parcel || false,
+            fare:           data.fare || 0,
+          },
+          customer:    data.customer || { id: '' },
+          timeout_sec: data.timeout_sec || 40,
+        } as any
+        setIncomingRequest(normalized)
         playSiren()
       })
 
@@ -382,6 +446,18 @@ export function useDriverSocket(): UseDriverSocketReturn {
     socketRef.current?.emit('join_driver_scan', { trip_id: tripId })
   }, [])
 
+  const on = useCallback((event: string, callback: (...args: any[]) => void) => {
+    socketRef.current?.on(event, callback)
+  }, [])
+
+  const off = useCallback((event: string, callback?: (...args: any[]) => void) => {
+    if (callback) {
+      socketRef.current?.off(event, callback)
+    } else {
+      socketRef.current?.off(event)
+    }
+  }, [])
+
   // ── Phase 2: Corridor customer helpers ──────────────────────
   const clearCorridorCustomers = useCallback(() => {
     setCorridorCustomers([])
@@ -412,5 +488,7 @@ export function useDriverSocket(): UseDriverSocketReturn {
     emitParcelPicked,
     emitParcelDelivered,
     joinDriverScan,
+    on,
+    off,
   }
 }

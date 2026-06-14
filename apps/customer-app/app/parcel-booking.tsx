@@ -13,7 +13,8 @@ import { LinearGradient } from 'expo-linear-gradient'
 import { router } from 'expo-router'
 import axios from 'axios'
 import * as SecureStore from 'expo-secure-store'
-
+import * as ImagePicker from 'expo-image-picker'
+import { Image } from 'react-native'
 const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1'
 
 const PARCEL_TYPES = [
@@ -31,6 +32,19 @@ export default function ParcelBookingScreen() {
   const [parcelType, setParcelType] = useState('electronics')
   const [weight, setWeight] = useState(5.5)
   const [loading, setLoading] = useState(false)
+  const [imageUri, setImageUri] = useState<string | null>(null)
+
+  const pickImage = async () => {
+    let result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 0.5,
+    });
+    if (!result.canceled) {
+      setImageUri(result.assets[0].uri);
+    }
+  };
 
   const weightPercent = ((weight / 20) * 100).toFixed(0)
 
@@ -42,30 +56,21 @@ export default function ParcelBookingScreen() {
   const estimatedFare = Math.round(80 + weight * 34)
   const estimatedDays = weight <= 5 ? 1 : weight <= 12 ? 2 : 3
 
-  const handleBook = async () => {
+  const handleBook = () => {
     if (!pickup.trim() || !dropoff.trim()) {
       Alert.alert('Missing Info', 'Please enter pickup and drop-off locations.')
       return
     }
-    setLoading(true)
-    try {
-      const headers = await getAuthHeader()
-      await axios.post(`${API}/parcels/booking`, {
-        pickup_address: pickup.trim(),
-        dropoff_address: dropoff.trim(),
-        parcel_type: parcelType,
-        weight_kg: weight,
-        is_fragile: parcelType === 'fragile',
-      }, { headers })
-      Alert.alert('📦 Parcel Booked!', `Your parcel will be delivered in ${estimatedDays} day(s).`, [
-        { text: 'Track It', onPress: () => router.push('/(tabs)/parcels' as any) }
-      ])
-    } catch (e: any) {
-      // Demo mode — show success
-      Alert.alert('📦 Parcel Booked!', `Your parcel will be delivered in ${estimatedDays} day(s). (Demo)`, [
-        { text: 'Track It', onPress: () => router.push('/(tabs)/parcels' as any) }
-      ])
-    } finally { setLoading(false) }
+    router.push({
+      pathname: '/book/cab',
+      params: {
+        parcelSearch: 'true',
+        pickup,
+        weight: weight.toString(),
+        parcelType,
+        parcelImageUri: imageUri || '',
+      }
+    } as any)
   }
 
   return (
@@ -144,9 +149,15 @@ export default function ParcelBookingScreen() {
 
           {/* Upload Image */}
           <Text style={styles.sectionTitle}>Upload Parcel Image</Text>
-          <TouchableOpacity style={styles.uploadBox}>
-            <Feather name="camera" size={32} color="#9CA3AF" style={{ marginBottom: 8 }} />
-            <Text style={styles.uploadText}>Tap to upload or take photo</Text>
+          <TouchableOpacity style={styles.uploadBox} onPress={pickImage}>
+            {imageUri ? (
+              <Image source={{ uri: imageUri }} style={{ width: '100%', height: '100%', borderRadius: 12 }} />
+            ) : (
+              <>
+                <Feather name="camera" size={32} color="#9CA3AF" style={{ marginBottom: 8 }} />
+                <Text style={styles.uploadText}>Tap to upload or take photo</Text>
+              </>
+            )}
           </TouchableOpacity>
 
           {/* Weight Calculator */}

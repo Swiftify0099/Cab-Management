@@ -63,6 +63,10 @@ export const authApi = {
 
   logout: (refresh_token: string, access_token_jti?: string) =>
     api.post('/auth/logout', { refresh_token, access_token_jti }),
+
+  // Google Sign-In: sends id_token to backend for Firebase verification
+  googleSignIn: (id_token: string) =>
+    api.post('/auth/google/verify', { id_token, role: 'customer' }),
 }
 
 // Profile API
@@ -82,6 +86,95 @@ export const profileApi = {
     }),
 
   getAddresses: () => api.get('/profile/me/addresses'),
-  addAddress: (data: object) => api.post('/profile/me/addresses', data),
+  addAddress: (data: {
+    label: string
+    address: string
+    address_type?: string
+    latitude?: number
+    longitude?: number
+    is_default?: boolean
+  }) => api.post('/profile/me/addresses', {
+    label: data.label,
+    address_type: data.address_type || 'general',
+    full_address: data.address,
+    latitude: data.latitude || 0,
+    longitude: data.longitude || 0,
+    is_default: data.is_default || false,
+  }),
+  updateAddress: (id: string, data: {
+    label?: string
+    address?: string
+    address_type?: string
+    latitude?: number
+    longitude?: number
+  }) =>
+    api.patch(`/profile/me/addresses/${id}`, {
+      label: data.label,
+      address_type: data.address_type,
+      full_address: data.address,
+      latitude: data.latitude,
+      longitude: data.longitude,
+    }),
   deleteAddress: (id: string) => api.delete(`/profile/me/addresses/${id}`),
+}
+
+// Route API (saved pickup+drop pairs)
+export const routeApi = {
+  getRoutes: () => api.get('/profile/me/routes'),
+  addRoute: (data: {
+    route_name: string
+    pickup_label: string
+    pickup_address: string
+    pickup_lat: number
+    pickup_lon: number
+    drop_label: string
+    drop_address: string
+    drop_lat: number
+    drop_lon: number
+  }) => api.post('/profile/me/routes', data),
+  deleteRoute: (id: string) => api.delete(`/profile/me/routes/${id}`),
+}
+
+// Wallet API
+export const walletApi = {
+  getBalance: () => api.get('/wallet'),
+  getTransactions: (params?: { type?: string; page?: number; limit?: number }) =>
+    api.get('/wallet/transactions', { params }),
+  getRefunds: () => api.get('/wallet/refunds'),
+  topUp: (data: { amount: number }) => api.post('/wallet/topup', data),
+  walletPay: (data: { booking_id: string; amount: number }) =>
+    api.post('/payments/wallet-pay', data),
+}
+
+// Parcel API
+export const parcelApi = {
+  getMyParcels: () => api.get('/parcels/my'),
+  getParcel: (id: string) => api.get(`/parcels/${id}`),
+  createBooking: (data: {
+    trip_id: string
+    sender_name: string
+    sender_phone: string
+    receiver_name: string
+    receiver_phone: string
+    receiver_address: string
+    weight_kg: number
+    description: string
+    fragile: boolean
+    urgent: boolean
+    declared_value?: number
+  }) => api.post('/parcels', data),
+  uploadPhoto: (id: string, formData: FormData) =>
+    api.post(`/parcels/${id}/photo`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+}
+
+// Booking API
+export const bookingApi = {
+  getMyTrips: () => api.get('/bookings/my-trips'),
+  getBooking: (id: string) => api.get(`/bookings/${id}`),
+  cancelBooking: (id: string, reason: string) =>
+    api.post(`/bookings/${id}/cancel`, { reason }),
+  createPendingBooking: (data: object) => api.post('/bookings/pending', data),
+  deletePendingBooking: (id: string) => api.delete(`/bookings/pending/${id}`),
 }

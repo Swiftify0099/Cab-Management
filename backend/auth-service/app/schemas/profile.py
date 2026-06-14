@@ -80,18 +80,21 @@ class CustomerProfileResponse(BaseModel):
 # ============================================================
 
 class AddressCreate(BaseModel):
+    address_type: Optional[str] = Field("general", max_length=20, description="general, pickup, or drop")
     label: str = Field(..., min_length=1, max_length=100, description="Home, Office, etc.")
     latitude: float = Field(..., ge=-90, le=90)
     longitude: float = Field(..., ge=-180, le=180)
-    pincode: str = Field(..., min_length=4, max_length=10)
-    district: str = Field(..., min_length=2, max_length=100)
-    state: str = Field(..., min_length=2, max_length=100)
+    # pincode / district / state are optional: map-based picker doesn't collect these
+    pincode: str = Field("000000", min_length=0, max_length=10)
+    district: str = Field("Unknown", min_length=0, max_length=100)
+    state: str = Field("Unknown", min_length=0, max_length=100)
     landmark: Optional[str] = Field(None, max_length=255)
     full_address: str = Field(..., min_length=5, max_length=500)
     is_default: bool = False
 
 
 class AddressUpdate(BaseModel):
+    address_type: Optional[str] = Field(None, max_length=20)
     label: Optional[str] = None
     latitude: Optional[float] = Field(None, ge=-90, le=90)
     longitude: Optional[float] = Field(None, ge=-180, le=180)
@@ -108,15 +111,48 @@ class AddressResponse(BaseModel):
 
     id: uuid.UUID
     user_id: uuid.UUID
+    address_type: Optional[str] = "general"
     label: str
     latitude: float
     longitude: float
-    pincode: str
-    district: str
-    state: str
-    landmark: Optional[str]
+    pincode: Optional[str] = None
+    district: Optional[str] = None
+    state: Optional[str] = None
+    landmark: Optional[str] = None
     full_address: str
     is_default: bool
+
+
+# ============================================================
+# SAVED ROUTES
+# ============================================================
+
+class SavedRouteCreate(BaseModel):
+    route_name: str = Field(..., min_length=2, max_length=150)
+    pickup_label: str = Field(..., min_length=1, max_length=100)
+    pickup_address: str = Field(..., min_length=5, max_length=500)
+    pickup_lat: float = Field(..., ge=-90, le=90)
+    pickup_lon: float = Field(..., ge=-180, le=180)
+    drop_label: str = Field(..., min_length=1, max_length=100)
+    drop_address: str = Field(..., min_length=5, max_length=500)
+    drop_lat: float = Field(..., ge=-90, le=90)
+    drop_lon: float = Field(..., ge=-180, le=180)
+
+
+class SavedRouteResponse(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: uuid.UUID
+    user_id: uuid.UUID
+    route_name: str
+    pickup_label: str
+    pickup_address: str
+    pickup_lat: float
+    pickup_lon: float
+    drop_label: str
+    drop_address: str
+    drop_lat: float
+    drop_lon: float
 
 
 # ============================================================

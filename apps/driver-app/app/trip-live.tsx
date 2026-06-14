@@ -24,9 +24,10 @@ import { Feather, Ionicons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { router, useLocalSearchParams } from 'expo-router'
 import AsyncStorage from '@react-native-async-storage/async-storage'
-import axios from 'axios'
+import { api } from '../src/api/client'
 import { useDriverSocket } from '../src/hooks/useDriverSocket'
 import type { PendingCustomer, CorridorCustomerPayload } from '../src/hooks/useDriverSocket'
+import IncomingRequestScreen from './incoming-request'
 
 const { width, height } = Dimensions.get('window')
 const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1'
@@ -154,10 +155,8 @@ export default function TripLiveScreen() {
 
     const loadCorridorCustomers = async () => {
       try {
-        const token = await AsyncStorage.getItem('access_token')
-        const headers = token ? { Authorization: `Bearer ${token}` } : {}
-        const res = await axios.get(`${API}/matching/corridor-customers`, {
-          params: { trip_id: tripId }, headers,
+        const res = await api.get(`/matching/corridor-customers`, {
+          params: { trip_id: tripId },
         })
         const rawData = res.data?.data || []
         const customers: CorridorCustomerPayload[] = rawData.map((c: any) => ({
@@ -185,10 +184,8 @@ export default function TripLiveScreen() {
   // ─── Load scan results from API ───────────────────────────────────────────
   const loadScanResults = useCallback(async () => {
     try {
-      const token = await AsyncStorage.getItem('access_token')
-      const headers = token ? { Authorization: `Bearer ${token}` } : {}
-      const res = await axios.get(`${API}/matching/scan`, {
-        params: { trip_id: tripId }, headers,
+      const res = await api.get(`/matching/scan`, {
+        params: { trip_id: tripId },
       })
       const customers: PendingCustomer[] = res.data?.data || []
       customers.forEach(pc => addPendingCustomerDot(pc))
@@ -265,13 +262,11 @@ export default function TripLiveScreen() {
     }
     setActionLoading(true)
     try {
-      const token = await AsyncStorage.getItem('access_token')
-      const headers = token ? { Authorization: `Bearer ${token}` } : {}
-      await axios.post(`${API}/matching/respond`, {
+      await api.post(`/matching/respond`, {
         booking_id:         selected.bookingId,
         accepted:           true,
         pending_booking_id: selected.id,   // same for pending-based dots
-      }, { headers })
+      })
     } catch (_) { /* demo - ignore */ }
     setAcceptedIds(prev => [...prev, selected.id])
     setSeatsUsed(prev => prev + selected.seats)
@@ -285,13 +280,11 @@ export default function TripLiveScreen() {
     if (!selected) return
     setActionLoading(true)
     try {
-      const token = await AsyncStorage.getItem('access_token')
-      const headers = token ? { Authorization: `Bearer ${token}` } : {}
-      await axios.post(`${API}/matching/respond`, {
+      await api.post(`/matching/respond`, {
         booking_id:         selected.bookingId,
         accepted:           false,
         pending_booking_id: selected.id,   // DB-persist rejection
-      }, { headers })
+      })
     } catch (_) { /* demo - ignore */ }
     setRejectedIds(prev => [...prev, selected.id])
     setDots(prev => prev.map(d => d.id === selected.id ? { ...d, rejected: true } : d))
@@ -310,6 +303,14 @@ export default function TripLiveScreen() {
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor="#060B18" />
+
+      {/* Incoming Request Overlay — shown when a customer books a seat */}
+      {incomingRequest && (
+        <IncomingRequestScreen
+          request={incomingRequest}
+          onDismiss={clearRequest}
+        />
+      )}
 
       {/* Futuristic Deep Gradient Background */}
       <LinearGradient

@@ -1,187 +1,400 @@
-import React, { useEffect, useState } from 'react';
+/**
+ * Live Trip Tracking Screen — Customer App
+ * Phase 3 (P3.1): Animates driver marker in real-time from LOCATION_UPDATE WebSocket events.
+ * Shows ETA, arrival alert, SOS, share + call actions.
+ */
+import React, { useEffect, useRef, useState, useCallback } from 'react'
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  SafeAreaView,
-  StatusBar,
-  StyleSheet
-} from 'react-native';
-import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { router, useLocalSearchParams } from 'expo-router';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
-import { useCustomerSocket } from '../src/hooks/useCustomerSocket';
-import axios from 'axios';
-import * as SecureStore from 'expo-secure-store';
-
-const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1';
+  View, Text, TouchableOpacity, StyleSheet, Animated, Linking, Share, Alert,
+} from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
+import { StatusBar } from 'expo-status-bar'
+import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
+import { router, useLocalSearchParams } from 'expo-router'
+import MapView, { Marker, PROVIDER_GOOGLE, Polyline } from 'react-native-maps'
+import { useCustomerSocket, LocationUpdatePayload, ArrivalAlertPayload } from '../src/hooks/useCustomerSocket'
+import { api } from '../src/api/client'
 
 export default function TrackTripScreen() {
-  const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
-  const [booking, setBooking] = useState<any>(null);
-  
-  const { connected, joinTrip } = useCustomerSocket();
+  const { bookingId, tripId, isParcel } = useLocalSearchParams<{ bookingId?: string; tripId?: string; isParcel?: string }>()
+  const [booking, setBooking] = useState<any>(null)
+
+  // ── WebSocket hook ──────────────────────────────────────────────────────────
+  const {
+    connected, joinTrip, leaveTrip,
+    driverLocation, arrivalAlert,
+    clearArrivalAlert, on, off,
+  } = useCustomerSocket()
+
+  // ── Animated driver marker position ────────────────────────────────────────
+  const mapRef = useRef<MapView>(null)
+  const prevLocation = useRef<{ latitude: number; longitude: number } | null>(null)
+  const animLat = useRef(new Animated.Value(19.076)).current
+  const animLng = useRef(new Animated.Value(72.877)).current
+  const [markerPos, setMarkerPos] = useState<{ latitude: number; longitude: number } | null>(null)
+
+  // ── ETA state ──────────────────────────────────────────────────────────────
+  const [eta, setEta] = useState<number | null>(null)
+  const [distKm, setDistKm] = useState<number | null>(null)
+  const [tripStatus, setTripStatus] = useState<'waiting' | 'started' | 'completed'>('waiting')
+
+  // ── Load booking details ────────────────────────────────────────────────────
+  const fetchBooking = useCallback(async () => {
+    if (isParcel === 'true') {
+      // For parcels, we just use a generic fallback for now or we could fetch trip details
+      setBooking({
+        driver: { full_name: 'Courier Driver', rating: 4.9, vehicle: 'Delivery Van', registration: '—' },
+        eta_minutes: null,
+      })
+      return
+    }
+    
+    if (!bookingId) return
+    try {
+      const res = await api.get(`/bookings/${bookingId}`)
+      const data = res.data?.data || res.data
+      setBooking(data)
+    } catch {
+      // Fallback: show minimal driver info
+      setBooking({
+        driver: { full_name: 'Your Driver', rating: 4.8, vehicle: 'Sedan', registration: '—' },
+        eta_minutes: null,
+      })
+    }
+  }, [bookingId, isParcel])
+
+  // ── Join WebSocket room + subscribe to events ──────────────────────────────
+  useEffect(() => {
+    fetchBooking()
+  }, [fetchBooking])
 
   useEffect(() => {
-    if (connected && bookingId) {
-      joinTrip(bookingId);
+    const roomToJoin = tripId || bookingId
+    if (connected && roomToJoin) {
+      joinTrip(roomToJoin)
+      console.log('[TrackScreen] Joined trip room:', roomToJoin)
     }
-    fetchBooking();
-  }, [connected, bookingId]);
+    return () => {
+      if (roomToJoin) leaveTrip(roomToJoin)
+    }
+  }, [connected, bookingId, tripId, joinTrip, leaveTrip])
 
-  const fetchBooking = async () => {
-    try {
-      const token = await SecureStore.getItemAsync('access_token');
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await axios.get(`${API}/bookings/${bookingId || 'demo-1'}`, { headers });
-      setBooking(res.data.data);
-    } catch {
-      // Demo data fallback
-      setBooking({
-        driver: { full_name: 'Alex Chen', rating: 4.9, vehicle: 'Tesla Model 3, CA', registration: '8GHD52' },
-        eta_minutes: 14
-      });
+  // ── Animate driver marker on LOCATION_UPDATE ──────────────────────────────
+  useEffect(() => {
+    if (!driverLocation) return
+    const { latitude, longitude, eta_minutes, distance_remaining_km } = driverLocation
+
+    if (eta_minutes !== null) setEta(eta_minutes)
+    if (distance_remaining_km !== null) setDistKm(distance_remaining_km)
+
+    if (!prevLocation.current) {
+      // First location — set immediately without animation
+      prevLocation.current = { latitude, longitude }
+      animLat.setValue(latitude)
+      animLng.setValue(longitude)
+      setMarkerPos({ latitude, longitude })
+    } else {
+      // Smooth interpolation to new position (500ms)
+      Animated.parallel([
+        Animated.timing(animLat, { toValue: latitude, duration: 500, useNativeDriver: false }),
+        Animated.timing(animLng, { toValue: longitude, duration: 500, useNativeDriver: false }),
+      ]).start()
+      // Keep markerPos in sync for MapView (Animated.Value can't drive Marker directly)
+      setMarkerPos({ latitude, longitude })
+      prevLocation.current = { latitude, longitude }
     }
-  };
+
+    // Pan map to follow driver
+    mapRef.current?.animateToRegion({
+      latitude,
+      longitude,
+      latitudeDelta: 0.04,
+      longitudeDelta: 0.04,
+    }, 600)
+  }, [driverLocation])
+
+  // ── ARRIVAL_ALERT: driver within 10km / 10min ─────────────────────────────
+  useEffect(() => {
+    if (!arrivalAlert) return
+    const { distance_km, eta_minutes, driver_phone } = arrivalAlert
+    setDistKm(distance_km)
+    if (eta_minutes) setEta(eta_minutes)
+
+    const phoneInfo = driver_phone ? `\n📞 Driver: ${driver_phone}` : ''
+    Alert.alert(
+      '🚗 Driver is Near!',
+      `Your driver is ${distance_km.toFixed(1)}km away — ETA ${eta_minutes} min.${phoneInfo}`,
+      [{ text: 'OK', onPress: clearArrivalAlert }]
+    )
+  }, [arrivalAlert, clearArrivalAlert])
+
+  // ── TRIP_STARTED / TRIP_COMPLETED events ──────────────────────────────────
+  useEffect(() => {
+    const handleStarted = () => setTripStatus('started')
+    const handleCompleted = () => {
+      setTripStatus('completed')
+      const dId = booking?.driver?.id || '';
+      const bId = bookingId || '';
+      router.replace(`/rate-trip?bookingId=${bId}&driverId=${dId}` as any)
+    }
+    on('TRIP_STARTED', handleStarted)
+    on('TRIP_COMPLETED', handleCompleted)
+    return () => {
+      off('TRIP_STARTED', handleStarted)
+      off('TRIP_COMPLETED', handleCompleted)
+    }
+  }, [on, off])
+
+  const handleSOS = () => {
+    Alert.alert(
+      '🚨 Emergency SOS',
+      'This will call emergency services and alert the admin.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Call 112', style: 'destructive', onPress: () => Linking.openURL('tel:112') },
+      ]
+    )
+  }
+
+  const handleShare = async () => {
+    const driver = booking?.driver
+    await Share.share({
+      message: `I'm being picked up by ${driver?.full_name || 'my driver'} (${driver?.registration || '—'}) on Swiftify. Track me: https://swiftify.app/track/${bookingId}`,
+    })
+  }
+
+  const handleCall = () => {
+    const phone = booking?.driver?.phone
+    if (phone) {
+      Linking.openURL(`tel:${phone}`)
+    } else {
+      Alert.alert('Driver Contact', 'Driver phone number will be available once they are within 10 km.')
+    }
+  }
+
+  // ── ETA display ────────────────────────────────────────────────────────────
+  const etaLabel = eta !== null
+    ? `${eta} min${distKm ? ` • ${distKm.toFixed(1)} km away` : ''}`
+    : booking?.eta_minutes
+      ? `${booking.eta_minutes} min`
+      : 'Calculating…'
+
+  const arrivalTime = eta !== null
+    ? new Date(Date.now() + eta * 60000).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+    : '—'
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" />
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <StatusBar style="dark" />
 
-      {/* Map Background */}
+      {/* Map */}
       <View style={StyleSheet.absoluteFill}>
         <MapView
+          ref={mapRef}
           provider={PROVIDER_GOOGLE}
           style={StyleSheet.absoluteFill}
           initialRegion={{
-            latitude: booking?.pickup_lat || 19.0760,
-            longitude: booking?.pickup_lon || 72.8777,
-            latitudeDelta: 0.05,
-            longitudeDelta: 0.05,
+            latitude: booking?.pickup_lat || 19.076,
+            longitude: booking?.pickup_lon || 72.877,
+            latitudeDelta: 0.08,
+            longitudeDelta: 0.08,
           }}
         >
+          {/* Pickup pin */}
           {booking?.pickup_lat && (
-             <Marker coordinate={{ latitude: booking.pickup_lat, longitude: booking.pickup_lon }} />
+            <Marker
+              coordinate={{ latitude: booking.pickup_lat, longitude: booking.pickup_lon }}
+              title="Pickup"
+              pinColor="#3B82F6"
+            />
+          )}
+          {/* Destination pin */}
+          {booking?.destination_lat && (
+            <Marker
+              coordinate={{ latitude: booking.destination_lat, longitude: booking.destination_lon }}
+              title="Destination"
+              pinColor="#EF4444"
+            />
+          )}
+          {/* Animated driver car marker */}
+          {markerPos && (
+            <Marker
+              coordinate={markerPos}
+              title={booking?.driver?.full_name || 'Driver'}
+              anchor={{ x: 0.5, y: 0.5 }}
+            >
+              <View style={styles.carMarker}>
+                <MaterialCommunityIcons name="car-side" size={28} color="#1E3A8A" />
+              </View>
+            </Marker>
           )}
         </MapView>
       </View>
 
       {/* Header */}
       <View style={styles.header}>
-         <View style={{ flex: 1 }}>
-            <TouchableOpacity style={{ marginBottom: 16 }} onPress={() => router.back()}>
-              <Feather name="chevron-left" size={32} color="black" />
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>Live Trip Tracking{'\n'}& Safety</Text>
-         </View>
-         
-         <View style={{ alignItems: 'center' }}>
-            <TouchableOpacity style={styles.sosBtn}>
-               <View style={styles.sosRing1} />
-               <View style={styles.sosRing2} />
-               <MaterialCommunityIcons name="shield-check" size={32} color="white" />
-            </TouchableOpacity>
-            <Text style={styles.sosText}>Emergency{'\n'}SOS</Text>
-         </View>
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+          <Feather name="chevron-left" size={28} color="#0F172A" />
+        </TouchableOpacity>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.headerTitle}>Live Tracking</Text>
+          <View style={styles.connDot}>
+            <View style={[styles.connIndicator, { backgroundColor: connected ? '#22C55E' : '#F59E0B' }]} />
+            <Text style={styles.connText}>{connected ? 'Live' : 'Connecting…'}</Text>
+          </View>
+        </View>
+        <TouchableOpacity style={styles.sosBtn} onPress={handleSOS}>
+          <View style={styles.sosRing} />
+          <MaterialCommunityIcons name="shield-check" size={28} color="#fff" />
+        </TouchableOpacity>
+        <Text style={styles.sosLabel}>SOS</Text>
       </View>
 
       <View style={{ flex: 1 }} />
 
       {/* Bottom Sheet */}
-      <View style={styles.bottomSheet}>
-         
-         {/* Driver Info */}
-         <View style={styles.driverRow}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-               <View style={styles.driverAvatar}>
-                  <Ionicons name="person" size={40} color="gray" style={{marginTop:8}}/>
-               </View>
-               <View>
-                  <Text style={styles.driverName}>{booking?.driver?.full_name || 'Alex Chen'}</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                     <Ionicons name="star" size={16} color="#0F172A" style={{ marginRight: 4 }} />
-                     <Text style={{ color: '#000', fontSize: 16 }}>{booking?.driver?.rating || 4.9} Rating</Text>
-                  </View>
-               </View>
+      <View style={styles.sheet}>
+
+        {/* Trip status banner */}
+        {tripStatus === 'started' && (
+          <View style={styles.statusBanner}>
+            <MaterialCommunityIcons name="car-side" size={16} color="#065F46" />
+            <Text style={styles.statusText}>Trip in Progress</Text>
+          </View>
+        )}
+
+        {/* Driver Row */}
+        <View style={styles.driverRow}>
+          <View style={styles.avatarCircle}>
+            <Ionicons name="person" size={36} color="#64748B" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.driverName}>{booking?.driver?.full_name || 'Your Driver'}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <Ionicons name="star" size={14} color="#F59E0B" />
+              <Text style={styles.driverMeta}>{booking?.driver?.rating || '—'} rating</Text>
             </View>
-            <View style={styles.driverDetails}>
-               <Text style={styles.detailText}>Silver</Text>
-               <Text style={styles.detailText}>{booking?.driver?.vehicle || 'Tesla Model 3, CA'}</Text>
-               <Text style={styles.detailText}>{booking?.driver?.registration || '8GHD52'}</Text>
-            </View>
-         </View>
+          </View>
+          <View style={styles.vehicleBox}>
+            <Text style={styles.vehicleText}>{booking?.driver?.vehicle || '—'}</Text>
+            <Text style={styles.regText}>{booking?.driver?.registration || '—'}</Text>
+          </View>
+        </View>
 
-         {/* ETA Card */}
-         <View style={styles.etaCard}>
-            <Text style={styles.etaTitle}>ETA: {booking?.eta_minutes || 14} min</Text>
-            <Text style={styles.etaSub}>Arriving at 5:45 PM</Text>
-         </View>
+        {/* ETA Card */}
+        <View style={styles.etaCard}>
+          <Text style={styles.etaTitle}>{etaLabel}</Text>
+          <Text style={styles.etaSub}>Estimated arrival: {arrivalTime}</Text>
+        </View>
 
-         {/* Action Buttons */}
-         <View style={styles.actionsRow}>
-            <TouchableOpacity style={styles.actionBtn}>
-               <MaterialCommunityIcons name="share" size={24} color="#64748B" style={{ marginBottom: 8 }} />
-               <Text style={styles.actionText}>Share Live Trip</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity style={styles.actionBtn}>
-               <Ionicons name="chatbubble" size={24} color="#64748B" style={{ marginBottom: 8 }} />
-               <Text style={styles.actionText}>Chat with Driver</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity style={styles.actionBtn}>
-               <Ionicons name="call" size={24} color="#64748B" style={{ marginBottom: 8 }} />
-               <Text style={styles.actionText}>Call</Text>
-            </TouchableOpacity>
-         </View>
-
+        {/* Action Buttons */}
+        <View style={styles.actionsRow}>
+          <TouchableOpacity style={styles.actionBtn} onPress={handleShare}>
+            <MaterialCommunityIcons name="share-variant" size={22} color="#64748B" />
+            <Text style={styles.actionText}>Share Trip</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.actionBtn} onPress={() => Alert.alert('Chat', 'In-app chat coming soon!')}>
+            <Ionicons name="chatbubble-outline" size={22} color="#64748B" />
+            <Text style={styles.actionText}>Chat</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.actionBtn} onPress={handleCall}>
+            <Ionicons name="call-outline" size={22} color="#64748B" />
+            <Text style={styles.actionText}>Call</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </SafeAreaView>
-  );
+  )
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F0F9FF' },
-  mapBg: { ...(StyleSheet.absoluteFill as any), backgroundColor: '#E0F2FE' },
-  mapLine: { position: 'absolute' },
-  
-  routeLine1: { position: 'absolute', top: '25%', left: 40, width: 256, height: 256, borderBottomWidth: 4, borderLeftWidth: 4, borderColor: '#3B82F6', borderBottomLeftRadius: 100, transform: [{ rotate: '45deg' }] },
-  marker1: { position: 'absolute', top: '20%', left: 40, width: 16, height: 16, backgroundColor: '#3B82F6', borderRadius: 8, borderWidth: 2, borderColor: 'white' },
-  
-  routeLine2: { position: 'absolute', top: '50%', right: '25%', width: 160, height: 160, borderTopWidth: 4, borderRightWidth: 4, borderColor: '#3B82F6', borderTopRightRadius: 50, transform: [{ rotate: '12deg' }] },
-  marker2: { position: 'absolute', bottom: '25%', right: 40, width: 24, height: 24, backgroundColor: 'gray', borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  
-  carMarker: { position: 'absolute', top: '42%', left: '45%', width: 48, height: 80, backgroundColor: 'white', borderRadius: 24, borderWidth: 1, borderColor: '#D1D5DB', transform: [{ rotate: '-30deg' }], alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10, elevation: 5 },
-  carWindowTop: { width: 32, height: 16, backgroundColor: '#1F2937', borderTopLeftRadius: 4, borderTopRightRadius: 4, position: 'absolute', top: 8 },
-  carWindowBottom: { width: 32, height: 16, backgroundColor: '#1F2937', borderBottomLeftRadius: 4, borderBottomRightRadius: 4, position: 'absolute', bottom: 8 },
-  
-  tooltipWrap: { position: 'absolute', top: '50%', right: '30%', alignItems: 'center', zIndex: 20 },
-  iconCircleBlue: { width: 32, height: 32, backgroundColor: '#3B82F6', borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'white', marginRight: 4, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 5 },
-  iconCircleOrange: { width: 32, height: 32, backgroundColor: '#F97316', borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'white', shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 5 },
-  tooltipBox: { backgroundColor: 'white', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10, elevation: 5, borderWidth: 1, borderColor: '#F3F4F6' },
-  tooltipText: { color: 'black', fontWeight: 'bold', fontSize: 12, textAlign: 'center', lineHeight: 16 },
-  
-  header: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', zIndex: 20 },
-  headerTitle: { color: 'black', fontSize: 36, fontWeight: '900', lineHeight: 40, textShadowColor: 'white', textShadowRadius: 10 },
-  
-  sosBtn: { width: 80, height: 80, backgroundColor: '#EF4444', borderRadius: 40, alignItems: 'center', justifyContent: 'center', borderWidth: 4, borderColor: 'white', shadowColor: '#EF4444', shadowOpacity: 0.5, shadowRadius: 20, elevation: 10, marginBottom: 8, position: 'relative' },
-  sosRing1: { position: 'absolute', top: -10, left: -10, right: -10, bottom: -10, borderRadius: 50, borderWidth: 2, borderColor: 'rgba(239, 68, 68, 0.3)' },
-  sosRing2: { position: 'absolute', top: -20, left: -20, right: -20, bottom: -20, borderRadius: 60, borderWidth: 1, borderColor: 'rgba(239, 68, 68, 0.1)' },
-  sosText: { color: 'black', fontWeight: 'bold', textAlign: 'center' },
-  
-  bottomSheet: { backgroundColor: 'rgba(255,255,255,0.95)', marginHorizontal: 16, marginBottom: 32, borderRadius: 24, padding: 20, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 20, elevation: 10, borderWidth: 1, borderColor: 'white', zIndex: 20 },
-  
-  driverRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 },
-  driverAvatar: { width: 64, height: 64, backgroundColor: '#D1D5DB', borderRadius: 32, marginRight: 16, borderWidth: 2, borderColor: 'white', shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 5, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
-  driverName: { color: 'black', fontSize: 24, fontWeight: 'bold', marginBottom: 4 },
-  driverDetails: { borderLeftWidth: 1, borderLeftColor: '#D1D5DB', paddingLeft: 16, paddingVertical: 4 },
-  detailText: { color: 'black', fontSize: 14, lineHeight: 20 },
-  
-  etaCard: { backgroundColor: 'white', borderRadius: 16, paddingVertical: 24, alignItems: 'center', shadowColor: '#3B82F6', shadowOpacity: 0.1, shadowRadius: 10, elevation: 5, marginBottom: 24, borderWidth: 1, borderColor: '#EFF6FF' },
-  etaTitle: { color: 'black', fontSize: 36, fontWeight: '900', marginBottom: 4 },
-  etaSub: { color: '#4B5563', fontSize: 18 },
-  
-  actionsRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  actionBtn: { flex: 1, backgroundColor: 'white', paddingVertical: 16, borderRadius: 16, alignItems: 'center', justifyContent: 'center', shadowColor: '#3B82F6', shadowOpacity: 0.1, shadowRadius: 10, elevation: 5, borderWidth: 1, borderColor: '#F3F4F6', marginHorizontal: 4 },
-  actionText: { color: 'black', fontSize: 12, fontWeight: '600' },
-});
+
+  header: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 16, paddingVertical: 12,
+    zIndex: 20,
+  },
+  backBtn: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.85)',
+    alignItems: 'center', justifyContent: 'center',
+    marginRight: 12,
+    shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 6, elevation: 3,
+  },
+  headerTitle: { fontSize: 20, fontWeight: '800', color: '#0F172A', lineHeight: 24 },
+  connDot: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 },
+  connIndicator: { width: 8, height: 8, borderRadius: 4 },
+  connText: { fontSize: 12, color: '#64748B', fontWeight: '500' },
+
+  sosBtn: {
+    width: 60, height: 60, backgroundColor: '#EF4444', borderRadius: 30,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 3, borderColor: '#fff',
+    shadowColor: '#EF4444', shadowOpacity: 0.4, shadowRadius: 12, elevation: 8,
+    position: 'relative',
+  },
+  sosRing: {
+    position: 'absolute', top: -8, left: -8, right: -8, bottom: -8,
+    borderRadius: 38, borderWidth: 2, borderColor: 'rgba(239,68,68,0.35)',
+  },
+  sosLabel: { color: '#EF4444', fontWeight: '700', fontSize: 11, marginLeft: -12, marginTop: 64, position: 'absolute', right: 14 },
+
+  // Car marker
+  carMarker: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: '#EFF6FF',
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: '#3B82F6',
+    shadowColor: '#3B82F6', shadowOpacity: 0.35, shadowRadius: 8, elevation: 6,
+  },
+
+  // Bottom sheet
+  sheet: {
+    backgroundColor: 'rgba(255,255,255,0.97)',
+    marginHorizontal: 12, marginBottom: 20,
+    borderRadius: 28, padding: 20,
+    shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 20, elevation: 12,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.8)',
+    zIndex: 20,
+  },
+
+  statusBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: '#D1FAE5', borderRadius: 10,
+    paddingHorizontal: 12, paddingVertical: 6, marginBottom: 16,
+    alignSelf: 'flex-start',
+  },
+  statusText: { color: '#065F46', fontWeight: '700', fontSize: 13 },
+
+  driverRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
+  avatarCircle: {
+    width: 56, height: 56, borderRadius: 28,
+    backgroundColor: '#F1F5F9', marginRight: 14,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: '#E2E8F0',
+  },
+  driverName: { fontSize: 18, fontWeight: '700', color: '#0F172A', marginBottom: 2 },
+  driverMeta: { fontSize: 13, color: '#64748B' },
+  vehicleBox: { alignItems: 'flex-end', borderLeftWidth: 1, borderLeftColor: '#E2E8F0', paddingLeft: 14 },
+  vehicleText: { fontSize: 13, color: '#374151', fontWeight: '600' },
+  regText: { fontSize: 12, color: '#94A3B8', marginTop: 2 },
+
+  etaCard: {
+    backgroundColor: '#EFF6FF', borderRadius: 18,
+    paddingVertical: 20, alignItems: 'center',
+    marginBottom: 16,
+    borderWidth: 1, borderColor: '#BFDBFE',
+  },
+  etaTitle: { fontSize: 28, fontWeight: '900', color: '#1E3A8A', marginBottom: 4 },
+  etaSub: { fontSize: 14, color: '#64748B' },
+
+  actionsRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
+  actionBtn: {
+    flex: 1, alignItems: 'center', paddingVertical: 14,
+    backgroundColor: '#F8FAFC', borderRadius: 16,
+    borderWidth: 1, borderColor: '#E2E8F0',
+    gap: 6,
+  },
+  actionText: { fontSize: 11, fontWeight: '600', color: '#475569' },
+})

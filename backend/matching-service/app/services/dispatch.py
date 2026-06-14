@@ -45,7 +45,7 @@ class DispatchService:
         self.db = db
         self.geo = GeoSearchService(db)
 
-    async def dispatch_booking(self, booking_id: str) -> bool:
+    async def dispatch_booking(self, booking_id: str, excluded_driver_ids: Optional[list[str]] = None) -> bool:
         """
         Main entry point  find drivers and dispatch the booking request.
         Returns True if dispatched to at least one driver.
@@ -62,7 +62,7 @@ class DispatchService:
             logger.error("Trip not found for booking", booking_id=booking_id)
             return False
 
-        tried_drivers: list[str] = []
+        tried_drivers: list[str] = excluded_driver_ids or []
         attempt = 0
 
         while attempt < matching_settings.MAX_RETRY_DRIVERS:
@@ -95,8 +95,8 @@ class DispatchService:
                 "booking_id": booking_id,
                 "driver_id": driver_id,
                 "trip": {
-                    "from": trip.pickup_city,
-                    "to": trip.destination_city,
+                    "from": booking.pickup_address or f"{trip.pickup_latitude},{trip.pickup_longitude}",
+                    "to": booking.drop_address or f"{trip.destination_latitude},{trip.destination_longitude}",
                     "departure_time": trip.departure_time.isoformat(),
                     "distance_km": trip.distance_km,
                     "seats": booking.seat_count,
@@ -195,7 +195,7 @@ class DispatchService:
 
         # Update booking in DB
         result = await self.db.execute(
-            select(Booking).where(Booking.id == booking_id)
+            select(Booking).where(Booking.id == uuid.UUID(booking_id))
         )
         booking = result.scalar_one_or_none()
         if booking:
@@ -225,7 +225,7 @@ class DispatchService:
             # Suspend driver for 1 hour
             await self.db.execute(
                 Driver.__table__.update()
-                .where(Driver.id == driver_id)
+                .where(Driver.id == uuid.UUID(driver_id))
                 .values(
                     status=DriverStatus.SUSPENDED,
                     suspension_until=datetime.utcnow() + timedelta(hours=1),
@@ -244,7 +244,7 @@ class DispatchService:
     async def _on_matching_failed(self, booking_id: str) -> None:
         """All retries failed  update booking and notify customer."""
         result = await self.db.execute(
-            select(Booking).where(Booking.id == booking_id)
+            select(Booking).where(Booking.id == uuid.UUID(booking_id))
         )
         booking = result.scalar_one_or_none()
         if booking:

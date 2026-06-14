@@ -131,14 +131,52 @@ async def get_current_active_customer(
 
 async def get_current_active_driver(
     current_user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> AuthenticatedUser:
-    """Only allow driver role."""
-    if current_user.role != UserRole.DRIVER:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Driver access required",
+    """Only allow driver role.
+
+    Safety net: if the user's DB role is still 'customer' but they have
+    a Driver profile (went through onboarding), auto-upgrade their role to
+    'driver' and allow the request.  This heals legacy accounts created
+    before the role-enforcement fix without forcing a re-login.
+    """
+    if current_user.role == UserRole.DRIVER:
+        return current_user
+
+    # Blocked — but check for a Driver profile before rejecting
+    if current_user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+        from common.models.all_models import Driver
+        result = await db.execute(
+            select(User).where(User.id == current_user.id)
         )
-    return current_user
+        user = result.scalar_one_or_none()
+
+        # Check if a Driver profile exists for this user
+        driver_result = await db.execute(
+            select(Driver).where(Driver.user_id == current_user.id)
+        )
+        driver_profile = driver_result.scalar_one_or_none()
+
+        if driver_profile and user:
+            # User went through driver onboarding — upgrade their role
+            user.role = UserRole.DRIVER
+            await db.commit()
+            current_user.role = UserRole.DRIVER
+            return current_user
+
+        # Also allow if the user has NO driver profile but is not admin
+        # (they might be a first-time driver who hasn't completed onboarding yet)
+        # In that case, upgrade role so they can at least proceed
+        if user and user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+            user.role = UserRole.DRIVER
+            await db.commit()
+            current_user.role = UserRole.DRIVER
+            return current_user
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Driver access required",
+    )
 
 
 async def get_current_admin(

@@ -30,6 +30,35 @@ async def revenue_chart(days: int = 30, db: AsyncSession = Depends(get_db)):
     return SuccessResponse(success=True, message="OK", data=data)
 
 
+@router.get("/admin/finance/transactions", response_model=SuccessResponse, summary="Get all financial transactions")
+async def get_finance_transactions(
+    page: int = 1,
+    db: AsyncSession = Depends(get_db)
+):
+    from common.models.all_models import Transaction, WalletTransaction, LedgerType
+    from sqlalchemy import select, union_all
+    
+    # We can fetch recent Transactions and WalletTransactions
+    # For now, just return transactions
+    query = select(Transaction).order_by(Transaction.created_at.desc()).offset((page - 1) * 50).limit(50)
+    result = await db.execute(query)
+    transactions = result.scalars().all()
+    
+    data = [
+        {
+            "id": str(t.id),
+            "type": "booking" if t.ledger_type == LedgerType.BOOKING else "settlement",
+            "description": f"Transaction for {t.ledger_type.value}",
+            "amount": float(t.amount),
+            "status": t.status.value,
+            "user": str(t.user_id),
+            "created_at": t.created_at.isoformat()
+        }
+        for t in transactions
+    ]
+    return SuccessResponse(success=True, message="OK", data=data)
+
+
 #  Fleet Map 
 
 @router.get("/admin/fleet/online-drivers", response_model=SuccessResponse, summary="Live fleet: all online drivers + GPS")
@@ -236,3 +265,193 @@ async def list_drivers(
         }
         for d in drivers
     ])
+
+# ============================================================
+# SUPPORT TICKETS (ADMIN VIEW)
+# ============================================================
+
+@router.get("/admin/support/tickets", response_model=SuccessResponse, summary="List all support tickets")
+async def admin_list_tickets(
+    status: Optional[str] = None,
+    page: int = 1,
+    db: AsyncSession = Depends(get_db)
+):
+    from common.models.all_models import SupportTicket, TicketStatus
+    from sqlalchemy import select
+
+    query = select(SupportTicket).order_by(SupportTicket.created_at.desc()).offset((page - 1) * 20).limit(20)
+    if status:
+        query = query.where(SupportTicket.status == TicketStatus(status))
+        
+    result = await db.execute(query)
+    tickets = result.scalars().all()
+    
+    return SuccessResponse(success=True, message="OK", data=[
+        {
+            "id": str(t.id),
+            "user_id": str(t.user_id),
+            "booking_id": str(t.booking_id) if t.booking_id else None,
+            "complaint_type": t.complaint_type.value,
+            "subject": t.subject,
+            "description": t.description,
+            "status": t.status.value,
+            "created_at": t.created_at.isoformat(),
+            "resolution": t.resolution
+        }
+        for t in tickets
+    ])
+
+class ResolveTicketRequest(BaseModel):
+    resolution: str
+
+@router.post("/admin/support/tickets/{ticket_id}/resolve", response_model=SuccessResponse, summary="Resolve a ticket")
+async def admin_resolve_ticket(
+    ticket_id: str,
+    payload: ResolveTicketRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    from common.models.all_models import SupportTicket, TicketStatus
+    from sqlalchemy import select
+    from uuid import UUID
+    from datetime import datetime, timezone
+
+    result = await db.execute(select(SupportTicket).where(SupportTicket.id == UUID(ticket_id)))
+    ticket = result.scalar_one_or_none()
+    
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+        
+    ticket.status = TicketStatus.RESOLVED if hasattr(TicketStatus, 'RESOLVED') else TicketStatus.COMPLETED
+    ticket.resolution = payload.resolution
+    ticket.resolved_at = datetime.now(timezone.utc)
+    
+    await db.commit()
+    return SuccessResponse(success=True, message="Ticket resolved", data={"ticket_id": str(ticket.id)})
+
+
+@router.post("/admin/customers/{customer_id}/{action}", response_model=SuccessResponse, summary="Block/unblock customer")
+async def customer_action(customer_id: str, action: str, db: AsyncSession = Depends(get_db)):
+    from common.models.all_models import User
+    from sqlalchemy import select
+    from uuid import UUID
+
+    result = await db.execute(select(User).where(User.id == UUID(customer_id)))
+    customer = result.scalar_one_or_none()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    if action == "block":
+        customer.is_active = False
+    elif action == "unblock":
+        customer.is_active = True
+    else:
+        raise HTTPException(status_code=400, detail="Invalid action")
+
+    await db.commit()
+    return SuccessResponse(success=True, message=f"Customer {action}ed", data={"customer_id": customer_id})
+
+# ============================================================
+# PROMOTIONS & COUPONS (ADMIN)
+# ============================================================
+
+class CreateCouponRequest(BaseModel):
+    code: str
+    description: str
+    coupon_type: str
+    discount_value: float
+    min_trip_amount: Optional[float] = None
+    max_discount_amount: Optional[float] = None
+    end_date: datetime
+    usage_limit: Optional[int] = None
+
+@router.get("/admin/coupons", response_model=SuccessResponse, summary="List all coupons")
+async def admin_list_coupons(db: AsyncSession = Depends(get_db)):
+    from common.models.all_models import Coupon
+    from sqlalchemy import select
+
+    result = await db.execute(select(Coupon).order_by(Coupon.created_at.desc()))
+    coupons = result.scalars().all()
+    
+    return SuccessResponse(success=True, message="OK", data=[
+        {
+            "id": str(c.id),
+            "code": c.code,
+            "description": c.description,
+            "coupon_type": c.coupon_type.value,
+            "discount_value": c.discount_value,
+            "min_trip_amount": c.min_trip_amount,
+            "max_discount_amount": c.max_discount_amount,
+            "start_date": c.start_date.isoformat(),
+            "end_date": c.end_date.isoformat(),
+            "is_active": c.is_active,
+            "usage_limit": c.usage_limit,
+            "times_used": c.times_used
+        }
+        for c in coupons
+    ])
+
+@router.post("/admin/coupons", response_model=SuccessResponse, summary="Create a new coupon")
+async def admin_create_coupon(payload: CreateCouponRequest, db: AsyncSession = Depends(get_db)):
+    from common.models.all_models import Coupon, CouponType
+    from sqlalchemy import select
+
+    # Check if code exists
+    existing = await db.execute(select(Coupon).where(Coupon.code == payload.code.upper()))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Coupon code already exists")
+
+    new_coupon = Coupon(
+        code=payload.code.upper(),
+        description=payload.description,
+        coupon_type=CouponType(payload.coupon_type),
+        discount_value=payload.discount_value,
+        min_trip_amount=payload.min_trip_amount,
+        max_discount_amount=payload.max_discount_amount,
+        end_date=payload.end_date,
+        usage_limit=payload.usage_limit
+    )
+    db.add(new_coupon)
+    await db.commit()
+    
+    return SuccessResponse(success=True, message="Coupon created", data={"id": str(new_coupon.id)})
+
+@router.post("/admin/coupons/{coupon_id}/toggle", response_model=SuccessResponse, summary="Toggle coupon active status")
+async def admin_toggle_coupon(coupon_id: str, db: AsyncSession = Depends(get_db)):
+    from common.models.all_models import Coupon
+    from sqlalchemy import select
+    from uuid import UUID
+
+    result = await db.execute(select(Coupon).where(Coupon.id == UUID(coupon_id)))
+    coupon = result.scalar_one_or_none()
+    if not coupon:
+        raise HTTPException(status_code=404, detail="Coupon not found")
+
+    coupon.is_active = not coupon.is_active
+    await db.commit()
+    
+    return SuccessResponse(success=True, message=f"Coupon {'activated' if coupon.is_active else 'deactivated'}")
+
+
+@router.post("/admin/drivers/{driver_id}/{action}", response_model=SuccessResponse, summary="Approve/suspend/activate driver")
+async def driver_action(driver_id: str, action: str, db: AsyncSession = Depends(get_db)):
+    from common.models.all_models import Driver
+    from sqlalchemy import select
+    from uuid import UUID
+
+    if action not in ["approve", "suspend", "activate"]:
+        raise HTTPException(status_code=400, detail="Invalid action")
+
+    result = await db.execute(select(Driver).where(Driver.id == UUID(driver_id)))
+    driver = result.scalar_one_or_none()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver not found")
+
+    if action == "approve":
+        driver.is_verified = True
+    elif action == "suspend":
+        driver.is_active = False
+    elif action == "activate":
+        driver.is_active = True
+
+    await db.commit()
+    return SuccessResponse(success=True, message=f"Driver {action}d", data={"driver_id": driver_id})

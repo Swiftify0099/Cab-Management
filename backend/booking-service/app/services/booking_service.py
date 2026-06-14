@@ -82,7 +82,6 @@ class BookingService:
         total_fare = base_fare + window_charge + platform_fee + parcel_charge
 
         booking = Booking(
-            id=str(uuid.uuid4()),
             trip_id=trip.id,
             customer_id=customer.id,
             seat_count=seat_count,
@@ -194,7 +193,7 @@ class BookingService:
         )
 
         payload = {
-            "event":               "TRIP_REQUEST",
+            "event":               "INCOMING_TRIP_REQUEST",
             "booking_id":          booking_id,
             "pickup_address":      booking.pickup_address or "the pickup point",
             "destination_address": booking.drop_address or "the destination",
@@ -210,6 +209,29 @@ class BookingService:
         driver_user_id = str(driver.user_id)
         await publish_event(f"driver:{driver_user_id}:events", payload)
 
+        # Also emit to the driver scan (radar) room so it shows up as a dot immediately
+        radar_payload = {
+            "event":                       "NEW_PENDING_CUSTOMER",
+            "booking_id":                  booking_id,
+            "customer_name":               "Customer", # We don't have name readily available here without JOIN, but frontend accepts it
+            "pickup_address":              booking.pickup_address or "Pickup",
+            "pickup_lat":                  trip.pickup_latitude,
+            "pickup_lng":                  trip.pickup_longitude,
+            "destination_address":         booking.drop_address or "Drop",
+            "destination_lat":             trip.destination_latitude,
+            "destination_lng":             trip.destination_longitude,
+            "seats_required":              booking.seat_count,
+            "parcel":                      booking.has_parcel,
+            "from_time":                   datetime.utcnow().isoformat(),
+            "to_time":                     datetime.utcnow().isoformat(),
+            "women_only":                  False,
+            "pickup_distance_km":          0,
+            "destination_distance_km":     0,
+            "pickup_distance_meters":      0,
+            "destination_distance_meters": 0,
+        }
+        await publish_event(f"driver_scan:{str(trip.id)}", radar_payload)
+
         # FCM push (driver may be in background)
         driver_user_res = await self.db.execute(
             select(User).where(User.id == driver.user_id)
@@ -217,7 +239,7 @@ class BookingService:
         driver_user = driver_user_res.scalar_one_or_none()
         if driver_user and driver_user.device_token:
             await publish_event("notification:events", {
-                "event":        "TRIP_REQUEST",
+                "event":        "INCOMING_TRIP_REQUEST",
                 "user_id":      driver_user_id,
                 "user_type":    "driver",
                 "device_token": driver_user.device_token,
@@ -230,7 +252,7 @@ class BookingService:
                 },
             })
 
-        logger.info("TRIP_REQUEST emitted", booking_id=booking_id, driver_user_id=driver_user_id)
+        logger.info("INCOMING_TRIP_REQUEST and NEW_PENDING_CUSTOMER emitted", booking_id=booking_id, driver_user_id=driver_user_id)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Pending Booking CRUD
@@ -381,7 +403,7 @@ class BookingService:
             return None
         result = await self.db.execute(
             select(Booking).where(
-                and_(Booking.id == booking_id, Booking.customer_id == customer.id)
+                and_(Booking.id == uuid.UUID(booking_id), Booking.customer_id == customer.id)
             )
         )
         booking = result.scalar_one_or_none()
@@ -395,20 +417,47 @@ class BookingService:
             return False
         result = await self.db.execute(
             select(Booking).where(
-                and_(Booking.id == booking_id, Booking.customer_id == customer.id)
+                and_(Booking.id == uuid.UUID(booking_id), Booking.customer_id == customer.id)
             )
         )
         booking = result.scalar_one_or_none()
         if not booking:
             return False
 
-        cancellable = {BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.PAYMENT_PENDING}
+        cancellable = {BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.PAYMENT_PENDING, BookingStatus.PAID}
         if booking.status not in cancellable:
             return False
+
+        was_paid = booking.status == BookingStatus.PAID
 
         booking.status = BookingStatus.CANCELLED
         booking.cancellation_reason = reason
         booking.cancelled_at = datetime.utcnow()
+
+        if was_paid:
+            # Issue a full refund to wallet
+            try:
+                from common.models.all_models import CustomerProfile, WalletTransaction, LedgerType
+                from decimal import Decimal
+                
+                old_balance = customer.wallet_balance or Decimal("0")
+                refund_amount = Decimal(str(booking.total_fare))
+                new_balance = old_balance + refund_amount
+                customer.wallet_balance = new_balance
+                
+                tx = WalletTransaction(
+                    user_id=customer.user_id,
+                    amount=refund_amount,
+                    transaction_type=LedgerType.WALLET_CREDIT,
+                    description=f"Refund for cancelled booking {booking.id}",
+                    ref_id=booking.id,
+                    balance_after=new_balance,
+                )
+                self.db.add(tx)
+            except Exception as e:
+                import structlog
+                logger = structlog.get_logger(__name__)
+                logger.error(f"Refund failed for booking {booking.id}: {e}")
 
         # Restore seats to the trip
         trip_res = await self.db.execute(select(Trip).where(Trip.id == booking.trip_id))
@@ -420,6 +469,102 @@ class BookingService:
 
         await self.db.commit()
         return True
+
+    async def driver_cancel_booking(
+        self, booking_id: str, driver_user_id: str, reason: str
+    ) -> dict:
+        """
+        Driver cancels an already accepted booking.
+        Applies penalty logic and re-dispatches to other drivers.
+        """
+        from common.models.all_models import Driver, DriverPenalty, PenaltyReason, DriverStatus
+        from datetime import timedelta
+        
+        driver_res = await self.db.execute(
+            select(Driver).where(Driver.user_id == uuid.UUID(driver_user_id))
+        )
+        driver = driver_res.scalar_one_or_none()
+        if not driver:
+            return {"success": False, "message": "Driver not found"}
+
+        result = await self.db.execute(
+            select(Booking).where(
+                Booking.id == uuid.UUID(booking_id)
+            )
+        )
+        booking = result.scalar_one_or_none()
+        if not booking:
+            return {"success": False, "message": "Booking not found"}
+
+        # Verify this booking belongs to the driver's trip
+        trip_check_res = await self.db.execute(
+            select(Trip).where(
+                and_(Trip.id == booking.trip_id, Trip.driver_id == driver.id)
+            )
+        )
+        if not trip_check_res.scalar_one_or_none():
+            return {"success": False, "message": "Booking not found or not assigned to you"}
+
+        if booking.status != BookingStatus.DRIVER_ACCEPTED:
+            return {"success": False, "message": f"Cannot cancel booking in status {booking.status}"}
+
+        # Check cutoff time (30 mins before departure)
+        trip_res = await self.db.execute(select(Trip).where(Trip.id == booking.trip_id))
+        trip = trip_res.scalar_one_or_none()
+        if not trip:
+            return {"success": False, "message": "Trip not found"}
+
+        cutoff_time = trip.departure_time - timedelta(minutes=30)
+        
+        # Determine UTC time correctly
+        now = datetime.utcnow()
+        if trip.departure_time.tzinfo is not None:
+            now = datetime.now(trip.departure_time.tzinfo)
+
+        if now > cutoff_time:
+            return {"success": False, "message": "Cannot cancel within 30 minutes of departure"}
+
+        # Apply penalty
+        penalty = DriverPenalty(
+            id=uuid.uuid4(),
+            driver_id=driver.id,
+            reason=PenaltyReason.ACCEPTED_TRIP_REJECTED,
+            fine_amount=500,
+            trip_id=trip.id,
+            description=reason
+        )
+        self.db.add(penalty)
+
+        # Increment Redis counter
+        r = await get_redis()
+        reject_count_key = f"driver:accept_reject_count:{driver.id}"
+        count = await r.incr(reject_count_key)
+        await r.expire(reject_count_key, 86400)  # 24h rolling window
+
+        suspension_msg = None
+        if count >= 3:
+            driver.status = DriverStatus.SUSPENDED
+            driver.suspension_until = now + timedelta(hours=1)
+            await r.delete(reject_count_key)
+            suspension_msg = "Suspended for 1 hour due to 3 consecutive cancellations."
+            await publish_event(f"driver:{driver_user_id}:events", {
+                "event": "SUSPENDED",
+                "reason": suspension_msg,
+                "until": driver.suspension_until.isoformat(),
+            })
+
+        # Revert booking to PENDING
+        booking.status = BookingStatus.PENDING
+
+        await self.db.commit()
+
+        # Emit REDISPATCH_BOOKING
+        await publish_event("dispatch:redispatch_booking", {
+            "booking_id": booking_id,
+            "excluded_driver_id": str(driver.id)
+        })
+
+        return {"success": True, "message": "Booking cancelled." + (f" {suspension_msg}" if suspension_msg else "")}
 
     # ─────────────────────────────────────────────────────────────────────────
     # Serializers

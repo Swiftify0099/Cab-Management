@@ -7,7 +7,7 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -25,6 +25,7 @@
     },
     "android": {
       "package": "com.cabooking.driver",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundImage": "./assets/android-icon-background.png",
@@ -54,6 +55,7 @@
     },
     "plugins": [
       "expo-router",
+      "expo-splash-screen",
       "expo-secure-store",
       "expo-font",
       "expo-status-bar",
@@ -70,7 +72,9 @@
         {
           "icon": "./assets/icon.png",
           "color": "#F59E0B",
-          "sounds": []
+          "sounds": [
+            "./assets/audio/siren.mp3"
+          ]
         }
       ],
       [
@@ -81,8 +85,11 @@
       ]
     ],
     "extra": {
-      "apiUrl": "http://172.28.162.223:8001/api/v1",
-      "wsUrl": "http://172.28.162.223:8010"
+      "apiUrl": "http://192.168.43.157:8001/api/v1",
+      "wsUrl": "http://192.168.43.157:8010",
+      "eas": {
+        "projectId": "cabooking-driver"
+      }
     }
   }
 }

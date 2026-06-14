@@ -1,65 +1,77 @@
 /**
  * Customer App — My Parcels (Parcel Status Timeline)
- * Pixel-perfect from stitch: parcel_tracking_timeline_ui
+ * Dynamic: fetches from /parcels/my-parcels
+ * Removed heavy MapView background — uses gradient instead for performance.
  */
-import { useState, useCallback } from 'react'
+import React, { useState, useCallback } from 'react'
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  RefreshControl, StatusBar, Animated,
+  RefreshControl, StatusBar, ActivityIndicator,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
-import MapView, { PROVIDER_GOOGLE } from 'react-native-maps'
 import { router } from 'expo-router'
+import { useFocusEffect } from 'expo-router'
+import { parcelApi } from '../../src/api/client'
 
-const MOCK_PARCELS = [
-  {
-    id: 'p1',
-    tracking_number: 'P-3849201',
-    eta: 'Today, 6:00 PM',
-    status: 'in_transit',
-    is_fragile: true,
-    fragile_type: 'Electronics',
-    receiver_name: 'Rahul Sharma',
-    receiver_address: 'Flat 4B, Pune City Center, Pune, MH',
-    steps: [
-      { label: 'Booking Confirmed', date: 'Oct 25, 10:00 AM', status: 'done' },
-      { label: 'Driver Assigned',   date: 'Oct 25, 11:15 AM', status: 'done' },
-      { label: 'In Transit (Mumbai)', date: 'Oct 26, 2:30 PM', status: 'in_progress' },
-      { label: 'Out for Delivery (Pune)', date: 'Oct 27, 8:45 AM', status: 'current' },
-    ],
-  },
-  {
-    id: 'p2',
-    tracking_number: 'P-2019876',
-    eta: 'Delivered',
-    status: 'delivered',
-    is_fragile: false,
-    fragile_type: '',
-    receiver_name: 'Amit Singh',
-    receiver_address: '45 IT Park, Pune',
-    steps: [
-      { label: 'Booking Confirmed', date: 'Oct 20, 9:00 AM',  status: 'done' },
-      { label: 'Driver Assigned',   date: 'Oct 20, 9:45 AM',  status: 'done' },
-      { label: 'In Transit',        date: 'Oct 20, 11:00 AM', status: 'done' },
-      { label: 'Delivered',         date: 'Oct 20, 2:30 PM',  status: 'done' },
-    ],
-  },
-]
+const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
+  pending:      { label: 'Pending',      color: '#F59E0B' },
+  pickup_done:  { label: 'Picked Up',   color: '#3B82F6' },
+  in_transit:   { label: 'In Transit',  color: '#8B5CF6' },
+  delivered:    { label: 'Delivered',   color: '#22C55E' },
+  cancelled:    { label: 'Cancelled',   color: '#EF4444' },
+}
 
-const FILTERS = ['All', 'Active', 'Delivered']
+const FILTERS = ['All', 'Active', 'Delivered'] as const
+
+const StepIcon = ({ status }: { status: string }) => {
+  const bgColor =
+    status === 'done'        ? '#22C55E' :
+    status === 'in_progress' ? '#3B82F6' :
+    status === 'current'     ? '#8B5CF6' :
+    '#CBD5E1'
+
+  const icon =
+    status === 'done'        ? 'check' :
+    status === 'in_progress' ? 'truck-fast' :
+    status === 'current'     ? 'motorbike' :
+    null
+
+  return (
+    <View style={[styles.stepCircle, { backgroundColor: bgColor }]}>
+      {icon && (
+        status === 'done'
+          ? <Feather name="check" size={18} color="#fff" />
+          : <MaterialCommunityIcons name={icon as any} size={18} color="#fff" />
+      )}
+    </View>
+  )
+}
 
 export default function ParcelsTab() {
-  const [parcels] = useState(MOCK_PARCELS)
+  const [parcels, setParcels] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
-  const [filter, setFilter] = useState('All')
-  const [expanded, setExpanded] = useState<string | null>('p1')
+  const [filter, setFilter] = useState<typeof FILTERS[number]>('All')
+  const [expanded, setExpanded] = useState<string | null>(null)
 
-  const onRefresh = useCallback(() => {
-    setRefreshing(true)
-    setTimeout(() => setRefreshing(false), 800)
+  const loadParcels = useCallback(async () => {
+    try {
+      const res = await parcelApi.getMyParcels()
+      const data = res.data?.data || res.data || []
+      setParcels(Array.isArray(data) ? data : [])
+    } catch {
+      setParcels([])
+    } finally {
+      setLoading(false)
+      setRefreshing(false)
+    }
   }, [])
+
+  useFocusEffect(useCallback(() => { loadParcels() }, [loadParcels]))
+
+  const onRefresh = () => { setRefreshing(true); loadParcels() }
 
   const filtered = parcels.filter(p => {
     if (filter === 'All') return true
@@ -67,79 +79,28 @@ export default function ParcelsTab() {
     return p.status === 'delivered'
   })
 
-  const StepIcon = ({ status }: { status: string }) => {
-    if (status === 'done') return (
-      <View style={[styles.stepCircle, { backgroundColor: '#22C55E' }]}>
-        <Feather name="check" size={22} color="white" />
-      </View>
-    )
-    if (status === 'in_progress') return (
-      <View style={[styles.stepCircle, { backgroundColor: '#3B82F6' }]}>
-        <MaterialCommunityIcons name="truck-fast" size={22} color="white" />
-      </View>
-    )
-    if (status === 'current') return (
-      <View style={[styles.stepCircle, { backgroundColor: '#3B82F6', shadowColor: '#3B82F6', shadowOpacity: 0.5, shadowRadius: 8, elevation: 6 }]}>
-        <MaterialCommunityIcons name="motorbike" size={22} color="white" />
-      </View>
-    )
-    return <View style={[styles.stepCircle, { backgroundColor: '#CBD5E1' }]} />
-  }
-
-  const StepBadge = ({ status }: { status: string }) => {
-    if (status === 'done') return (
-      <View style={[styles.stepBadge, { backgroundColor: '#22C55E' }]}>
-        <Text style={styles.stepBadgeText}>Completed</Text>
-      </View>
-    )
-    if (status === 'in_progress') return (
-      <View style={[styles.stepBadge, { backgroundColor: '#3B82F6' }]}>
-        <Text style={styles.stepBadgeText}>In Progress</Text>
-      </View>
-    )
-    if (status === 'current') return (
-      <View style={[styles.stepBadgeLarge, { backgroundColor: '#3B82F6' }]}>
-        <Text style={[styles.stepBadgeText, { lineHeight: 16, textAlign: 'center' }]}>Current{'\n'}Status</Text>
-      </View>
-    )
-    return null
-  }
+  const statusCfg = (status: string) => STATUS_CONFIG[status] || { label: status, color: '#94A3B8' }
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" backgroundColor="#0B132B" />
+      <StatusBar barStyle="light-content" />
 
-      {/* Map Background */}
-      <View style={styles.mapBg}>
-        <MapView
-          provider={PROVIDER_GOOGLE}
-          style={StyleSheet.absoluteFill}
-          initialRegion={{
-            latitude: 19.0760,
-            longitude: 72.8777,
-            latitudeDelta: 0.1,
-            longitudeDelta: 0.1,
-          }}
-        >
-        </MapView>
-        {/* Overlay gradient so UI is legible */}
-        <LinearGradient
-          colors={['transparent', 'rgba(11,19,43,0.7)', '#0B132B']}
-          style={StyleSheet.absoluteFill}
-        />
-      </View>
+      {/* Gradient background — replaces heavy MapView */}
+      <LinearGradient
+        colors={['#0B132B', '#1C3A70', '#0B132B']}
+        style={StyleSheet.absoluteFill}
+      />
 
-      {/* Glassmorphic Main Container */}
       <SafeAreaView style={styles.safeArea}>
-
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Feather name="arrow-left" size={26} color="black" />
-          </TouchableOpacity>
           <Text style={styles.headerTitle}>My Parcels</Text>
-          <TouchableOpacity>
-            <Feather name="share" size={22} color="black" />
+          <TouchableOpacity
+            style={styles.sendBtn}
+            onPress={() => router.push('/parcel-booking' as any)}
+          >
+            <Feather name="plus" size={16} color="#fff" />
+            <Text style={styles.sendBtnText}>Send</Text>
           </TouchableOpacity>
         </View>
 
@@ -158,170 +119,189 @@ export default function ParcelsTab() {
 
         <ScrollView
           style={styles.scroll}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#2563EB" />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#3B82F6" />}
           contentContainerStyle={{ paddingBottom: 40 }}
           showsVerticalScrollIndicator={false}
         >
-          {filtered.length === 0 && (
+          {loading && (
+            <View style={styles.centered}>
+              <ActivityIndicator color="#3B82F6" size="large" />
+              <Text style={styles.loadingText}>Loading parcels...</Text>
+            </View>
+          )}
+
+          {!loading && filtered.length === 0 && (
             <View style={styles.empty}>
-              <Text style={{ fontSize: 52 }}>📦</Text>
+              <Text style={{ fontSize: 56 }}>📦</Text>
               <Text style={styles.emptyText}>No parcels found</Text>
+              <Text style={styles.emptyHint}>
+                {filter === 'All' ? 'Send your first parcel!' : `No ${filter.toLowerCase()} parcels`}
+              </Text>
               <TouchableOpacity style={styles.emptyBtn} onPress={() => router.push('/parcel-booking' as any)}>
                 <Text style={styles.emptyBtnText}>Send a Parcel →</Text>
               </TouchableOpacity>
             </View>
           )}
 
-          {filtered.map(parcel => (
-            <View key={parcel.id} style={styles.glassCard}>
-              <LinearGradient
-                colors={['rgba(255,255,255,0.8)', 'rgba(255,255,255,0.4)', 'rgba(240,249,255,0.9)']}
-                style={StyleSheet.absoluteFill}
-              />
+          {!loading && filtered.map(parcel => {
+            const cfg = statusCfg(parcel.status)
+            const steps: any[] = parcel.steps || parcel.timeline || []
+            const isExpanded = expanded === parcel.id
 
-              {/* Tracking ID + ETA */}
-              <View style={styles.trackingBox}>
-                <Text style={styles.trackingId}>
-                  Tracking ID: <Text style={{ fontWeight: '700' }}>{parcel.tracking_number}</Text>
-                </Text>
-                <Text style={styles.etaText}>
-                  Estimated Delivery: <Text style={{ fontWeight: '700' }}>{parcel.eta}</Text>
-                </Text>
-              </View>
+            return (
+              <View key={parcel.id} style={styles.glassCard}>
+                {/* Top Row: Tracking + Status */}
+                <View style={styles.cardTopRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.trackingId}>
+                      #{parcel.tracking_number || parcel.id?.slice(0, 8)?.toUpperCase()}
+                    </Text>
+                    <Text style={styles.etaText} numberOfLines={1}>
+                      {parcel.receiver_address || parcel.dropoff_address || 'Delivery address'}
+                    </Text>
+                  </View>
+                  <View style={[styles.statusBadge, { backgroundColor: cfg.color + '22', borderColor: cfg.color }]}>
+                    <Text style={[styles.statusBadgeText, { color: cfg.color }]}>{cfg.label}</Text>
+                  </View>
+                </View>
 
-              {/* Expand/collapse */}
-              <TouchableOpacity onPress={() => setExpanded(expanded === parcel.id ? null : parcel.id)}>
-                <Text style={styles.expandToggle}>{expanded === parcel.id ? 'Hide Timeline ▲' : 'Show Timeline ▼'}</Text>
-              </TouchableOpacity>
+                {/* ETA */}
+                {parcel.eta && (
+                  <View style={styles.etaRow}>
+                    <Feather name="clock" size={12} color="#94A3B8" />
+                    <Text style={styles.etaLabel}>ETA: <Text style={{ color: '#fff', fontWeight: '700' }}>{parcel.eta}</Text></Text>
+                  </View>
+                )}
 
-              {expanded === parcel.id && (
-                <View style={styles.timeline}>
-                  {parcel.steps.map((step, i) => (
-                    <View key={i} style={styles.timelineRow}>
-                      <View style={styles.timelineLeft}>
-                        <StepIcon status={step.status} />
-                        {i < parcel.steps.length - 1 && (
-                          <View style={[styles.timelineConnector, { backgroundColor: step.status === 'done' ? '#22C55E' : '#3B82F6' }]} />
-                        )}
-                      </View>
-                      <View style={styles.timelineContent}>
-                        <View style={styles.timelineContentRow}>
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.stepTitle}>{step.label}</Text>
-                            <Text style={styles.stepDate}>{step.date}</Text>
-                          </View>
-                          <StepBadge status={step.status} />
+                {/* Expand Toggle */}
+                {steps.length > 0 && (
+                  <TouchableOpacity onPress={() => setExpanded(isExpanded ? null : parcel.id)}>
+                    <Text style={styles.expandToggle}>
+                      {isExpanded ? '▲ Hide Timeline' : '▼ Show Timeline'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* Timeline */}
+                {isExpanded && steps.length > 0 && (
+                  <View style={styles.timeline}>
+                    {steps.map((step: any, i: number) => (
+                      <View key={i} style={styles.timelineRow}>
+                        <View style={styles.timelineLeft}>
+                          <StepIcon status={step.status} />
+                          {i < steps.length - 1 && (
+                            <View style={[styles.connector, { backgroundColor: step.status === 'done' ? '#22C55E' : '#334155' }]} />
+                          )}
+                        </View>
+                        <View style={styles.timelineContent}>
+                          <Text style={styles.stepTitle}>{step.label}</Text>
+                          <Text style={styles.stepDate}>{step.date}</Text>
                         </View>
                       </View>
-                    </View>
-                  ))}
-                </View>
-              )}
-
-              {/* Fragile Alert */}
-              {parcel.is_fragile && (
-                <View style={styles.fragileBox}>
-                  <View style={styles.fragileIcon}>
-                    <MaterialCommunityIcons name="glass-fragile" size={22} color="white" />
+                    ))}
                   </View>
-                  <View>
-                    <Text style={styles.fragileTitle}>Fragile Item</Text>
-                    <Text style={styles.fragileSub}>Handle with Care: {parcel.fragile_type}</Text>
-                  </View>
-                </View>
-              )}
+                )}
 
-              {/* Recipient */}
-              <View style={styles.recipientBox}>
-                <Text style={styles.recipientTitle}>Recipient Details</Text>
-                <Text style={styles.recipientName}>{parcel.receiver_name}</Text>
-                <Text style={styles.recipientAddr}>{parcel.receiver_address}</Text>
+                {/* Fragile Alert */}
+                {parcel.is_fragile && (
+                  <View style={styles.fragileRow}>
+                    <MaterialCommunityIcons name="glass-fragile" size={14} color="#EF4444" />
+                    <Text style={styles.fragileText}>Fragile — Handle with care</Text>
+                  </View>
+                )}
+
+                {/* Receiver */}
+                {parcel.receiver_name && (
+                  <View style={styles.receiverRow}>
+                    <Ionicons name="person-outline" size={14} color="#64748B" />
+                    <Text style={styles.receiverText}>{parcel.receiver_name}</Text>
+                  </View>
+                )}
+                {/* Live Track Button */}
+                {(parcel.status === 'in_transit' || parcel.status === 'pickup_done') && (
+                  <TouchableOpacity
+                    style={{ marginTop: 12, backgroundColor: '#3B82F6', borderRadius: 12, paddingVertical: 10, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6 }}
+                    onPress={() => router.push({ pathname: '/track', params: { tripId: parcel.trip_id, isParcel: 'true' } } as any)}
+                  >
+                    <Feather name="map" size={16} color="#fff" />
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Track Live on Map</Text>
+                  </TouchableOpacity>
+                )}
               </View>
-            </View>
-          ))}
+            )
+          })}
         </ScrollView>
       </SafeAreaView>
     </View>
   )
 }
 
-
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#E0F2FE' },
-  mapBg: { ...(StyleSheet.absoluteFill as any), zIndex: 0 },
+  root: { flex: 1 },
   safeArea: { flex: 1 },
 
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 20, paddingVertical: 16,
   },
-  headerTitle: { fontSize: 20, fontWeight: '700', color: '#000' },
+  headerTitle: { fontSize: 22, fontWeight: '800', color: '#FFFFFF' },
+  sendBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: '#3B82F6', borderRadius: 20,
+    paddingHorizontal: 14, paddingVertical: 8,
+  },
+  sendBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
 
   filterRow: { flexDirection: 'row', paddingHorizontal: 20, gap: 8, marginBottom: 12 },
   filterPill: {
     paddingHorizontal: 18, paddingVertical: 8, borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.5)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.8)',
+    backgroundColor: 'rgba(255,255,255,0.1)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)',
   },
   filterPillActive: { backgroundColor: '#2563EB', borderColor: '#2563EB' },
-  filterText: { fontSize: 13, fontWeight: '600', color: '#475569' },
+  filterText: { fontSize: 13, fontWeight: '600', color: 'rgba(255,255,255,0.65)' },
   filterTextActive: { color: '#FFFFFF' },
 
   scroll: { flex: 1, paddingHorizontal: 16 },
 
-  glassCard: {
-    borderRadius: 28, borderWidth: 1, borderColor: 'rgba(255,255,255,0.6)',
-    backgroundColor: 'rgba(255,255,255,0.6)', overflow: 'hidden',
-    shadowColor: '#0C4A6E', shadowOpacity: 0.1, shadowRadius: 20, elevation: 5,
-    marginBottom: 16, padding: 20,
-  },
-
-  trackingBox: {
-    backgroundColor: 'rgba(255,255,255,0.5)', borderRadius: 16, padding: 14, marginBottom: 12,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.8)',
-    shadowColor: '#93C5FD', shadowOpacity: 0.2, shadowRadius: 4,
-  },
-  trackingId: { color: '#000', fontSize: 14, fontWeight: '500', marginBottom: 2 },
-  etaText: { color: '#000', fontSize: 14, fontWeight: '500' },
-  expandToggle: { color: '#2563EB', fontWeight: '600', fontSize: 13, marginBottom: 12 },
-
-  timeline: { marginBottom: 16 },
-  timelineRow: { flexDirection: 'row', marginBottom: 0 },
-  timelineLeft: { alignItems: 'center', marginRight: 14, width: 48 },
-  stepCircle: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', zIndex: 2 },
-  timelineConnector: { width: 2, flex: 1, minHeight: 32, marginVertical: 2 },
-  timelineContent: { flex: 1, paddingTop: 4, paddingBottom: 20 },
-  timelineContentRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingRight: 4 },
-  stepTitle: { color: '#000', fontSize: 17, fontWeight: '700', marginBottom: 2 },
-  stepDate: { color: '#6B7280', fontSize: 13 },
-  stepBadge: { paddingHorizontal: 12, height: 24, justifyContent: 'center', borderRadius: 20, marginTop: 4 },
-  stepBadgeLarge: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 14, marginTop: 4 },
-  stepBadgeText: { color: '#FFF', fontSize: 11, fontWeight: '700' },
-
-  fragileBox: {
-    backgroundColor: 'rgba(255,255,255,0.6)', borderRadius: 16, padding: 14, marginBottom: 12,
-    flexDirection: 'row', alignItems: 'center',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.8)',
-    shadowColor: '#EF4444', shadowOpacity: 0.1, shadowRadius: 4,
-  },
-  fragileIcon: {
-    width: 48, height: 48, borderRadius: 24, backgroundColor: '#EF4444',
-    alignItems: 'center', justifyContent: 'center', marginRight: 14,
-    shadowColor: '#EF4444', shadowOpacity: 0.3, shadowRadius: 6, elevation: 3,
-  },
-  fragileTitle: { color: '#000', fontWeight: '700', fontSize: 15, marginBottom: 2 },
-  fragileSub: { color: '#6B7280', fontSize: 13 },
-
-  recipientBox: {
-    backgroundColor: 'rgba(255,255,255,0.6)', borderRadius: 16, padding: 14,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.8)',
-    shadowColor: '#93C5FD', shadowOpacity: 0.1, shadowRadius: 4,
-  },
-  recipientTitle: { color: '#000', fontWeight: '700', fontSize: 14, marginBottom: 4 },
-  recipientName: { color: '#1E293B', fontSize: 15, fontWeight: '500', marginBottom: 2 },
-  recipientAddr: { color: '#6B7280', fontSize: 13 },
-
+  centered: { alignItems: 'center', paddingTop: 60 },
+  loadingText: { color: '#64748B', marginTop: 12 },
   empty: { alignItems: 'center', paddingVertical: 60 },
-  emptyText: { fontSize: 16, fontWeight: '600', color: '#475569', marginTop: 12, marginBottom: 20 },
+  emptyText: { fontSize: 16, fontWeight: '700', color: '#FFFFFF', marginTop: 12 },
+  emptyHint: { color: '#64748B', fontSize: 13, marginTop: 4, marginBottom: 24 },
   emptyBtn: { backgroundColor: '#2563EB', borderRadius: 14, paddingHorizontal: 24, paddingVertical: 12 },
   emptyBtnText: { color: '#FFF', fontWeight: '700', fontSize: 14 },
+
+  glassCard: {
+    backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 20,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+    padding: 16, marginBottom: 14,
+  },
+
+  cardTopRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 },
+  trackingId: { color: '#FFFFFF', fontWeight: '700', fontSize: 14, marginBottom: 4 },
+  etaText: { color: '#94A3B8', fontSize: 12 },
+  statusBadge: {
+    borderRadius: 10, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 4, marginLeft: 10,
+  },
+  statusBadgeText: { fontSize: 11, fontWeight: '700' },
+
+  etaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
+  etaLabel: { color: '#94A3B8', fontSize: 12 },
+
+  expandToggle: { color: '#3B82F6', fontWeight: '600', fontSize: 13, marginVertical: 8 },
+
+  timeline: { marginTop: 8, marginBottom: 8 },
+  timelineRow: { flexDirection: 'row', marginBottom: 0 },
+  timelineLeft: { alignItems: 'center', marginRight: 12, width: 40 },
+  stepCircle: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', zIndex: 2 },
+  connector: { width: 2, flex: 1, minHeight: 24, marginVertical: 2 },
+  timelineContent: { flex: 1, paddingTop: 6, paddingBottom: 20 },
+  stepTitle: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },
+  stepDate: { color: '#64748B', fontSize: 12, marginTop: 2 },
+
+  fragileRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 },
+  fragileText: { color: '#EF4444', fontSize: 12, fontWeight: '600' },
+
+  receiverRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
+  receiverText: { color: '#64748B', fontSize: 12 },
 })

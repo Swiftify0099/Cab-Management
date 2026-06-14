@@ -1,25 +1,28 @@
 /**
- * Driver Earnings / Wallet Tab — pixel-perfect from stitch:
- * saas_wallet_transactions/SaasWalletTransactions.tsx
+ * Driver Earnings / Wallet Tab
+ * Phase 3 (P3.5): Real transaction data from /driver/transactions + /driver/earnings
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   View, Text, TouchableOpacity, ScrollView,
-  StyleSheet, StatusBar, ActivityIndicator,
+  StyleSheet, StatusBar, ActivityIndicator, RefreshControl,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
+import { useFocusEffect } from 'expo-router'
 import { api } from '../../src/api/client'
 
-const MOCK_TXS = [
-  { id: '1', label: 'Trip: Pune → Mumbai',        date: 'Today, 9:30 AM',   amount: +480, status: 'Success',  icon: 'car',        color: '#D1FAE5', iconColor: '#065F46' },
-  { id: '2', label: 'Parcel Delivery Bonus',       date: 'Today, 7:15 AM',   amount: +120, status: 'Success',  icon: 'cube-outline', color: '#DBEAFE', iconColor: '#1D4ED8' },
-  { id: '3', label: 'Fuel Reimbursement',          date: 'Yesterday',        amount: +95,  status: 'Pending',  icon: 'water',      color: '#FEF9C3', iconColor: '#92400E' },
-  { id: '4', label: 'Trip: Nashik → Pune',         date: 'Yesterday',        amount: +380, status: 'Success',  icon: 'car',        color: '#D1FAE5', iconColor: '#065F46' },
-  { id: '5', label: 'Platform Fee',                date: '3 days ago',       amount: -50,  status: 'Deducted', icon: 'cash',       color: '#FCE7F3', iconColor: '#9D174D' },
-  { id: '6', label: 'Incentive — Weekend Bonus',   date: '4 days ago',       amount: +200, status: 'Success',  icon: 'gift-outline', color: '#EDE9FE', iconColor: '#5B21B6' },
-]
+interface Transaction {
+  id: string
+  label: string
+  date: string
+  amount: number
+  status: 'Success' | 'Pending' | 'Deducted'
+  icon: string
+  color: string
+  iconColor: string
+}
 
 const STATUS_PILL: Record<string, { bg: string; text: string }> = {
   Success:  { bg: '#D1FAE5', text: '#065F46' },
@@ -29,36 +32,69 @@ const STATUS_PILL: Record<string, { bg: string; text: string }> = {
 
 export default function EarningsScreen() {
   const [tab, setTab] = useState<'week' | 'month' | 'year'>('week')
-  const [balance, setBalance] = useState(4520)
-  const [loading, setLoading] = useState(false)
+  const [balance, setBalance] = useState(0)
+  const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
 
-  useEffect(() => { fetchEarnings() }, [])
-
-  const fetchEarnings = async () => {
-    setLoading(true)
+  const load = useCallback(async (period = tab) => {
     try {
-      const res = await api.get(`/driver/earnings`)
-      if (res.data?.data?.total_earnings) setBalance(res.data.data.total_earnings)
-    } catch { } finally { setLoading(false) }
-  }
+      const [earningsRes, txRes] = await Promise.allSettled([
+        api.get(`/driver/earnings?period=${period}`),
+        api.get(`/driver/transactions?period=${period}&limit=20`),
+      ])
+      if (earningsRes.status === 'fulfilled') {
+        const data = earningsRes.value.data?.data
+        setBalance(data?.total_earnings || data?.wallet_balance || 0)
+      }
+      if (txRes.status === 'fulfilled') {
+        const raw = txRes.value.data?.data || []
+        // Normalize API shape to our display format
+        const normalised: Transaction[] = raw.map((t: any) => ({
+          id: t.id || t._id,
+          label: t.description || t.label || 'Transaction',
+          date: t.created_at
+            ? new Date(t.created_at).toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+            : t.date || '—',
+          amount: typeof t.amount === 'number' ? t.amount : parseFloat(t.amount || '0'),
+          status: t.status || (t.amount > 0 ? 'Success' : 'Deducted'),
+          icon: t.type === 'trip' ? 'car' : t.type === 'parcel' ? 'cube-outline' : t.type === 'incentive' ? 'gift-outline' : 'cash',
+          color: t.amount >= 0 ? '#D1FAE5' : '#FCE7F3',
+          iconColor: t.amount >= 0 ? '#065F46' : '#9D174D',
+        }))
+        setTransactions(normalised)
+      }
+    } catch { } finally {
+      setLoading(false); setRefreshing(false)
+    }
+  }, [tab])
+
+  // Reload when tab comes into focus
+  useFocusEffect(useCallback(() => { load() }, [load]))
+
+  const onRefresh = () => { setRefreshing(true); load() }
 
   return (
     <View style={styles.root}>
       <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" />
       <SafeAreaView style={{ backgroundColor: '#F8FAFC' }} edges={['top']}>
-        {/* Header */}
         <View style={styles.header}>
           <View style={styles.headerAvatar}>
             <Feather name="user" size={20} color="#FFFFFF" />
           </View>
           <Text style={styles.headerTitle}>Wallet</Text>
-          <TouchableOpacity>
-            <Feather name="bell" size={24} color="#0F172A" />
+          <TouchableOpacity onPress={onRefresh}>
+            <Feather name="refresh-cw" size={22} color="#0F172A" />
           </TouchableOpacity>
         </View>
       </SafeAreaView>
 
-      <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 32 }}>
+      <ScrollView
+        style={styles.scroll}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 32 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      >
 
         {/* Balance Banner */}
         <View style={styles.balanceBanner}>
@@ -104,7 +140,7 @@ export default function EarningsScreen() {
             <TouchableOpacity
               key={p}
               style={[styles.periodBtn, tab === p && styles.periodBtnActive]}
-              onPress={() => setTab(p)}
+              onPress={() => { setTab(p); load(p) }}
             >
               <Text style={[styles.periodBtnText, tab === p && styles.periodBtnTextActive]}>
                 {p.charAt(0).toUpperCase() + p.slice(1)}
@@ -157,25 +193,43 @@ export default function EarningsScreen() {
           </TouchableOpacity>
         </View>
 
-        {MOCK_TXS.map(tx => (
-          <View key={tx.id} style={styles.txRow}>
-            <View style={[styles.txIcon, { backgroundColor: tx.color }]}>
-              <Ionicons name={tx.icon as any} size={22} color={tx.iconColor} />
-            </View>
-            <View style={styles.txInfo}>
-              <Text style={styles.txLabel}>{tx.label}</Text>
-              <Text style={styles.txDate}>{tx.date}</Text>
-            </View>
-            <View style={styles.txRight}>
-              <Text style={[styles.txAmount, { color: tx.amount > 0 ? '#065F46' : '#9D174D' }]}>
-                {tx.amount > 0 ? '+' : ''}₹{Math.abs(tx.amount)}
-              </Text>
-              <View style={[styles.txPill, { backgroundColor: STATUS_PILL[tx.status].bg }]}>
-                <Text style={[styles.txPillText, { color: STATUS_PILL[tx.status].text }]}>{tx.status}</Text>
+        {/* Transactions */}
+        <View style={styles.txHeader}>
+          <Text style={styles.sectionTitle}>Recent Transactions</Text>
+          <TouchableOpacity style={styles.seeAllBtn}>
+            <Text style={styles.seeAllText}>See All</Text>
+          </TouchableOpacity>
+        </View>
+
+        {loading ? (
+          <ActivityIndicator color="#6366F1" size="large" style={{ marginVertical: 24 }} />
+        ) : transactions.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={{ fontSize: 40, marginBottom: 8 }}>📭</Text>
+            <Text style={styles.emptyText}>No transactions yet</Text>
+            <Text style={styles.emptySub}>Complete trips to see your earnings here</Text>
+          </View>
+        ) : (
+          transactions.map(tx => (
+            <View key={tx.id} style={styles.txRow}>
+              <View style={[styles.txIcon, { backgroundColor: tx.color }]}>
+                <Ionicons name={tx.icon as any} size={22} color={tx.iconColor} />
+              </View>
+              <View style={styles.txInfo}>
+                <Text style={styles.txLabel}>{tx.label}</Text>
+                <Text style={styles.txDate}>{tx.date}</Text>
+              </View>
+              <View style={styles.txRight}>
+                <Text style={[styles.txAmount, { color: tx.amount > 0 ? '#065F46' : '#9D174D' }]}>
+                  {tx.amount > 0 ? '+' : ''}₹{Math.abs(tx.amount)}
+                </Text>
+                <View style={[styles.txPill, { backgroundColor: STATUS_PILL[tx.status]?.bg || '#F1F5F9' }]}>
+                  <Text style={[styles.txPillText, { color: STATUS_PILL[tx.status]?.text || '#64748B' }]}>{tx.status}</Text>
+                </View>
               </View>
             </View>
-          </View>
-        ))}
+          ))
+        )}
 
       </ScrollView>
     </View>
@@ -245,4 +299,9 @@ const styles = StyleSheet.create({
   txAmount: { fontWeight: '800', fontSize: 16, marginBottom: 4 },
   txPill: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 },
   txPillText: { fontSize: 11, fontWeight: '700' },
+
+  // Empty state
+  emptyState: { alignItems: 'center', paddingVertical: 40 },
+  emptyText: { color: '#0F172A', fontWeight: '700', fontSize: 16, marginBottom: 6 },
+  emptySub: { color: '#94A3B8', fontSize: 13, textAlign: 'center' },
 })

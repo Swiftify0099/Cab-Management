@@ -8,29 +8,54 @@ import {
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
+import * as DocumentPicker from 'expo-document-picker'
+import { driverApi } from '../../api/client'
 
 const REQUIRED_DOCS = [
-  { id: 'dl', label: 'Driving License', icon: '🪪', desc: 'Front and back side' },
+  { id: 'driving_license', label: 'Driving License', icon: '🪪', desc: 'Front and back side' },
   { id: 'aadhaar', label: 'Aadhaar Card', icon: '📑', desc: 'Used for identity verification' },
-  { id: 'rc', label: 'Vehicle RC', icon: '📝', desc: 'Registration Certificate' },
-  { id: 'insurance', label: 'Vehicle Insurance', icon: '🛡️', desc: 'Valid insurance policy' },
+  { id: 'vehicle_rc', label: 'Vehicle RC', icon: '📝', desc: 'Registration Certificate' },
+  { id: 'vehicle_insurance', label: 'Vehicle Insurance', icon: '🛡️', desc: 'Valid insurance policy' },
+  { id: 'pan_card', label: 'PAN Card', icon: '💳', desc: 'For tax and payment purposes' }
 ]
 
 export default function DocumentsScreen() {
   const [uploads, setUploads] = useState<Record<string, 'pending' | 'uploading' | 'done'>>({
-    dl: 'pending',
+    driving_license: 'pending',
     aadhaar: 'pending',
-    rc: 'pending',
-    insurance: 'pending',
+    vehicle_rc: 'pending',
+    vehicle_insurance: 'pending',
+    pan_card: 'pending'
   })
   const [loading, setLoading] = useState(false)
 
-  const handleUpload = (docId: string) => {
-    // Mock upload process
-    setUploads(p => ({ ...p, [docId]: 'uploading' }))
-    setTimeout(() => {
+  const handleUpload = async (docId: string) => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['image/*', 'application/pdf'],
+        copyToCacheDirectory: true,
+      })
+
+      if (result.canceled || !result.assets || result.assets.length === 0) return
+
+      const asset = result.assets[0]
+
+      setUploads(p => ({ ...p, [docId]: 'uploading' }))
+
+      const formData = new FormData()
+      formData.append('file', {
+        uri: asset.uri,
+        name: asset.name,
+        type: asset.mimeType || 'application/octet-stream',
+      } as any)
+
+      await driverApi.uploadDocument(docId, formData)
+
       setUploads(p => ({ ...p, [docId]: 'done' }))
-    }, 1500)
+    } catch (e: any) {
+      setUploads(p => ({ ...p, [docId]: 'pending' }))
+      Alert.alert('Upload Failed', e?.response?.data?.detail || e.message || 'Could not upload document.')
+    }
   }
 
   const allUploaded = Object.values(uploads).every(v => v === 'done')
@@ -49,14 +74,14 @@ export default function DocumentsScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.logoBox}>
             <Text style={styles.logoEmoji}>📄</Text>
           </View>
           <Text style={styles.headerTitle}>Document Upload</Text>
-          <Text style={styles.headerSubtitle}>Please provide clear photos of these documents</Text>
+          <Text style={styles.headerSubtitle}>Please provide clear photos or PDFs</Text>
         </View>
 
         {/* Stepper */}
@@ -101,9 +126,9 @@ export default function DocumentsScreen() {
                     <ActivityIndicator size="small" color="#F59E0B" />
                   </View>
                 ) : (
-                  <View style={styles.doneBox}>
+                  <TouchableOpacity style={styles.doneBox} onPress={() => handleUpload(doc.id)}>
                     <Text style={styles.doneText}>✓ Done</Text>
-                  </View>
+                  </TouchableOpacity>
                 )}
               </View>
             )
@@ -112,7 +137,7 @@ export default function DocumentsScreen() {
 
         <View style={styles.infoBox}>
           <Text style={styles.infoTitle}>🔒 Secure Uploads</Text>
-          <Text style={styles.infoText}>Your documents are encrypted and stored securely. They are only used for verification purposes.</Text>
+          <Text style={styles.infoText}>Your documents are encrypted and stored securely. They are only used for KYC verification purposes.</Text>
         </View>
 
         <TouchableOpacity onPress={handleNext} disabled={loading || !allUploaded} activeOpacity={0.85}

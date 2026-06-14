@@ -70,16 +70,17 @@ export default function DriverOtpScreen() {
       const tokenData = res.data?.data || res.data
       const accessToken = tokenData.access_token || tokenData.access
       if (accessToken) {
+        // ── Store everything in SecureStore — single source of truth ──
         await SecureStore.setItemAsync('access_token', accessToken)
-        // Also store in AsyncStorage for hooks that use it
-        const { default: AsyncStorage } = await import('@react-native-async-storage/async-storage')
-        await AsyncStorage.setItem('access_token', accessToken)
         if (tokenData.refresh_token) {
-          await AsyncStorage.setItem('refresh_token', tokenData.refresh_token)
+          await SecureStore.setItemAsync('refresh_token', tokenData.refresh_token)
         }
+        // Store user metadata as JSON so hooks can read driver_id from SecureStore
         if (tokenData.user_id) {
-          await AsyncStorage.setItem('user_id', tokenData.user_id)
-          await AsyncStorage.setItem('user_role', tokenData.role || 'driver')
+          await SecureStore.setItemAsync('user_data', JSON.stringify({
+            id:      tokenData.user_id,
+            role:    tokenData.role || 'driver',
+          }))
         }
       }
       router.replace('/(tabs)/' as any)
@@ -96,6 +97,7 @@ export default function DriverOtpScreen() {
       setLoading(false)
     }
   }
+
 
   return (
     <View style={styles.root}>

@@ -52,6 +52,18 @@ const VEHICLE_TYPES = [
   { value: 'tempo_traveller', label: 'Tempo', icon: 'van-passenger', seats: 12 },
 ]
 
+// Vehicles registered and verified by the driver (fetched from API in Step 2)
+interface DriverVehicle {
+  id: string
+  vehicle_type: string
+  make: string
+  model: string
+  registration_number: string
+  total_seats: number
+  is_verified: boolean
+  icon?: string
+}
+
 const { height } = Dimensions.get('window')
 
 export default function CreateTripScreen() {
@@ -64,6 +76,27 @@ export default function CreateTripScreen() {
     const t = setTimeout(() => setIsMounted(true), 300)
     return () => clearTimeout(t)
   }, [])
+
+  // P3.4 — Load driver's verified vehicles when Step 2 is reached
+  useEffect(() => {
+    if (step !== 2 || myVehicles.length > 0) return
+    setVehiclesLoading(true)
+    api.get('/driver/my-vehicles')
+      .then(res => {
+        const data: DriverVehicle[] = res.data?.data || []
+        setMyVehicles(data)
+        // Auto-select first verified vehicle
+        const first = data.find(v => v.is_verified) || data[0]
+        if (first) {
+          update('vehicle_type', first.vehicle_type)
+          update('total_seats', first.total_seats)
+        }
+      })
+      .catch(() => {
+        // API not available — keep static VEHICLE_TYPES fallback
+      })
+      .finally(() => setVehiclesLoading(false))
+  }, [step])
 
   const [form, setForm] = useState({
     pickup_lat: 18.5204,
@@ -89,6 +122,9 @@ export default function CreateTripScreen() {
   const [fetchingRoute, setFetchingRoute] = useState(false)
   const [predictions, setPredictions] = useState<AutocompletePrediction[]>([])
   const [activeSearch, setActiveSearch] = useState<'pickup' | 'destination' | null>(null)
+  // P3.4 — Verified vehicles from API
+  const [myVehicles, setMyVehicles] = useState<DriverVehicle[]>([])
+  const [vehiclesLoading, setVehiclesLoading] = useState(false)
 
   // Map Drawing State
   const [pickupPolygon, setPickupPolygon] = useState<{latitude:number;longitude:number}[]>([])
@@ -239,16 +275,8 @@ export default function CreateTripScreen() {
         },
       })
     } catch (err: any) {
-      router.replace({
-        pathname: '/trip-live',
-        params: {
-          tripId: 'demo',
-          from: form.pickup_city_display,
-          to: form.destination_city_display,
-          totalSeats: form.total_seats.toString(),
-          departureTime: form.departure_time,
-        },
-      })
+      const msg = err?.response?.data?.detail || 'Could not publish trip. Please try again.'
+      Alert.alert('Publish Failed', msg)
     } finally {
       setLoading(false)
     }
@@ -435,14 +463,74 @@ export default function CreateTripScreen() {
             )}
 
             <Text style={[styles.label, { marginTop: 24 }]}>Vehicle Type</Text>
-            <View style={styles.vehicleGrid}>
-              {VEHICLE_TYPES.map(v => (
-                <TouchableOpacity key={v.value} onPress={() => { update('vehicle_type', v.value); update('total_seats', v.seats) }} style={[styles.vCard, form.vehicle_type === v.value && styles.vCardActive]}>
-                  <MaterialCommunityIcons name={v.icon as any} size={32} color={form.vehicle_type === v.value ? '#2563EB' : '#64748B'} />
-                  <Text style={[styles.vCardText, form.vehicle_type === v.value && styles.vCardTextActive]}>{v.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+
+            {vehiclesLoading ? (
+              <ActivityIndicator color="#3B82F6" style={{ marginVertical: 16 }} />
+            ) : myVehicles.length > 0 ? (
+              // ── API vehicles: driver's actual registered cars ──
+              <View style={styles.vehicleGrid}>
+                {myVehicles.map(v => {
+                  const meta = VEHICLE_TYPES.find(vt => vt.value === v.vehicle_type) || VEHICLE_TYPES[0]
+                  const isSelected = form.vehicle_type === v.vehicle_type && form.total_seats === v.total_seats
+                  return (
+                    <TouchableOpacity
+                      key={v.id}
+                      onPress={() => {
+                        if (!v.is_verified) {
+                          Alert.alert('Not Verified', `${v.make} ${v.model} is pending verification. Choose a verified vehicle.`)
+                          return
+                        }
+                        update('vehicle_type', v.vehicle_type)
+                        update('total_seats', v.total_seats)
+                      }}
+                      style={[
+                        styles.vCard,
+                        isSelected && styles.vCardActive,
+                        !v.is_verified && { opacity: 0.5 },
+                      ]}
+                    >
+                      <MaterialCommunityIcons
+                        name={meta.icon as any}
+                        size={32}
+                        color={isSelected ? '#2563EB' : '#64748B'}
+                      />
+                      <Text style={[styles.vCardText, isSelected && styles.vCardTextActive]}>
+                        {v.make} {v.model}
+                      </Text>
+                      <Text style={{ fontSize: 10, color: '#94A3B8', marginTop: 2 }}>
+                        {v.registration_number} • {v.total_seats} seats
+                      </Text>
+                      {v.is_verified
+                        ? <View style={styles.verifiedBadge}><Text style={styles.verifiedText}>✓ Verified</Text></View>
+                        : <View style={styles.pendingBadge}><Text style={styles.pendingText}>Pending</Text></View>
+                      }
+                    </TouchableOpacity>
+                  )
+                })}
+              </View>
+            ) : (
+              // ── Fallback: static vehicle type grid ──
+              <View>
+                <View style={[styles.vehicleGrid]}>
+                  {VEHICLE_TYPES.map(v => (
+                    <TouchableOpacity
+                      key={v.value}
+                      onPress={() => { update('vehicle_type', v.value); update('total_seats', v.seats) }}
+                      style={[styles.vCard, form.vehicle_type === v.value && styles.vCardActive]}
+                    >
+                      <MaterialCommunityIcons name={v.icon as any} size={32} color={form.vehicle_type === v.value ? '#2563EB' : '#64748B'} />
+                      <Text style={[styles.vCardText, form.vehicle_type === v.value && styles.vCardTextActive]}>{v.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <View style={styles.noVehicleBanner}>
+                  <Feather name="alert-circle" size={14} color="#B45309" />
+                  <Text style={styles.noVehicleText}>
+                    No verified vehicles found. Add a vehicle in your profile first.
+                  </Text>
+                </View>
+              </View>
+            )}
 
             <View style={{ flexDirection: 'row', gap: 16, marginTop: 20 }}>
               <View style={{ flex: 1 }}>
@@ -622,4 +710,22 @@ const styles = StyleSheet.create({
   // iOS Picker
   iosPickerBg: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
   iosPicker: { backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 40 },
+
+  // P3.4 — Verified vehicle badges
+  verifiedBadge: {
+    marginTop: 4, backgroundColor: '#D1FAE5', borderRadius: 6,
+    paddingHorizontal: 6, paddingVertical: 2, alignSelf: 'center',
+  },
+  verifiedText: { color: '#065F46', fontSize: 10, fontWeight: '700' },
+  pendingBadge: {
+    marginTop: 4, backgroundColor: '#FEF9C3', borderRadius: 6,
+    paddingHorizontal: 6, paddingVertical: 2, alignSelf: 'center',
+  },
+  pendingText: { color: '#92400E', fontSize: 10, fontWeight: '700' },
+  noVehicleBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: '#FFFBEB', borderRadius: 10, padding: 10, marginTop: 10,
+    borderWidth: 1, borderColor: '#FDE68A',
+  },
+  noVehicleText: { color: '#92400E', fontSize: 12, fontWeight: '600', flex: 1 },
 })

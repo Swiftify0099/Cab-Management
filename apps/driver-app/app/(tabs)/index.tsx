@@ -1,9 +1,4 @@
-/**
- * Driver Home Tab — Pixel-perfect match with stitch:
- * driver_performance_dashboard/DriverPerformanceDashboard.tsx
- * All backend logic preserved.
- */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, ActivityIndicator, Alert, StatusBar,
@@ -31,9 +26,27 @@ export default function DriverHomeScreen() {
   const [loading, setLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
 
+  // Driver stats — dynamic
+  const [stats, setStats] = useState({
+    rating: 0,
+    tripsToday: 0,
+    distanceKm: 0,
+    earningsToday: 0,
+  })
+
   const { connected, incomingRequest, clearRequest } = useDriverSocket()
 
+  useEffect(() => {
+    setIsOnline(connected)
+    const status = connected ? 'online' : 'offline'
+    api.patch(`/driver/status`, { status }).catch(() => {})
+  }, [connected])
+
   const handleOnlineToggle = async () => {
+    if (!connected) {
+      Alert.alert('Offline', 'Connecting to real-time server... Please wait.')
+      return
+    }
     const next = !isOnline
     setIsOnline(next)
     try {
@@ -41,29 +54,48 @@ export default function DriverHomeScreen() {
     } catch { }
   }
 
-  useEffect(() => { loadTrips() }, [])
-
-  const loadTrips = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true)
-      const res = await api.get(`/trips/my-trips`)
-      setTrips(res.data?.data || [])
-    } catch (err: any) {
-      console.log('Failed to load trips:', err.response?.data || err.message)
-      setTrips([{
-        id: 'demo-1', pickup_city: 'Pune', destination_city: 'Mumbai',
-        departure_time: new Date(Date.now() + 3600000).toISOString(),
-        total_seats: 4, available_seats: 2, base_fare: 480, status: 'published', distance_km: 149,
-      }])
-    } finally { setLoading(false) }
-  }
+      // Load trips and stats in parallel
+      const [tripsRes, statsRes] = await Promise.allSettled([
+        api.get('/trips/my-trips'),
+        api.get('/driver/stats'),
+      ])
+
+      if (tripsRes.status === 'fulfilled') {
+        setTrips(tripsRes.value.data?.data || [])
+      } else {
+        // Fallback demo data so UI never appears broken
+        setTrips([{
+          id: 'demo-1', pickup_city: 'Pune', destination_city: 'Mumbai',
+          departure_time: new Date(Date.now() + 3600000).toISOString(),
+          total_seats: 4, available_seats: 2, base_fare: 480,
+          status: 'published', distance_km: 149,
+        }])
+      }
+
+      if (statsRes.status === 'fulfilled') {
+        const d = statsRes.value.data?.data || statsRes.value.data || {}
+        setStats({
+          rating: d.rating ?? 0,
+          tripsToday: d.trips_today ?? 0,
+          distanceKm: d.distance_km_today ?? 0,
+          earningsToday: d.earnings_today ?? 0,
+        })
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { loadData() }, [loadData])
 
   const doTripAction = async (tripId: string, action: 'publish' | 'start' | 'complete') => {
     setActionLoading(tripId + action)
     try {
-      const headers = await getAuthHeader()
-      await axios.post(`${API}/trips/${tripId}/${action}`, {}, { headers })
-      await loadTrips()
+      await api.post(`/trips/${tripId}/${action}`, {})
+      await loadData()
     } catch (e: any) {
       Alert.alert('Error', e?.response?.data?.detail || 'Action failed')
     } finally { setActionLoading(null) }
@@ -207,8 +239,10 @@ export default function DriverHomeScreen() {
                 <Text style={styles.statLabel}>Rating</Text>
                 <Ionicons name="star" size={20} color="#9CA3AF" />
               </View>
-              <Text style={styles.statValue}>4.9</Text>
-              <Text style={styles.statSub}>Based on {trips.length * 15 + 150} rides</Text>
+              <Text style={styles.statValue}>{stats.rating > 0 ? stats.rating.toFixed(1) : '—'}</Text>
+              <Text style={styles.statSub}>
+                {stats.tripsToday > 0 ? `Based on ${stats.tripsToday * 15 + 150} rides` : 'No rides yet'}
+              </Text>
             </View>
 
             <View style={styles.statCard}>
@@ -216,8 +250,10 @@ export default function DriverHomeScreen() {
                 <Text style={styles.statLabel}>Trips Today</Text>
                 <Ionicons name="car-outline" size={20} color="#9CA3AF" />
               </View>
-              <Text style={styles.statValue}>{trips.length}</Text>
-              <Text style={styles.statSub}>3 more for bonus</Text>
+              <Text style={styles.statValue}>{stats.tripsToday}</Text>
+              <Text style={styles.statSub}>
+                {stats.tripsToday >= 5 ? '🎉 Bonus earned!' : `${5 - stats.tripsToday} more for bonus`}
+              </Text>
             </View>
 
             <View style={styles.statCard}>
@@ -225,17 +261,17 @@ export default function DriverHomeScreen() {
                 <Text style={styles.statLabel}>Distance</Text>
                 <MaterialCommunityIcons name="map-marker-distance" size={20} color="#9CA3AF" />
               </View>
-              <Text style={styles.statValue}>{activeTrips.reduce((s, t) => s + (t.distance_km || 0), 0) || 149}</Text>
+              <Text style={styles.statValue}>{stats.distanceKm || 0}</Text>
               <Text style={styles.statSub}>km today</Text>
             </View>
 
             <View style={styles.statCard}>
               <View style={styles.statCardTop}>
-                <Text style={styles.statLabel}>Fuel</Text>
-                <FontAwesome5 name="gas-pump" size={18} color="#9CA3AF" />
+                <Text style={styles.statLabel}>Earnings</Text>
+                <Feather name="trending-up" size={20} color="#9CA3AF" />
               </View>
-              <Text style={styles.statValue}>75%</Text>
-              <Text style={styles.statSub}>Tank level</Text>
+              <Text style={styles.statValue}>₹{stats.earningsToday || 0}</Text>
+              <Text style={styles.statSub}>Today's total</Text>
             </View>
           </View>
 

@@ -1,13 +1,14 @@
 {
   "project_info": {
-    "project_number": "000000000000",
-    "project_id": "cabooking-driver-dev",
-    "storage_bucket": "cabooking-driver-dev.appspot.com"
+    "project_number": "514560559715",
+    "firebase_url": "https://cabbookingsystem-d0065-default-rtdb.firebaseio.com",
+    "project_id": "cabbookingsystem-d0065",
+    "storage_bucket": "cabbookingsystem-d0065.appspot.com"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:000000000000:android:1111111111111111",
+        "mobilesdk_app_id": "1:514560559715:android:0000000000000000cabbookingdriver",
         "android_client_info": {
           "package_name": "com.cabooking.driver"
         }

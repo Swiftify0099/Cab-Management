@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   LayoutDashboard, Car, Users, Map, Package, Hotel, DollarSign,
   Tag, Palette, BadgeCheck, BarChart3, Settings, ChevronLeft,
-  ChevronRight, LogOut
+  ChevronRight, LogOut, LifeBuoy
 } from 'lucide-react'
 import { useAuthStore } from '../../store/auth.store'
 import toast from 'react-hot-toast'
@@ -24,6 +24,7 @@ const navItems = [
   { path: '/coupons',    icon: Tag,             label: 'Coupons',      section: 'business' },
   { path: '/kyc',        icon: BadgeCheck,      label: 'KYC Review',   section: 'operations' },
   { path: '/analytics',  icon: BarChart3,       label: 'Analytics',    section: 'operations' },
+  { path: '/support',    icon: LifeBuoy,        label: 'Support',      section: 'operations' },
   { path: '/themes',     icon: Palette,         label: 'Themes',       section: 'config' },
   { path: '/settings',   icon: Settings,        label: 'Settings',     section: 'config' },
 ]

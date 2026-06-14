@@ -127,6 +127,21 @@ class ParcelService:
             expire_seconds=86400 * 7,
         )
 
+        # Notify Driver of new parcel request
+        await publish_event(
+            f"driver:{trip.driver_id}:events",
+            {
+                "event": "NEW_PARCEL_REQUEST",
+                "parcel_id": str(parcel.id),
+                "tracking_number": tracking_number,
+                "pickup": "Pickup Area",
+                "drop": parcel.receiver_address,
+                "weight": parcel.weight_kg,
+                "fare": float(fare),
+                "sender": parcel.sender_name,
+            }
+        )
+
         logger.info(
             "Parcel booked",
             parcel_id=str(parcel.id),
@@ -238,6 +253,7 @@ class ParcelService:
             {
                 "id": str(p.id),
                 "tracking_number": p.tracking_number,
+                "trip_id": str(p.trip_id),
                 "status": p.status.value,
                 "sender_name": p.sender_name,
                 "receiver_name": p.receiver_name,
@@ -253,3 +269,68 @@ class ParcelService:
             select(Trip).where(Trip.id == UUID(trip_id))
         )
         return result.scalar_one_or_none()
+
+    async def get_driver_requests(self, driver_id: str) -> list:
+        """Get pending parcel requests assigned to this driver's active trips."""
+        result = await self.db.execute(
+            select(Parcel)
+            .where(
+                and_(
+                    Parcel.driver_id == UUID(driver_id),
+                    Parcel.status == ParcelStatus.PENDING,
+                )
+            )
+            .order_by(Parcel.created_at.desc())
+        )
+        parcels = result.scalars().all()
+        
+        requests = []
+        for p in parcels:
+            trip = await self._get_trip(str(p.trip_id))
+            requests.append({
+                "id": str(p.id),
+                "pickup": "Pickup Area",  # Mocked, real app would reverse geocode trip pickup
+                "drop": p.receiver_address,
+                "weight": p.weight_kg,
+                "fare": float(p.fare),
+                "distance": trip.distance_km if trip else 0,
+                "sender": p.sender_name,
+            })
+        return requests
+
+    async def respond_to_request(self, parcel_id: str, driver_id: str, action: str) -> dict:
+        """Driver accepts or declines a parcel request."""
+        result = await self.db.execute(
+            select(Parcel).where(Parcel.id == UUID(parcel_id))
+        )
+        parcel = result.scalar_one_or_none()
+        if not parcel:
+            raise ValueError("Parcel request not found")
+
+        if str(parcel.driver_id) != driver_id:
+            raise ValueError("You are not authorized to respond to this request")
+            
+        if parcel.status != ParcelStatus.PENDING:
+            raise ValueError(f"Parcel is already {parcel.status.value}")
+
+        if action == "accept":
+            parcel.status = ParcelStatus.ACCEPTED
+        elif action == "decline":
+            parcel.status = ParcelStatus.REJECTED
+        else:
+            raise ValueError("Invalid action. Must be 'accept' or 'decline'")
+
+        await self.db.commit()
+        
+        # Notify customer
+        await publish_event(
+            f"customer:{parcel.customer_id}:events",
+            {
+                "event": "PARCEL_REQUEST_RESPONDED",
+                "parcel_id": parcel_id,
+                "tracking_number": parcel.tracking_number,
+                "status": parcel.status.value,
+            },
+        )
+        
+        return {"parcel_id": parcel_id, "status": parcel.status.value}

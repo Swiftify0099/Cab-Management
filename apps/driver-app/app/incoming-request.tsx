@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,15 +7,13 @@ import {
   StyleSheet,
   ActivityIndicator,
   Platform,
+  Vibration,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import MapView, { PROVIDER_GOOGLE, PROVIDER_DEFAULT } from 'react-native-maps';
-import axios from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
-const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1';
+import { api } from '../src/api/client';
 
 interface Props {
   request: any
@@ -28,8 +26,44 @@ export default function IncomingRequestScreen({ request, onDismiss }: Props) {
   const [responding, setResponding] = useState(false);
   const [mapError, setMapError]     = useState(false);
 
-  const mountedRef = React.useRef(true);
+  const mountedRef  = React.useRef(true);
+  const soundRef    = useRef<any>(null);  // expo-av Audio.Sound instance
+
   useEffect(() => { return () => { mountedRef.current = false } }, []);
+
+  // ── Sound alert: load + play loop while card is shown ────────────────
+  useEffect(() => {
+    let sound: any = null;
+    const startSound = async () => {
+      try {
+        const { Audio } = await import('expo-av');
+        await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
+        const { sound: s } = await Audio.Sound.createAsync(
+          { uri: 'https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg' },
+          { shouldPlay: true, isLooping: true, volume: 1.0 }
+        );
+        sound = s;
+        soundRef.current = s;
+      } catch {
+        // expo-av not available (Expo Go / bare) — use vibration fallback
+        Vibration.vibrate([0, 400, 200, 400], true);
+      }
+    };
+    startSound();
+    return () => {
+      sound?.stopAsync().catch(() => {});
+      sound?.unloadAsync().catch(() => {});
+      soundRef.current = null;
+      Vibration.cancel();
+    };
+  }, []);
+
+  const stopAlerts = useCallback(() => {
+    soundRef.current?.stopAsync().catch(() => {});
+    soundRef.current?.unloadAsync().catch(() => {});
+    soundRef.current = null;
+    Vibration.cancel();
+  }, []);
 
   // ── 40-second countdown ──────────────────────────────────────────────
   useEffect(() => {
@@ -38,7 +72,7 @@ export default function IncomingRequestScreen({ request, onDismiss }: Props) {
       setTimeLeft(t => {
         if (t <= 1) {
           clearInterval(timer);
-          // Auto-dismiss on timeout — booking stays in pending state for other drivers
+          stopAlerts();
           onDismiss();
           return 0;
         }
@@ -46,20 +80,18 @@ export default function IncomingRequestScreen({ request, onDismiss }: Props) {
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, []); // Run once on mount
+  }, [stopAlerts]); // stopAlerts is stable (useCallback)
 
   // ── API helpers ──────────────────────────────────────────────────────
   const respondToRequest = useCallback(async (accepted: boolean) => {
     if (responding) return;
     setResponding(true);
     try {
-      const token = await AsyncStorage.getItem('access_token');
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      await axios.post(`${API}/matching/respond`, {
+      await api.post('/matching/respond', {
         booking_id:         request?.booking_id,
         accepted,
         pending_booking_id: request?.pending_booking_id ?? null,
-      }, { headers });
+      });
     } catch (e: any) {
       console.warn('[IncomingRequest] Respond error:', e?.response?.data || e.message);
     } finally {
@@ -68,12 +100,14 @@ export default function IncomingRequestScreen({ request, onDismiss }: Props) {
   }, [request?.booking_id, responding]);
 
   const handleAccept = async () => {
+    stopAlerts();
     await respondToRequest(true);
     onDismiss();
     router.push(`/active-trip?bookingId=${request?.booking_id || ''}`);
   };
 
   const handleReject = async () => {
+    stopAlerts();
     await respondToRequest(false);
     onDismiss();
   };
@@ -99,10 +133,6 @@ export default function IncomingRequestScreen({ request, onDismiss }: Props) {
             // Use Google provider only on Android; default on iOS to avoid SDK crash
             provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : PROVIDER_DEFAULT}
             style={StyleSheet.absoluteFill}
-            onError={(e) => {
-              console.warn('[IncomingRequest] MapView error:', e.nativeEvent)
-              setMapError(true)
-            }}
             initialRegion={{
               latitude:      request?.pickup_lat || request?.trip?.pickup_lat || 19.0760,
               longitude:     request?.pickup_lng || request?.trip?.pickup_lon || 72.8777,
@@ -134,6 +164,11 @@ export default function IncomingRequestScreen({ request, onDismiss }: Props) {
             <Text style={styles.title}>Incoming Ride Request</Text>
             <Text style={{ fontSize: 22 }}>🚨</Text>
           </View>
+          {(request?.paid) && (
+            <View style={styles.paidBadge}>
+              <Text style={styles.paidBadgeText}>✅ PAID — Customer confirmed</Text>
+            </View>
+          )}
 
           {/* Trip Details */}
           <View style={styles.detailsCard}>
@@ -212,4 +247,6 @@ const styles = StyleSheet.create({
   rejectText:   { color: '#fff', fontSize: 17, fontWeight: '500' },
   acceptBtn:    { flex: 1, paddingVertical: 16, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#4ADE80', shadowColor: '#22C55E', shadowOpacity: 0.4, shadowRadius: 10, elevation: 5 },
   acceptText:   { color: '#064E3B', fontSize: 17, fontWeight: 'bold' },
+  paidBadge:    { backgroundColor: 'rgba(34,197,94,0.15)', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 6, borderWidth: 1, borderColor: 'rgba(34,197,94,0.4)', alignSelf: 'flex-start', marginBottom: 12 },
+  paidBadgeText:{ color: '#4ADE80', fontSize: 13, fontWeight: '700' },
 });

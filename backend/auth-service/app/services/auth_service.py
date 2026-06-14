@@ -18,6 +18,7 @@ from common.utils.jwt import (
 )
 from common.utils.redis_client import blacklist_token
 from fastapi import HTTPException, status
+from app.core.config import auth_settings
 
 logger = structlog.get_logger(__name__)
 
@@ -31,10 +32,19 @@ async def create_user_if_not_exists(
     Get existing user or create new one.
     Returns (user, is_new).
     """
+    # Security: do not allow creating/upgrading to ADMIN via OTP
+    if role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+        role = UserRole.CUSTOMER
+
     result = await db.execute(select(User).where(User.phone == phone))
     user = result.scalar_one_or_none()
 
     if user:
+        # If user exists but role is different, update it (except for admins)
+        if user.role != role and user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+            user.role = role
+            await db.flush()
+            logger.info("User role upgraded", user_id=str(user.id), new_role=role.value)
         return user, False
 
     # New user
@@ -50,6 +60,60 @@ async def create_user_if_not_exists(
     await db.refresh(user)
 
     logger.info("New user created", user_id=str(user.id), phone=phone, role=role.value)
+    return user, True
+
+
+async def create_or_get_google_user(
+    db: AsyncSession,
+    email: str,
+    sub: str,
+    role: UserRole = UserRole.CUSTOMER,
+) -> Tuple[User, bool]:
+    """
+    Get existing user by email, or create new one with google_sub placeholder for phone.
+    """
+    # Security: do not allow creating/upgrading to ADMIN via Google
+    if role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+        role = UserRole.CUSTOMER
+
+    if email:
+        result = await db.execute(select(User).where(User.email == email))
+        user = result.scalar_one_or_none()
+        if user:
+            if user.role != role and user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+                user.role = role
+                await db.flush()
+                logger.info("User role upgraded via Google", user_id=str(user.id), new_role=role.value)
+            return user, False
+
+    # Try fallback to placeholder phone just in case
+    placeholder_phone = f"google_{sub}"
+    result = await db.execute(select(User).where(User.phone == placeholder_phone))
+    user = result.scalar_one_or_none()
+    if user:
+        if email and not user.email:
+            user.email = email
+            await db.flush()
+        if user.role != role and user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+            user.role = role
+            await db.flush()
+            logger.info("User role upgraded via Google", user_id=str(user.id), new_role=role.value)
+        return user, False
+
+    # New Google user
+    user = User(
+        phone=placeholder_phone,
+        email=email,
+        role=role,
+        is_verified=True,  # Google verified
+        is_active=True,
+        is_profile_complete=False,
+    )
+    db.add(user)
+    await db.flush()
+    await db.refresh(user)
+
+    logger.info("New Google user created", user_id=str(user.id), email=email, role=role.value)
     return user, True
 
 
@@ -76,7 +140,6 @@ async def issue_tokens(
     )
 
     # Store refresh token hash in DB
-    from app.core.config import auth_settings
     refresh_record = RefreshToken(
         user_id=user.id,
         token_hash=token_hash,

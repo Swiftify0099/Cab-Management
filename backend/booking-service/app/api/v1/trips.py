@@ -5,7 +5,7 @@ Phase 3
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks
 from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +23,10 @@ trip_router = APIRouter()
 
 #  Request schemas 
 
+class PolygonCoord(BaseModel):
+    lat: float
+    lng: float
+
 class CreateTripRequest(BaseModel):
     pickup_lat: float
     pickup_lng: float
@@ -39,6 +43,13 @@ class CreateTripRequest(BaseModel):
     window_seat_charge: float = 0.0
     notes: Optional[str] = None
     route_stops: Optional[list] = None
+    non_stop: bool = False
+    # Geo fields from Google Directions + driver-drawn polygons
+    encoded_polyline: Optional[str] = None
+    distance_km: Optional[float] = None
+    duration_minutes: Optional[int] = None
+    pickup_polygon: Optional[list[PolygonCoord]] = None
+    destination_polygon: Optional[list[PolygonCoord]] = None
 
     @field_validator("total_seats")
     @classmethod
@@ -63,6 +74,12 @@ class SearchTripsRequest(BaseModel):
 #  Routes 
 
 @trip_router.post(
+    "",
+    status_code=status.HTTP_201_CREATED,
+    response_model=SuccessResponse,
+    summary="Driver: create a new trip (no slash)",
+)
+@trip_router.post(
     "/",
     status_code=status.HTTP_201_CREATED,
     response_model=SuccessResponse,
@@ -70,6 +87,7 @@ class SearchTripsRequest(BaseModel):
 )
 async def create_trip(
     request: CreateTripRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: AuthenticatedUser = Depends(get_current_active_driver),
 ):
@@ -92,10 +110,89 @@ async def create_trip(
             window_seat_charge=request.window_seat_charge,
             notes=request.notes,
             route_stops=request.route_stops,
+            non_stop=request.non_stop,
         )
+        trip_id = trip.get("id") or trip.get("trip_id")
+
+        # ── Background: store route geometry + trigger forward match ─────────
+        if trip_id:
+            if request.encoded_polyline:
+                background_tasks.add_task(
+                    _store_route_and_match,
+                    trip_id=str(trip_id),
+                    encoded_polyline=request.encoded_polyline,
+                    distance_km=request.distance_km,
+                    duration_minutes=request.duration_minutes,
+                    pickup_polygon=[
+                        {"lat": p.lat, "lng": p.lng} for p in request.pickup_polygon
+                    ] if request.pickup_polygon else None,
+                    destination_polygon=[
+                        {"lat": p.lat, "lng": p.lng} for p in request.destination_polygon
+                    ] if request.destination_polygon else None,
+                )
+            else:
+                # No polyline but still try forward match with radius fallback
+                background_tasks.add_task(_forward_match_only, trip_id=str(trip_id))
+
         return SuccessResponse(success=True, message="Trip created", data=trip)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+async def _store_route_and_match(
+    trip_id: str,
+    encoded_polyline: str,
+    distance_km: Optional[float],
+    duration_minutes: Optional[int],
+    pickup_polygon: Optional[list],
+    destination_polygon: Optional[list],
+) -> None:
+    """Store route geometry + polygons, then run forward matching. Background task."""
+    import httpx
+    import os
+    base = os.environ.get("MATCHING_SERVICE_URL", "http://localhost:8001")
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            # 1. Store route geometry + 3KM buffer
+            await client.post(
+                f"{base}/api/v1/matching/internal/store-route/{trip_id}",
+                json={
+                    "encoded_polyline": encoded_polyline,
+                    "distance_km": distance_km,
+                    "duration_minutes": duration_minutes,
+                },
+            )
+            # 2. Store polygons (if drawn) — also triggers corridor match internally
+            if pickup_polygon and destination_polygon:
+                await client.post(
+                    f"{base}/api/v1/matching/internal/store-polygons/{trip_id}",
+                    json={
+                        "pickup_polygon": pickup_polygon,
+                        "destination_polygon": destination_polygon,
+                    },
+                )
+            else:
+                # 3. Run corridor/forward match without polygons
+                await client.post(
+                    f"{base}/api/v1/matching/internal/match-trip/{trip_id}"
+                )
+    except Exception as e:
+        # Non-critical — log and continue
+        import logging
+        logging.getLogger(__name__).warning(f"store_route_and_match failed trip={trip_id}: {e}")
+
+
+async def _forward_match_only(trip_id: str) -> None:
+    """Trigger forward match for a trip without polyline data. Background task."""
+    import httpx
+    import os
+    base = os.environ.get("MATCHING_SERVICE_URL", "http://localhost:8001")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(f"{base}/api/v1/matching/internal/match-trip/{trip_id}")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"forward_match_only failed trip={trip_id}: {e}")
 
 
 @trip_router.post("/search", response_model=SuccessResponse, summary="Customer: search available trips")

@@ -29,6 +29,7 @@ class LocationUpdateRequest(BaseModel):
 
 class DispatchRequest(BaseModel):
     booking_id: str
+    excluded_driver_ids: Optional[list[str]] = None
 
 
 class DriverResponseRequest(BaseModel):
@@ -86,7 +87,7 @@ async def trigger_dispatch(
     Runs dispatch asynchronously so the HTTP response is immediate.
     """
     service = DispatchService(db)
-    background_tasks.add_task(service.dispatch_booking, request.booking_id)
+    background_tasks.add_task(service.dispatch_booking, request.booking_id, request.excluded_driver_ids)
     return SuccessResponse(
         success=True,
         message="Dispatch initiated",
@@ -600,4 +601,5 @@ async def internal_match_corridor(
     service = CorridorMatchingService(db)
     matches = await service.match_corridor(trip_id)
     return {"matches": len(matches), "trip_id": trip_id}
+
 

@@ -114,6 +114,77 @@ async def get_fare_estimates(
         data=[f.to_dict() for f in fares],
     )
 
+class ApplyCouponRequest(BaseModel):
+    code: str
+    fare_amount: float
+
+@fare_router.post(
+    "/apply-coupon",
+    summary="Validate and apply a promo code",
+    response_model=SuccessResponse,
+)
+async def apply_coupon(
+    request: ApplyCouponRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    from common.models.all_models import Coupon, CouponType, UserCoupon
+    from sqlalchemy import select
+    from datetime import datetime, timezone
+
+    # 1. Find the active coupon
+    result = await db.execute(select(Coupon).where(Coupon.code == request.code.upper(), Coupon.is_active == True))
+    coupon = result.scalar_one_or_none()
+
+    if not coupon:
+        raise HTTPException(status_code=404, detail="Invalid or expired promo code")
+
+    # 2. Check Expiry
+    now_utc = datetime.now(timezone.utc)
+    if coupon.end_date < now_utc:
+        raise HTTPException(status_code=400, detail="This promo code has expired")
+
+    # 3. Check Minimum Fare
+    if coupon.min_trip_amount and request.fare_amount < coupon.min_trip_amount:
+        raise HTTPException(status_code=400, detail=f"Minimum fare required is ${coupon.min_trip_amount}")
+
+    # 4. Check global usage limit
+    if coupon.usage_limit and coupon.times_used >= coupon.usage_limit:
+        raise HTTPException(status_code=400, detail="This promo code has reached its usage limit")
+
+    # 5. Check if user already used it (Assuming single use per user for now)
+    user_used = await db.execute(
+        select(UserCoupon).where(UserCoupon.user_id == current_user.id, UserCoupon.coupon_id == coupon.id)
+    )
+    if user_used.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="You have already used this promo code")
+
+    # 6. Calculate discount
+    discount = 0.0
+    if coupon.coupon_type == CouponType.FLAT:
+        discount = coupon.discount_value
+    elif coupon.coupon_type == CouponType.PERCENTAGE:
+        discount = request.fare_amount * (coupon.discount_value / 100.0)
+        if coupon.max_discount_amount and discount > coupon.max_discount_amount:
+            discount = coupon.max_discount_amount
+            
+    # Ensure fare doesn't go below 0
+    discount = min(discount, request.fare_amount)
+    new_fare = request.fare_amount - discount
+
+    return SuccessResponse(
+        success=True,
+        message="Promo code applied!",
+        data={
+            "coupon_id": str(coupon.id),
+            "original_fare": request.fare_amount,
+            "discount_amount": round(discount, 2),
+            "new_fare": round(new_fare, 2),
+            "coupon_type": coupon.coupon_type.value
+        }
+    )
+
+
 
 #  Booking Routes 
 
@@ -267,3 +338,20 @@ async def cancel_booking(
     if not ok:
         raise HTTPException(status_code=400, detail="Cannot cancel this booking")
     return SuccessResponse(success=True, message="Booking cancelled")
+
+@booking_router.post(
+    "/{booking_id}/driver-cancel",
+    summary="Driver cancels an accepted booking",
+    response_model=SuccessResponse,
+)
+async def driver_cancel_booking(
+    booking_id: str,
+    request: CancelBookingRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    service = BookingService(db)
+    result = await service.driver_cancel_booking(booking_id, current_user.user_id_str, request.reason)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("message", "Cannot cancel this booking"))
+    return SuccessResponse(success=True, message=result.get("message", "Booking cancelled"))

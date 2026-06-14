@@ -18,6 +18,7 @@ import { AnalyticsPage } from './pages/Analytics/AnalyticsPage'
 import { SettingsPage } from './pages/Settings/SettingsPage'
 import { NotFoundPage } from './pages/NotFound/NotFoundPage'
 import { FleetMapPage } from './pages/Fleet/FleetMapPage'
+import SupportPage from './pages/Support/SupportPage'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -53,6 +54,7 @@ function App() {
               <Route path="/themes" element={<ThemesPage />} />
               <Route path="/kyc" element={<KYCPage />} />
               <Route path="/analytics" element={<AnalyticsPage />} />
+              <Route path="/support" element={<SupportPage />} />
               <Route path="/settings" element={<SettingsPage />} />
             </Route>
           </Route>

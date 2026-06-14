@@ -2,96 +2,116 @@
  * Pre-Booking Screen — Customer
  *
  * Allows a customer to register travel intent BEFORE any driver has created
- * a matching trip.  Backend stores it in pending_bookings and instantly
- * reverse-scans published trips.  Customer is notified via WebSocket
- * when a match is found.
- *
- * Women-Only option enforces women-only driver filter.
+ * a matching trip. Backend stores it in pending_bookings and instantly
+ * reverse-scans published trips.
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, TextInput, TouchableOpacity,
-  ScrollView, Switch, ActivityIndicator, Alert, StatusBar,
+  View, Text, StyleSheet, TouchableOpacity,
+  ScrollView, Switch, ActivityIndicator, Alert, StatusBar, TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
-import axios from 'axios';
-import * as SecureStore from 'expo-secure-store';
+import { profileApi, bookingApi } from '../src/api/client';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
-const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1';
-
-interface PlaceSuggestion {
+interface SavedAddress {
+  id: string;
   label: string;
-  lat: number;
-  lng: number;
+  address: string;
+  latitude: number;
+  longitude: number;
+  is_default: boolean;
 }
 
+const ADDRESS_ICONS: Record<string, any> = {
+  home: 'home',
+  work: 'briefcase',
+  office: 'monitor',
+  trip: 'map-pin',
+  holiday: 'sun',
+};
+
 export default function PreBookingScreen() {
+  const [addresses, setAddresses] = useState<SavedAddress[]>([]);
+  const [loadingAddresses, setLoadingAddresses] = useState(true);
+
   // Form state
-  const [pickupAddress,  setPickupAddress]  = useState('');
-  const [pickupLat,      setPickupLat]      = useState('');
-  const [pickupLng,      setPickupLng]      = useState('');
-  const [destAddress,    setDestAddress]    = useState('');
-  const [destLat,        setDestLat]        = useState('');
-  const [destLng,        setDestLng]        = useState('');
-  const [travelDate,     setTravelDate]     = useState('');
-  const [fromTime,       setFromTime]       = useState('');
-  const [toTime,         setToTime]         = useState('');
-  const [seats,          setSeats]          = useState(1);
-  const [parcel,         setParcel]         = useState(false);
-  const [womenOnly,      setWomenOnly]      = useState(false);
+  const [pickupId, setPickupId] = useState<string>('');
+  const [destId, setDestId] = useState<string>('');
+  const [travelDate, setTravelDate] = useState<Date>(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [fromTime, setFromTime] = useState('08:00');
+  const [toTime, setToTime] = useState('20:00');
+  const [seats, setSeats] = useState(1);
+  const [parcel, setParcel] = useState(false);
+  const [womenOnly, setWomenOnly] = useState(false);
+  const [promoCode, setPromoCode] = useState('');
+  const [applyingPromo, setApplyingPromo] = useState(false);
+  const [appliedPromo, setAppliedPromo] = useState<any>(null);
 
   // UI state
-  const [loading,        setLoading]        = useState(false);
-  const [submitted,      setSubmitted]      = useState(false);
-  const [submittedId,    setSubmittedId]    = useState<string | null>(null);
-  const [mapRegion,      setMapRegion]      = useState({
-    latitude: 19.0760, longitude: 72.8777,
-    latitudeDelta: 0.5, longitudeDelta: 0.5,
-  });
+  const [loading, setLoading] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [submittedId, setSubmittedId] = useState<string | null>(null);
 
-  const today = new Date().toISOString().split('T')[0];
+  useEffect(() => {
+    fetchAddresses();
+  }, []);
 
-  // ── Validation ──────────────────────────────────────────────────────────────
+  const fetchAddresses = async () => {
+    try {
+      const res = await profileApi.getAddresses();
+      const list = res.data?.data || [];
+      setAddresses(list);
+      // Auto-select default as pickup
+      const def = list.find((a: SavedAddress) => a.is_default);
+      if (def) setPickupId(def.id);
+      else if (list.length > 0) setPickupId(list[0].id);
+    } catch (e) {
+      // ignore
+    } finally {
+      setLoadingAddresses(false);
+    }
+  };
+
+  const getAddressById = (id: string) => addresses.find(a => a.id === id);
+
   const validate = (): string | null => {
-    if (!pickupAddress.trim()) return 'Enter pickup address';
-    if (!pickupLat || !pickupLng) return 'Enter pickup coordinates (lat, lng)';
-    if (!destAddress.trim()) return 'Enter destination address';
-    if (!destLat || !destLng) return 'Enter destination coordinates (lat, lng)';
-    if (!travelDate.trim()) return 'Enter travel date (YYYY-MM-DD)';
-    if (!fromTime.trim()) return 'Enter from time (HH:MM)';
-    if (!toTime.trim()) return 'Enter to time (HH:MM)';
-    if (isNaN(parseFloat(pickupLat)) || isNaN(parseFloat(pickupLng))) return 'Invalid pickup coordinates';
-    if (isNaN(parseFloat(destLat))   || isNaN(parseFloat(destLng)))   return 'Invalid destination coordinates';
+    if (!pickupId) return 'Please select a pickup address';
+    if (!destId) return 'Please select a destination address';
+    if (pickupId === destId) return 'Pickup and destination cannot be the same';
     return null;
   };
 
-  // ── Submit ──────────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
     const err = validate();
     if (err) { Alert.alert('Incomplete', err); return; }
 
+    const p = getAddressById(pickupId);
+    const d = getAddressById(destId);
+    if (!p || !d) return;
+
     setLoading(true);
     try {
-      const token = await SecureStore.getItemAsync('access_token');
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await axios.post(`${API}/bookings/pending`, {
-        pickup_address:      pickupAddress.trim(),
-        pickup_lat:          parseFloat(pickupLat),
-        pickup_lng:          parseFloat(pickupLng),
-        destination_address: destAddress.trim(),
-        destination_lat:     parseFloat(destLat),
-        destination_lng:     parseFloat(destLng),
-        travel_date:         travelDate.trim(),
-        from_time:           fromTime.trim(),
-        to_time:             toTime.trim(),
-        seats_required:      seats,
+      const dateStr = travelDate.toISOString().split('T')[0];
+      const res = await bookingApi.createPendingBooking({
+        pickup_address: p.address,
+        pickup_lat: p.latitude,
+        pickup_lng: p.longitude,
+        destination_address: d.address,
+        destination_lat: d.latitude,
+        destination_lng: d.longitude,
+        travel_date: dateStr,
+        from_time: fromTime,
+        to_time: toTime,
+        seats_required: seats,
         parcel,
-        women_only:          womenOnly,
-      }, { headers });
+        women_only: womenOnly,
+        promo_code: appliedPromo ? appliedPromo.code : undefined,
+      });
 
       setSubmittedId(res.data?.data?.id || null);
       setSubmitted(true);
@@ -102,36 +122,30 @@ export default function PreBookingScreen() {
     }
   };
 
-  // ── Success Screen ──────────────────────────────────────────────────────────
   if (submitted) {
     return (
       <SafeAreaView style={styles.root}>
         <StatusBar barStyle="light-content" backgroundColor="#0A0F1E" />
         <View style={styles.successContainer}>
-          <LinearGradient
-            colors={['rgba(99,102,241,0.2)', 'transparent']}
-            style={StyleSheet.absoluteFill}
-          />
+          <LinearGradient colors={['rgba(99,102,241,0.2)', 'transparent']} style={StyleSheet.absoluteFill} />
           <View style={styles.successIcon}>
             <Ionicons name="checkmark-circle" size={80} color="#6366F1" />
           </View>
-          <Text style={styles.successTitle}>Pre-Booking Submitted!</Text>
+          <Text style={styles.successTitle}>Booking Request Sent!</Text>
           <Text style={styles.successSub}>
             We'll notify you instantly when a driver matches your route.{'\n'}
             Keep the app open for real-time alerts.
           </Text>
           {womenOnly && (
             <View style={styles.womenBadge}>
-              <Text style={styles.womenBadgeText}>👩 Women-only filter active — only female drivers will match</Text>
+              <Text style={styles.womenBadgeText}>👩 Women-only filter active</Text>
             </View>
           )}
 
           <View style={styles.successActions}>
             <TouchableOpacity
               style={styles.waitBtn}
-              onPress={() => router.push(
-                `/matching-waiting?bookingId=&pendingBookingId=${submittedId}` as any
-              )}
+              onPress={() => router.push(`/matching-waiting?bookingId=&pendingBookingId=${submittedId}` as any)}
             >
               <LinearGradient colors={['#6366F1','#8B5CF6']} start={{x:0,y:0}} end={{x:1,y:0}} style={styles.waitBtnGrad}>
                 <Feather name="bell" size={18} color="#fff" />
@@ -148,7 +162,45 @@ export default function PreBookingScreen() {
     );
   }
 
-  // ── Form ────────────────────────────────────────────────────────────────────
+  const renderAddressSelector = (title: string, selectedId: string, onSelect: (id: string) => void, excludeId?: string) => (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {loadingAddresses ? (
+        <ActivityIndicator color="#6366F1" style={{ marginVertical: 20 }} />
+      ) : addresses.length === 0 ? (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyText}>No saved addresses</Text>
+          <TouchableOpacity onPress={() => router.push('/auth/address-setup' as any)}>
+            <Text style={styles.linkText}>+ Add Address</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 10, paddingBottom: 5 }}>
+          {addresses.map(a => {
+            if (a.id === excludeId) return null;
+            const isSelected = selectedId === a.id;
+            const iconName = ADDRESS_ICONS[a.label.toLowerCase()] || 'map-pin';
+            return (
+              <TouchableOpacity
+                key={a.id}
+                onPress={() => onSelect(a.id)}
+                style={[styles.addressCard, isSelected && styles.addressCardSelected]}
+              >
+                <Feather name={iconName} size={18} color={isSelected ? '#fff' : '#94A3B8'} style={{ marginBottom: 6 }} />
+                <Text style={[styles.addressCardLabel, isSelected && { color: '#fff' }]}>
+                  {a.label.charAt(0).toUpperCase() + a.label.slice(1)}
+                </Text>
+                <Text style={[styles.addressCardText, isSelected && { color: 'rgba(255,255,255,0.8)' }]} numberOfLines={1}>
+                  {a.address}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      )}
+    </View>
+  );
+
   return (
     <SafeAreaView style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor="#0A0F1E" />
@@ -158,239 +210,133 @@ export default function PreBookingScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Feather name="arrow-left" size={22} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Pre-Book a Ride</Text>
-        <View style={{ width: 38 }} />
+        <Text style={styles.headerTitle}>Where to?</Text>
+        <TouchableOpacity onPress={() => router.push('/auth/address-setup' as any)} style={styles.backBtn}>
+          <Feather name="map-pin" size={18} color="#A78BFA" />
+        </TouchableOpacity>
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.form}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* Map Preview */}
-        <View style={styles.mapPreview}>
-          <MapView
-            provider={PROVIDER_GOOGLE}
-            style={StyleSheet.absoluteFill}
-            region={mapRegion}
-            scrollEnabled={false}
-            zoomEnabled={false}
-          >
-            {pickupLat && pickupLng && !isNaN(parseFloat(pickupLat)) && (
-              <Marker
-                coordinate={{ latitude: parseFloat(pickupLat), longitude: parseFloat(pickupLng) }}
-                pinColor="#6366F1"
-                title="Pickup"
-              />
-            )}
-            {destLat && destLng && !isNaN(parseFloat(destLat)) && (
-              <Marker
-                coordinate={{ latitude: parseFloat(destLat), longitude: parseFloat(destLng) }}
-                pinColor="#EF4444"
-                title="Destination"
-              />
-            )}
-          </MapView>
-          <View style={styles.mapLabel}>
-            <MaterialCommunityIcons name="map-marker-path" size={16} color="#6366F1" />
-            <Text style={styles.mapLabelText}> Pre-booking route preview</Text>
-          </View>
-        </View>
-
-        {/* Pickup Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <View style={[styles.sectionDot, { backgroundColor: '#22C55E' }]} />
-            <Text style={styles.sectionTitle}>Pickup Point</Text>
-          </View>
-          <TextInput
-            style={styles.input}
-            placeholder="Full pickup address"
-            placeholderTextColor="#4B5563"
-            value={pickupAddress}
-            onChangeText={setPickupAddress}
-            multiline
-          />
-          <View style={styles.coordRow}>
-            <TextInput
-              style={[styles.input, { flex: 1, marginRight: 8 }]}
-              placeholder="Latitude (e.g. 19.076)"
-              placeholderTextColor="#4B5563"
-              keyboardType="numeric"
-              value={pickupLat}
-              onChangeText={v => {
-                setPickupLat(v);
-                const lat = parseFloat(v);
-                const lng = parseFloat(pickupLng);
-                if (!isNaN(lat) && !isNaN(lng)) {
-                  setMapRegion(r => ({ ...r, latitude: lat, longitude: lng }));
-                }
-              }}
-            />
-            <TextInput
-              style={[styles.input, { flex: 1 }]}
-              placeholder="Longitude (e.g. 72.877)"
-              placeholderTextColor="#4B5563"
-              keyboardType="numeric"
-              value={pickupLng}
-              onChangeText={setPickupLng}
-            />
-          </View>
-        </View>
-
-        {/* Destination Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <View style={[styles.sectionDot, { backgroundColor: '#EF4444' }]} />
-            <Text style={styles.sectionTitle}>Destination</Text>
-          </View>
-          <TextInput
-            style={styles.input}
-            placeholder="Full destination address"
-            placeholderTextColor="#4B5563"
-            value={destAddress}
-            onChangeText={setDestAddress}
-            multiline
-          />
-          <View style={styles.coordRow}>
-            <TextInput
-              style={[styles.input, { flex: 1, marginRight: 8 }]}
-              placeholder="Latitude"
-              placeholderTextColor="#4B5563"
-              keyboardType="numeric"
-              value={destLat}
-              onChangeText={setDestLat}
-            />
-            <TextInput
-              style={[styles.input, { flex: 1 }]}
-              placeholder="Longitude"
-              placeholderTextColor="#4B5563"
-              keyboardType="numeric"
-              value={destLng}
-              onChangeText={setDestLng}
-            />
-          </View>
-        </View>
+      <ScrollView contentContainerStyle={styles.form} showsVerticalScrollIndicator={false}>
+        {renderAddressSelector('Pickup Point', pickupId, setPickupId)}
+        {renderAddressSelector('Destination', destId, setDestId, pickupId)}
 
         {/* Travel Window */}
         <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Feather name="calendar" size={16} color="#6366F1" />
-            <Text style={styles.sectionTitle}> Travel Window</Text>
-          </View>
-          <TextInput
-            style={styles.input}
-            placeholder={`Travel Date (YYYY-MM-DD, e.g. ${today})`}
-            placeholderTextColor="#4B5563"
-            value={travelDate}
-            onChangeText={setTravelDate}
-          />
-          <View style={styles.coordRow}>
-            <TextInput
-              style={[styles.input, { flex: 1, marginRight: 8 }]}
-              placeholder="From (HH:MM)"
-              placeholderTextColor="#4B5563"
-              value={fromTime}
-              onChangeText={setFromTime}
+          <Text style={styles.sectionTitle}>Travel Window</Text>
+          <TouchableOpacity style={styles.inputBox} onPress={() => setShowDatePicker(true)}>
+            <Feather name="calendar" size={18} color="#6366F1" />
+            <Text style={styles.inputText}>{travelDate.toDateString()}</Text>
+          </TouchableOpacity>
+          {showDatePicker && (
+            <DateTimePicker
+              value={travelDate}
+              mode="date"
+              display="default"
+              minimumDate={new Date()}
+              onChange={(e, date) => {
+                setShowDatePicker(false);
+                if (date) setTravelDate(date);
+              }}
             />
-            <TextInput
-              style={[styles.input, { flex: 1 }]}
-              placeholder="To (HH:MM)"
-              placeholderTextColor="#4B5563"
-              value={toTime}
-              onChangeText={setToTime}
-            />
+          )}
+
+          <View style={styles.timeRow}>
+            <View style={[styles.inputBox, { flex: 1 }]}>
+              <Text style={{ color: '#94A3B8', fontSize: 12, marginBottom: 4 }}>Earliest</Text>
+              <Text style={styles.inputText}>08:00 AM</Text>
+            </View>
+            <View style={{ width: 12 }} />
+            <View style={[styles.inputBox, { flex: 1 }]}>
+              <Text style={{ color: '#94A3B8', fontSize: 12, marginBottom: 4 }}>Latest</Text>
+              <Text style={styles.inputText}>08:00 PM</Text>
+            </View>
           </View>
         </View>
 
         {/* Preferences */}
         <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Feather name="sliders" size={16} color="#6366F1" />
-            <Text style={styles.sectionTitle}> Preferences</Text>
-          </View>
+          <Text style={styles.sectionTitle}>Preferences</Text>
 
-          {/* Seat Counter */}
           <View style={styles.seatRow}>
             <Text style={styles.seatLabel}>Seats Required</Text>
             <View style={styles.seatCounter}>
-              <TouchableOpacity
-                style={styles.seatBtn}
-                onPress={() => setSeats(s => Math.max(1, s - 1))}
-              >
+              <TouchableOpacity style={styles.seatBtn} onPress={() => setSeats(s => Math.max(1, s - 1))}>
                 <Feather name="minus" size={18} color="#fff" />
               </TouchableOpacity>
               <Text style={styles.seatNum}>{seats}</Text>
-              <TouchableOpacity
-                style={styles.seatBtn}
-                onPress={() => setSeats(s => Math.min(10, s + 1))}
-              >
+              <TouchableOpacity style={styles.seatBtn} onPress={() => setSeats(s => Math.min(10, s + 1))}>
                 <Feather name="plus" size={18} color="#fff" />
               </TouchableOpacity>
             </View>
           </View>
 
-          {/* Parcel Toggle */}
           <View style={styles.toggleRow}>
             <View>
-              <Text style={styles.toggleLabel}>📦 Include Parcel</Text>
-              <Text style={styles.toggleSub}>Adds ₹50 parcel charge</Text>
+              <Text style={styles.toggleLabel}>📦 Send a Parcel</Text>
+              <Text style={styles.toggleSub}>Select if you only want to send items</Text>
             </View>
-            <Switch
-              value={parcel}
-              onValueChange={setParcel}
-              trackColor={{ false: '#374151', true: '#6366F1' }}
-              thumbColor="#fff"
-            />
+            <Switch value={parcel} onValueChange={setParcel} trackColor={{ false: '#374151', true: '#6366F1' }} thumbColor="#fff" />
           </View>
 
-          {/* Women-Only Toggle */}
           <View style={[styles.toggleRow, womenOnly && styles.toggleRowActive]}>
             <View>
               <Text style={styles.toggleLabel}>👩 Women-Only Ride</Text>
-              <Text style={styles.toggleSub}>Only female drivers will match your booking</Text>
+              <Text style={styles.toggleSub}>Match only with female drivers</Text>
             </View>
-            <Switch
-              value={womenOnly}
-              onValueChange={setWomenOnly}
-              trackColor={{ false: '#374151', true: '#EC4899' }}
-              thumbColor="#fff"
-            />
+            <Switch value={womenOnly} onValueChange={setWomenOnly} trackColor={{ false: '#374151', true: '#EC4899' }} thumbColor="#fff" />
           </View>
-          {womenOnly && (
-            <View style={styles.womenNote}>
-              <Ionicons name="shield-checkmark" size={14} color="#F472B6" />
-              <Text style={styles.womenNoteText}> Safety first — exclusively matched with women drivers</Text>
+        </View>
+
+        {/* Promo Code */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Promotions</Text>
+          <View style={styles.promoRow}>
+            <View style={styles.promoInputWrapper}>
+              <Feather name="tag" size={16} color="#94A3B8" />
+              <TextInput
+                style={styles.promoInput}
+                placeholder="Enter Promo Code"
+                placeholderTextColor="#94A3B8"
+                value={promoCode}
+                onChangeText={setPromoCode}
+                autoCapitalize="characters"
+                editable={!appliedPromo}
+              />
             </View>
+            {appliedPromo ? (
+              <TouchableOpacity 
+                style={styles.promoRemoveBtn} 
+                onPress={() => { setAppliedPromo(null); setPromoCode(''); }}
+              >
+                <Feather name="x" size={16} color="#EF4444" />
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity 
+                style={[styles.promoApplyBtn, !promoCode.trim() && { opacity: 0.5 }]} 
+                onPress={() => {
+                  if (promoCode.trim().length > 0) {
+                    // For now just simulate an applied promo visually since fare isn't calculated till checkout
+                    setAppliedPromo({ code: promoCode.trim().toUpperCase() });
+                    Alert.alert('Promo Applied', 'Promo code will be applied at checkout.');
+                  }
+                }}
+                disabled={!promoCode.trim() || applyingPromo}
+              >
+                {applyingPromo ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.promoApplyText}>Apply</Text>}
+              </TouchableOpacity>
+            )}
+          </View>
+          {appliedPromo && (
+            <Text style={styles.promoSuccessText}>
+              Promo code {appliedPromo.code} applied!
+            </Text>
           )}
         </View>
 
-        {/* Info card */}
-        <View style={styles.infoCard}>
-          <Ionicons name="information-circle-outline" size={18} color="#6366F1" />
-          <Text style={styles.infoText}>
-            {' '}Your pre-booking is stored for 24 hours. You'll receive an instant notification when a driver publishes a matching route.
-          </Text>
-        </View>
-
         {/* Submit */}
-        <TouchableOpacity
-          style={[styles.submitBtn, loading && { opacity: 0.7 }]}
-          onPress={handleSubmit}
-          disabled={loading}
-        >
-          <LinearGradient
-            colors={['#6366F1', '#8B5CF6', '#EC4899']}
-            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-            style={styles.submitGrad}
-          >
-            {loading
-              ? <ActivityIndicator color="#fff" size="small" />
-              : <>
-                  <MaterialCommunityIcons name="calendar-check" size={20} color="#fff" />
-                  <Text style={styles.submitText}> Submit Pre-Booking</Text>
-                </>
-            }
+        <TouchableOpacity style={[styles.submitBtn, loading && { opacity: 0.7 }]} onPress={handleSubmit} disabled={loading}>
+          <LinearGradient colors={['#6366F1', '#8B5CF6']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.submitGrad}>
+            {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitText}>Request Ride</Text>}
           </LinearGradient>
         </TouchableOpacity>
       </ScrollView>
@@ -400,28 +346,30 @@ export default function PreBookingScreen() {
 
 const styles = StyleSheet.create({
   root:            { flex: 1, backgroundColor: '#0A0F1E' },
-
   header:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16 },
   backBtn:         { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center' },
-  headerTitle:     { color: '#fff', fontSize: 18, fontWeight: '700', flex: 1, textAlign: 'center' },
-
+  headerTitle:     { color: '#fff', fontSize: 18, fontWeight: '700', textAlign: 'center' },
   form:            { padding: 20, paddingBottom: 48 },
 
-  mapPreview:      { height: 180, borderRadius: 20, overflow: 'hidden', marginBottom: 20, borderWidth: 1, borderColor: 'rgba(99,102,241,0.3)' },
-  mapLabel:        { position: 'absolute', bottom: 10, left: 12, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(10,15,30,0.75)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 4 },
-  mapLabelText:    { color: '#A78BFA', fontSize: 12 },
+  section:         { backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 20, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' },
+  sectionTitle:    { color: '#fff', fontSize: 15, fontWeight: '700', marginBottom: 12 },
 
-  section:         { backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 20, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)' },
-  sectionHeader:   { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-  sectionDot:      { width: 10, height: 10, borderRadius: 5, marginRight: 8 },
-  sectionTitle:    { color: '#fff', fontSize: 15, fontWeight: '700' },
+  emptyState:      { alignItems: 'center', paddingVertical: 16 },
+  emptyText:       { color: '#94A3B8', fontSize: 14, marginBottom: 8 },
+  linkText:        { color: '#6366F1', fontSize: 14, fontWeight: '600' },
 
-  input:           { backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 12, padding: 14, color: '#fff', fontSize: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', marginBottom: 10 },
-  coordRow:        { flexDirection: 'row' },
+  addressCard:     { width: 140, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 16, padding: 12, marginRight: 12, borderWidth: 1, borderColor: 'transparent' },
+  addressCardSelected: { backgroundColor: '#6366F1', borderColor: '#8B5CF6' },
+  addressCardLabel:{ color: '#94A3B8', fontSize: 14, fontWeight: '700', marginBottom: 4 },
+  addressCardText: { color: '#64748B', fontSize: 12 },
 
-  seatRow:         { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
+  inputBox:        { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: 14, marginBottom: 12 },
+  inputText:       { color: '#fff', fontSize: 15, marginLeft: 10, fontWeight: '500' },
+  timeRow:         { flexDirection: 'row' },
+
+  seatRow:         { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   seatLabel:       { color: '#fff', fontSize: 14, fontWeight: '600' },
-  seatCounter:     { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 12, overflow: 'hidden' },
+  seatCounter:     { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 12 },
   seatBtn:         { padding: 10, paddingHorizontal: 14 },
   seatNum:         { color: '#fff', fontSize: 18, fontWeight: '700', paddingHorizontal: 16 },
 
@@ -430,18 +378,20 @@ const styles = StyleSheet.create({
   toggleLabel:     { color: '#fff', fontSize: 14, fontWeight: '600' },
   toggleSub:       { color: '#6B7280', fontSize: 12, marginTop: 2 },
 
-  womenNote:       { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(244,114,182,0.1)', borderRadius: 10, padding: 10, marginTop: 4 },
-  womenNoteText:   { color: '#F472B6', fontSize: 12 },
+  promoRow:        { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  promoInputWrapper:{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12, paddingHorizontal: 12, height: 48 },
+  promoInput:      { flex: 1, color: '#fff', fontSize: 14, marginLeft: 8, height: '100%' },
+  promoApplyBtn:   { backgroundColor: '#6366F1', height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
+  promoApplyText:  { color: '#fff', fontSize: 14, fontWeight: '700' },
+  promoRemoveBtn:  { backgroundColor: 'rgba(239,68,68,0.1)', height: 48, width: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  promoSuccessText:{ color: '#34D399', fontSize: 12, marginTop: 8 },
 
-  infoCard:        { flexDirection: 'row', alignItems: 'flex-start', backgroundColor: 'rgba(99,102,241,0.1)', borderRadius: 14, padding: 14, marginBottom: 20, borderWidth: 1, borderColor: 'rgba(99,102,241,0.2)' },
-  infoText:        { color: '#A78BFA', fontSize: 13, flex: 1, lineHeight: 18 },
-
-  submitBtn:       { borderRadius: 18, overflow: 'hidden' },
-  submitGrad:      { paddingVertical: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
+  submitBtn:       { borderRadius: 18, overflow: 'hidden', marginTop: 10 },
+  submitGrad:      { paddingVertical: 18, alignItems: 'center', justifyContent: 'center' },
   submitText:      { color: '#fff', fontSize: 17, fontWeight: '700' },
 
   // Success
-  successContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32, overflow: 'hidden' },
+  successContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
   successIcon:      { width: 120, height: 120, borderRadius: 60, backgroundColor: 'rgba(99,102,241,0.15)', alignItems: 'center', justifyContent: 'center', marginBottom: 24 },
   successTitle:     { color: '#fff', fontSize: 26, fontWeight: '800', textAlign: 'center', marginBottom: 12 },
   successSub:       { color: '#9CA3AF', fontSize: 15, textAlign: 'center', lineHeight: 22, marginBottom: 20 },

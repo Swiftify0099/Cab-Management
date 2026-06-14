@@ -29,7 +29,7 @@ services:
     networks:
       - cabooking_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cabooking_user}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cabooking_user} -d ${POSTGRES_DB:-cabooking}"]
       interval: 10s
       timeout: 5s
       retries: 5

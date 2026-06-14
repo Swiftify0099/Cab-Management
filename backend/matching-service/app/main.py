@@ -21,6 +21,7 @@ from common.database import engine, async_session_maker
 from common.utils.redis_client import close_redis
 from app.services.tracking import consume_location_updates
 from app.services.corridor_matcher import consume_customer_location_updates
+from app.services.redispatch_consumer import consume_redispatch_events
 
 logger = structlog.get_logger(__name__)
 limiter = Limiter(key_func=get_remote_address)
@@ -32,6 +33,7 @@ async def lifespan(app: FastAPI):
     tasks = [
         asyncio.create_task(consume_location_updates(async_session_maker)),
         asyncio.create_task(consume_customer_location_updates(async_session_maker)),
+        asyncio.create_task(consume_redispatch_events(async_session_maker)),
     ]
     yield
     logger.info(" Matching Service shutting down")

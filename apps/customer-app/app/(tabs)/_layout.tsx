@@ -90,7 +90,7 @@ export default function TabsLayout() {
               activeIcon="tag"
               inactiveIcon="tag-outline"
               iconLib="mci"
-              label="Parcels"
+              label="Parcel"
             />
           ),
         }}
