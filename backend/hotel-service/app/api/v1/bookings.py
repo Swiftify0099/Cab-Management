@@ -4,7 +4,7 @@ from common.database import get_db
 from common.middleware.auth import get_current_user, AuthenticatedUser
 from app.schemas.property import BookingCreateRequest, BookingResponse
 from app.services.property_service import PropertyService
-import httpx
+import http
 
 router = APIRouter()
 

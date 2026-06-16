@@ -10,9 +10,8 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { Feather } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { router } from 'expo-router'
-import axios from 'axios'
+import { authApi } from '../../src/api/client'
 
-const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1'
 const { width, height } = Dimensions.get('window')
 
 export default function DriverPhoneScreen() {
@@ -75,10 +74,11 @@ export default function DriverPhoneScreen() {
     }
     setLoading(true)
     try {
-      await axios.post(`${API}/auth/otp/send`, { phone: `+91${cleaned}` })
+      await authApi.sendOtp(`+91${cleaned}`)
       router.push({ pathname: '/auth/otp', params: { phone: `+91${cleaned}` } })
-    } catch {
-      // Demo: navigate anyway
+    } catch (err) {
+      console.warn('OTP Send Error:', err)
+      // Demo: navigate anyway if local dev fails
       router.push({ pathname: '/auth/otp', params: { phone: `+91${cleaned}` } })
     } finally {
       setLoading(false)

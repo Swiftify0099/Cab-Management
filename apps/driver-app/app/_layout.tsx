@@ -16,6 +16,7 @@ import { ErrorBoundary } from '../src/components/ErrorBoundary'
 import { PermissionGate } from '../src/components/PermissionGate'
 import { useStartupPermissions } from '../src/hooks/useStartupPermissions'
 import { useDriverNotifications } from '../src/hooks/useDriverNotifications'
+import { ThemeProvider } from '../src/theme'
 
 // Keep the splash screen visible while permissions are being checked.
 // This prevents the flash of unstyled content between splash and PermissionGate.
@@ -53,8 +54,10 @@ function AppWithPermissions() {
 
 export default function RootLayout() {
   return (
-    <ErrorBoundary>
-      <AppWithPermissions />
-    </ErrorBoundary>
+    <ThemeProvider>
+      <ErrorBoundary>
+        <AppWithPermissions />
+      </ErrorBoundary>
+    </ThemeProvider>
   )
 }

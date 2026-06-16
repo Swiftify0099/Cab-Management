@@ -23,6 +23,8 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { Feather, Ionicons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { router, useLocalSearchParams } from 'expo-router'
+import { AppText, AppButton, AppIcon, AppCard } from '../src/components/common'
+import { useTheme } from '../src/theme'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { api } from '../src/api/client'
 import { useDriverSocket } from '../src/hooks/useDriverSocket'
@@ -78,6 +80,7 @@ export default function TripLiveScreen() {
   const from       = (params.from       as string) || 'Pune'
   const to         = (params.to         as string) || 'Mumbai'
   const totalSeats = parseInt((params.totalSeats as string) || '4')
+  const { theme } = useTheme()
 
   const {
     connected, joinDriverScan,
@@ -603,17 +606,17 @@ export default function TripLiveScreen() {
                 colors={['#3B82F6', '#8B5CF6']}
                 style={styles.avatar}
               >
-                <Text style={styles.avatarText}>{selected.name.charAt(0)}</Text>
+                <AppText variant="h3" weight="bold" color="inverse">{selected.name.charAt(0)}</AppText>
               </LinearGradient>
               <View style={{ flex: 1 }}>
-                <Text style={styles.panelName}>{selected.name}</Text>
+                <AppText variant="lg" weight="bold" color="inverse">{selected.name}</AppText>
                 <View style={styles.phoneRow}>
-                  <Feather name="phone" size={12} color="#64748B" />
-                  <Text style={styles.panelPhone}>{selected.phone}</Text>
+                  <AppIcon name="phone" size={12} colorVariant="textTertiary" />
+                  <AppText variant="body2" color="textSecondary">{selected.phone}</AppText>
                 </View>
               </View>
               <TouchableOpacity style={styles.closePanelBtn} onPress={() => setSelected(null)}>
-                <Feather name="x" size={20} color="#94A3B8" />
+                <AppIcon name="x" size={20} colorVariant="textTertiary" />
               </TouchableOpacity>
             </View>
 
@@ -626,58 +629,49 @@ export default function TripLiveScreen() {
             </View>
 
             {/* Timeline Route Card */}
-            <View style={styles.routeCard}>
+            <AppCard variant="glass" padding="md" style={styles.routeCard}>
               <View style={styles.routeRow}>
-                <View style={[styles.routeDot, { backgroundColor: '#10B981', shadowColor: '#10B981' }]} />
-                <Text style={styles.routeText} numberOfLines={1}>{selected.pickupAddress}</Text>
+                <View style={[styles.routeDot, { backgroundColor: theme.colors.success, shadowColor: theme.colors.success }]} />
+                <AppText color="textSecondary" weight="medium" style={{ flex: 1 }} numberOfLines={1}>{selected.pickupAddress}</AppText>
               </View>
               <View style={styles.routeLine} />
               <View style={styles.routeRow}>
-                <View style={[styles.routeDot, { backgroundColor: '#EF4444', shadowColor: '#EF4444' }]} />
-                <Text style={styles.routeText} numberOfLines={1}>{selected.dropAddress}</Text>
+                <View style={[styles.routeDot, { backgroundColor: theme.colors.error, shadowColor: theme.colors.error }]} />
+                <AppText color="textSecondary" weight="medium" style={{ flex: 1 }} numberOfLines={1}>{selected.dropAddress}</AppText>
               </View>
-            </View>
+            </AppCard>
 
             {/* Special Requests Label */}
             {selected.hasParcel && (
               <View style={styles.parcelRow}>
-                <Feather name="package" size={14} color="#F59E0B" />
-                <Text style={styles.parcelText}>Includes customer cargo/parcel package</Text>
+                <AppIcon name="package" size={14} colorVariant="warning" />
+                <AppText color="warning" weight="bold" variant="body2">Includes customer cargo/parcel package</AppText>
               </View>
             )}
 
             {/* Action buttons */}
             <View style={styles.btnRow}>
-              <TouchableOpacity
-                style={[styles.rejectBtn, actionLoading && { opacity: 0.5 }]}
+              <AppButton 
+                title="Reject"
+                variant="outline"
+                leftIcon={<AppIcon name="x-circle" size={17} colorVariant="error" />}
                 onPress={handleReject}
                 disabled={actionLoading}
-              >
-                <Feather name="x-circle" size={17} color="#EF4444" />
-                <Text style={styles.rejectText}>Reject</Text>
-              </TouchableOpacity>
+                style={[styles.rejectBtn, actionLoading && { opacity: 0.5 }]}
+              />
 
-              <TouchableOpacity
+              <AppButton 
+                title={seatsUsed + selected.seats > totalSeats ? 'Seats Full' : 'Accept Request'}
+                variant="gradient"
+                leftIcon={<AppIcon name="check-circle" size={17} colorVariant="inverse" />}
+                onPress={handleAccept}
+                disabled={actionLoading || seatsUsed + selected.seats > totalSeats}
                 style={[
                   styles.acceptBtn,
                   actionLoading && { opacity: 0.5 },
                   seatsUsed + selected.seats > totalSeats && { opacity: 0.4 },
                 ]}
-                onPress={handleAccept}
-                disabled={actionLoading || seatsUsed + selected.seats > totalSeats}
-              >
-                <LinearGradient
-                  colors={['#10B981', '#059669']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.acceptBtnGrad}
-                >
-                  <Feather name="check-circle" size={17} color="#FFF" />
-                  <Text style={styles.acceptText}>
-                    {seatsUsed + selected.seats > totalSeats ? 'Seats Full' : 'Accept Request'}
-                  </Text>
-                </LinearGradient>
-              </TouchableOpacity>
+              />
             </View>
           </Animated.View>
         </>

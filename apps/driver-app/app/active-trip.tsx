@@ -20,6 +20,8 @@ import { Feather, Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
+import { AppText, AppButton, AppIcon, AppCard } from '../src/components/common';
+import { useTheme } from '../src/theme';
 
 import { DriverMap }        from '../src/components/map/DriverMap';
 import { SpeedAlert }       from '../src/components/map/SpeedAlert';
@@ -37,6 +39,7 @@ export default function ActiveTripScreen() {
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
   const [booking, setBooking] = useState<any>(null);
   const [tripState, setTripState] = useState<'EN_ROUTE' | 'STARTED' | 'COMPLETED'>('EN_ROUTE');
+  const { theme } = useTheme();
 
   // WebSocket + GPS
   const {
@@ -160,17 +163,17 @@ export default function ActiveTripScreen() {
       <SafeAreaView style={styles.headerWrapper} edges={['top']}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-            <Feather name="chevron-left" size={22} color="white" />
+            <AppIcon name="chevron-left" size={22} colorVariant="inverse" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>
+          <AppText variant="h4" weight="bold" color="inverse" style={{ flex: 1 }}>
             {tripState === 'EN_ROUTE'
               ? 'En Route to Pickup'
               : tripState === 'STARTED'
               ? 'On Trip'
               : 'Trip Completed'}
-          </Text>
+          </AppText>
           {/* Connection status dot */}
-          <View style={[styles.connDot, { backgroundColor: connected ? '#10B981' : '#EF4444' }]} />
+          <View style={[styles.connDot, { backgroundColor: connected ? theme.colors.success : theme.colors.error }]} />
         </View>
       </SafeAreaView>
 
@@ -188,39 +191,39 @@ export default function ActiveTripScreen() {
         />
 
         {/* Passenger info sheet */}
-        <View style={styles.bottomSheet}>
+        <AppCard variant="elevated" padding="lg" style={styles.bottomSheet}>
           <View style={styles.sheetTopBar} />
 
           {/* ETA */}
           <View style={styles.etaContainer}>
-            <Text style={styles.etaText}>{etaText}</Text>
-            <Text style={styles.etaSub}>
+            <AppText color="secondary" variant="display" weight="bold">{etaText}</AppText>
+            <AppText color="textSecondary" variant="body2" style={{ marginTop: 2 }}>
               {route ? `${route.distanceKm} km remaining` : 'Calculating route...'}
-            </Text>
+            </AppText>
           </View>
 
           {/* Passenger Info */}
           <View style={styles.passengerRow}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <View style={styles.passengerAvatar}>
-                <Ionicons name="person" size={28} color="#D1D5DB" />
+                <AppIcon family="Ionicons" name="person" size={28} colorVariant="textTertiary" />
               </View>
               <View>
-                <Text style={styles.passengerName}>
+                <AppText weight="bold" variant="md" color="inverse">
                   {booking?.customer?.full_name || 'Sarah Johnson'}
-                </Text>
+                </AppText>
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
-                  <Ionicons name="star" size={12} color="#FBBF24" style={{ marginRight: 4 }} />
-                  <Text style={{ color: '#9CA3AF', fontSize: 13 }}>
+                  <AppIcon family="Ionicons" name="star" size={12} colorVariant="warning" style={{ marginRight: 4 }} />
+                  <AppText color="textTertiary" variant="body2">
                     {booking?.customer?.rating || 4.8} Rating
-                  </Text>
+                  </AppText>
                 </View>
               </View>
             </View>
             <View style={{ alignItems: 'flex-end', gap: 4 }}>
               {booking?.trip?.has_parcel && (
                 <View style={styles.badge}>
-                  <Text style={styles.badgeText}>📦 Parcel</Text>
+                  <AppText color="secondary" weight="bold" variant="caption">📦 Parcel</AppText>
                 </View>
               )}
               {/* Navigate button */}
@@ -236,8 +239,8 @@ export default function ActiveTripScreen() {
                   },
                 })}
               >
-                <Feather name="navigation" size={12} color="#38BDF8" />
-                <Text style={styles.navBtnText}>Navigate</Text>
+                <AppIcon name="navigation" size={12} colorVariant="secondary" />
+                <AppText color="secondary" weight="bold" variant="caption" style={{ marginLeft: 4 }}>Navigate</AppText>
               </TouchableOpacity>
             </View>
           </View>
@@ -247,16 +250,16 @@ export default function ActiveTripScreen() {
           {/* Route */}
           <View style={styles.tripInfoRow}>
             <View style={styles.tripPoint}>
-              <View style={[styles.dot, { backgroundColor: '#3B82F6' }]} />
-              <Text style={styles.tripPointText}>
+              <View style={[styles.dot, { backgroundColor: theme.colors.secondary }]} />
+              <AppText color="textSecondary" variant="body2" style={{ flex: 1 }}>
                 {booking?.trip?.from || 'Pickup Location'}
-              </Text>
+              </AppText>
             </View>
             <View style={styles.tripPoint}>
-              <View style={[styles.dot, { backgroundColor: '#EF4444' }]} />
-              <Text style={styles.tripPointText}>
+              <View style={[styles.dot, { backgroundColor: theme.colors.error }]} />
+              <AppText color="textSecondary" variant="body2" style={{ flex: 1 }}>
                 {booking?.trip?.to || 'Dropoff Location'}
-              </Text>
+              </AppText>
             </View>
           </View>
 
@@ -264,32 +267,30 @@ export default function ActiveTripScreen() {
           {tripState !== 'COMPLETED' && (
             <View style={styles.actionsRow}>
               <TouchableOpacity style={styles.iconBtn}>
-                <Ionicons name="call" size={22} color="white" />
+                <AppIcon family="Ionicons" name="call" size={22} colorVariant="inverse" />
               </TouchableOpacity>
               <TouchableOpacity style={styles.iconBtn}>
-                <Ionicons name="chatbubble" size={22} color="white" />
+                <AppIcon family="Ionicons" name="chatbubble" size={22} colorVariant="inverse" />
               </TouchableOpacity>
-              <TouchableOpacity
+              
+              <AppButton 
+                title={tripState === 'EN_ROUTE' ? 'Start Trip' : 'Complete Trip'}
+                onPress={handleAction}
                 style={[
                   styles.primaryActionBtn,
-                  { backgroundColor: tripState === 'EN_ROUTE' ? '#10B981' : '#EF4444' },
+                  { backgroundColor: tripState === 'EN_ROUTE' ? theme.colors.success : theme.colors.error },
                 ]}
-                onPress={handleAction}
-              >
-                <Text style={styles.primaryActionText}>
-                  {tripState === 'EN_ROUTE' ? 'Start Trip' : 'Complete Trip'}
-                </Text>
-              </TouchableOpacity>
+              />
             </View>
           )}
 
           {tripState === 'COMPLETED' && (
             <View style={styles.completedBox}>
-              <Ionicons name="checkmark-circle" size={48} color="#10B981" />
-              <Text style={styles.completedText}>Trip Completed Successfully!</Text>
+              <AppIcon family="Ionicons" name="checkmark-circle" size={48} colorVariant="success" />
+              <AppText color="success" variant="lg" weight="bold" style={{ marginTop: 10 }}>Trip Completed Successfully!</AppText>
             </View>
           )}
-        </View>
+        </AppCard>
       </View>
     </View>
   );

@@ -80,13 +80,19 @@ class BaseAppSettings(BaseSettings):
         "http://localhost:5173",
         "http://localhost:5174",
         "http://127.0.0.1:8001",
+        "http://127.0.0.1:8010",
+        "http://localhost:8001",
+        "http://localhost:8010",
         # Android emulator → host machine
         "http://10.0.2.2:8001",
         "http://10.0.2.2:3000",
-        # Current Wi-Fi LAN IP (physical Android device)
+        # Current Wi-Fi LAN IP (physical Android device) — updated 2026-06-16
+        "http://192.168.43.127:8001",
+        "http://192.168.43.96:3000",
+        "http://192.168.43.96:5173",
+        "http://192.168.43.96:8010",
+        # Keep old IP as fallback (can be removed when stable)
         "http://192.168.43.157:8001",
-        "http://192.168.43.157:3000",
-        "http://192.168.43.157:5173",
     ]
 
     # Rate Limiting
