@@ -2,7 +2,7 @@
  * useSocket — Socket.IO hook for CabBooking real-time events.
  * Connects to WebSocket gateway with JWT auth, reconnects automatically.
  */
-import { useEffect, useRef, useCallback, useState } from 'react'
+import { useEffect, useCallback, useState } from 'react'
 import { io, Socket } from 'socket.io-client'
 import { useAuthStore } from '../store/auth.store'
 
@@ -46,7 +46,6 @@ export function useSocket(): UseSocketReturn {
     })
 
     setSocketObj(socket)
-    socketRef.current = socket
 
     socket.on('connect', () => {
       setConnected(true)
@@ -64,31 +63,30 @@ export function useSocket(): UseSocketReturn {
 
     return () => {
       socket.disconnect()
-      socketRef.current = null
       setSocketObj(null)
       setConnected(false)
     }
   }, [accessToken])
 
   const joinTrip = useCallback((tripId: string) => {
-    socketRef.current?.emit('join_trip', { trip_id: tripId })
-  }, [])
+    socketObj?.emit('join_trip', { trip_id: tripId })
+  }, [socketObj])
 
   const leaveTrip = useCallback((tripId: string) => {
-    socketRef.current?.emit('leave_trip', { trip_id: tripId })
-  }, [])
+    socketObj?.emit('leave_trip', { trip_id: tripId })
+  }, [socketObj])
 
   const sendSOS = useCallback((data: object) => {
-    socketRef.current?.emit('sos_trigger', data)
-  }, [])
+    socketObj?.emit('sos_trigger', data)
+  }, [socketObj])
 
   const on = useCallback((event: string, handler: (data: any) => void) => {
-    socketRef.current?.on(event, handler)
-  }, [])
+    socketObj?.on(event, handler)
+  }, [socketObj])
 
   const off = useCallback((event: string, handler: (data: any) => void) => {
-    socketRef.current?.off(event, handler)
-  }, [])
+    socketObj?.off(event, handler)
+  }, [socketObj])
 
   return {
     socket: socketObj,
