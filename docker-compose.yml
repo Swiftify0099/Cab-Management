@@ -25,7 +25,6 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./backend/infra/sql/init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - cabooking_net
     healthcheck:
@@ -59,8 +58,8 @@ services:
   # ============================================================
   auth-service:
     build:
-      context: ./backend/auth-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./backend/auth-service/Dockerfile
     container_name: cabooking_auth
     restart: unless-stopped
     env_file: .env
@@ -83,8 +82,8 @@ services:
   # ============================================================
   booking-service:
     build:
-      context: ./backend/booking-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./backend/booking-service/Dockerfile
     container_name: cabooking_booking
     restart: unless-stopped
     env_file: .env
@@ -107,8 +106,8 @@ services:
   # ============================================================
   matching-service:
     build:
-      context: ./backend/matching-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./backend/matching-service/Dockerfile
     container_name: cabooking_matching
     restart: unless-stopped
     env_file: .env
@@ -129,8 +128,8 @@ services:
   # ============================================================
   payment-service:
     build:
-      context: ./backend/payment-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./backend/payment-service/Dockerfile
     container_name: cabooking_payment
     restart: unless-stopped
     env_file: .env
@@ -151,8 +150,8 @@ services:
   # ============================================================
   parcel-service:
     build:
-      context: ./backend/parcel-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./backend/parcel-service/Dockerfile
     container_name: cabooking_parcel
     restart: unless-stopped
     env_file: .env
@@ -175,8 +174,8 @@ services:
   # ============================================================
   hotel-service:
     build:
-      context: ./backend/hotel-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./backend/hotel-service/Dockerfile
     container_name: cabooking_hotel
     restart: unless-stopped
     env_file: .env
@@ -199,8 +198,8 @@ services:
   # ============================================================
   notification-service:
     build:
-      context: ./backend/notification-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./backend/notification-service/Dockerfile
     container_name: cabooking_notification
     restart: unless-stopped
     env_file: .env
@@ -221,8 +220,8 @@ services:
   # ============================================================
   analytics-service:
     build:
-      context: ./backend/analytics-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./backend/analytics-service/Dockerfile
     container_name: cabooking_analytics
     restart: unless-stopped
     env_file: .env
@@ -243,8 +242,8 @@ services:
   # ============================================================
   admin-service:
     build:
-      context: ./backend/admin-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./backend/admin-service/Dockerfile
     container_name: cabooking_admin_svc
     restart: unless-stopped
     env_file: .env
@@ -267,8 +266,8 @@ services:
   # ============================================================
   websocket-gateway:
     build:
-      context: ./backend/websocket-gateway
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./backend/websocket-gateway/Dockerfile
     container_name: cabooking_ws
     restart: unless-stopped
     env_file: .env
@@ -287,8 +286,8 @@ services:
   # ============================================================
   celery-worker:
     build:
-      context: ./backend/booking-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./backend/booking-service/Dockerfile
     container_name: cabooking_celery_worker
     restart: unless-stopped
     env_file: .env
@@ -306,8 +305,8 @@ services:
   # ============================================================
   celery-beat:
     build:
-      context: ./backend/booking-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./backend/booking-service/Dockerfile
     container_name: cabooking_celery_beat
     restart: unless-stopped
     env_file: .env
@@ -353,8 +352,8 @@ services:
   # ============================================================
   admin-web-frontend:
     build:
-      context: ./apps/admin-web
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./apps/admin-web/Dockerfile
     container_name: cabooking_admin_web
     restart: unless-stopped
     ports:
@@ -364,8 +363,8 @@ services:
 
   customer-web-frontend:
     build:
-      context: ./apps/customer-web
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./apps/customer-web/Dockerfile
     container_name: cabooking_customer_web
     restart: unless-stopped
     ports:
