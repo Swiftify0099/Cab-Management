@@ -2,6 +2,7 @@ import { Slot } from 'expo-router'
 import { useEffect } from 'react'
 import { useAuthStore } from '../src/store/auth.store'
 import { usePushNotifications } from '../src/hooks/usePushNotifications'
+import { ThemeProvider } from '../src/contexts/ThemeContext'
 
 export default function RootLayout() {
   const initialize = useAuthStore((s) => s.initialize)
@@ -11,5 +12,9 @@ export default function RootLayout() {
     initialize()
   }, [])
 
-  return <Slot />
+  return (
+    <ThemeProvider>
+      <Slot />
+    </ThemeProvider>
+  )
 }

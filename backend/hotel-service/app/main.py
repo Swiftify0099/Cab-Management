@@ -5,6 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from common.database import engine
 from common.utils.redis_client import close_redis
 
+from app.api.v1 import vendors, properties, bookings
+
 logger = structlog.get_logger(__name__)
 
 @asynccontextmanager
@@ -17,6 +19,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title='CabBooking Hotel and Lodging Service', version='1.0.0', lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_credentials=True, allow_methods=['*'], allow_headers=['*'])
 
+app.include_router(vendors.router, prefix="/api/v1/vendors", tags=["vendors"])
+app.include_router(properties.router, prefix="/api/v1/properties", tags=["properties"])
+app.include_router(bookings.router, prefix="/api/v1/bookings", tags=["bookings"])
+
 @app.get('/health')
 async def health():
     return {'status': 'healthy', 'service': 'hotel-service'}
+

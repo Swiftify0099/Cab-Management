@@ -142,6 +142,8 @@ export const walletApi = {
     api.get('/wallet/transactions', { params }),
   getRefunds: () => api.get('/wallet/refunds'),
   topUp: (data: { amount: number }) => api.post('/wallet/topup', data),
+  verifyTopUp: (data: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string; amount: number }) =>
+    api.post('/wallet/topup/verify', data),
   walletPay: (data: { booking_id: string; amount: number }) =>
     api.post('/payments/wallet-pay', data),
 }

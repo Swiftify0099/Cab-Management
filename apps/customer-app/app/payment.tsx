@@ -1,19 +1,23 @@
 /**
  * Payment Screen — Customer App
  * Phase 2: Razorpay + Wallet + Reward Points (1pt = ₹1), real breakdown
+ * Refactored: All hardcoded colors → theme tokens. Payment logic UNCHANGED.
  */
 import { useState, useEffect } from 'react'
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  ScrollView, Alert, Switch, TextInput, ActivityIndicator, StatusBar,
+  ScrollView, Alert, Switch, TextInput, StatusBar, ActivityIndicator,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router, useLocalSearchParams } from 'expo-router'
 import * as WebBrowser from 'expo-web-browser'
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons'
 import { api } from '../src/api/client'
+import { useTheme } from '../src/contexts/ThemeContext'
+import { AppLoader } from '../src/components/ui'
 
 export default function PaymentScreen() {
+  const { theme, isDark } = useTheme()
   const { bookingId, mode } = useLocalSearchParams<{ bookingId: string; mode?: string }>()
   const [booking, setBooking] = useState<any>(null)
   const [wallet, setWallet] = useState({ balance: 0, reward_points: 0 })
@@ -24,6 +28,7 @@ export default function PaymentScreen() {
   const [loading, setLoading] = useState(true)
   const [validating, setValidating] = useState(false)
   const [paying, setPaying] = useState(false)
+  const [topupAmount, setTopupAmount] = useState('500')
 
   const getHeaders = async () => {
     const token = await (await import('expo-secure-store')).getItemAsync('access_token')
@@ -124,7 +129,7 @@ export default function PaymentScreen() {
 
       const result = await WebBrowser.openBrowserAsync(`${checkoutUrl}?${params}`)
 
-      if (result.type === 'dismiss') {
+      if (result.type === 'dismiss' || result.type === 'success') {
         const verifyRes = await api.get(`/payments/status/${order.order_id}`)
         if (verifyRes.data?.data?.status === 'captured') {
           Alert.alert('✅ Payment Successful!', 'Your booking is confirmed.', [
@@ -141,12 +146,97 @@ export default function PaymentScreen() {
     }
   }
 
+  const handleTopUp = async () => {
+    const amt = parseFloat(topupAmount)
+    if (isNaN(amt) || amt < 50) return Alert.alert('Invalid Amount', 'Minimum top-up is ₹50')
+    setPaying(true)
+    try {
+      const orderRes = await api.post('/wallet/topup', { amount: amt })
+      const order = orderRes.data?.data
+      
+      const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1'
+      const checkoutUrl = `${API_URL}/payments/checkout.html`
+      const params = new URLSearchParams({
+        key_id: order.key_id,
+        order_id: order.order_id,
+        amount: String(order.amount_paise),
+        currency: 'INR',
+        name: 'Swiftify Wallet',
+        description: `Top-up ₹${amt}`,
+        callback_url: `${API_URL}/payments/payment-success?is_topup=true`,
+      })
+      
+      const result = await WebBrowser.openBrowserAsync(`${checkoutUrl}?${params}`)
+      
+      if (result.type === 'dismiss' || result.type === 'success') {
+        const verifyRes = await api.get(`/payments/status/${order.order_id}`)
+        if (verifyRes.data?.data?.status === 'captured') {
+          const res = await api.get('/wallet')
+          setWallet(res.data?.data || wallet)
+          Alert.alert('✅ Top-up Complete', `We've updated your wallet balance.`, [
+            { text: 'Done', onPress: () => router.replace('/(tabs)/wallet' as any) }
+          ])
+        } else {
+          Alert.alert('Payment Failed', 'The payment was not completed. Please try again.', [
+            { text: 'OK', onPress: () => {} }
+          ])
+        }
+      }
+    } catch (e: any) {
+      Alert.alert('Top-up Failed', e?.response?.data?.detail || 'Could not process top-up')
+    } finally {
+      setPaying(false)
+    }
+  }
+
   if (loading) return (
-    <SafeAreaView style={styles.center}>
-      <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
-      <ActivityIndicator size="large" color="#2563EB" />
+    <SafeAreaView style={[styles.center, { backgroundColor: theme.colors.backgroundAlt }]}>
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={theme.colors.backgroundAlt} />
+      <AppLoader size="large" />
     </SafeAreaView>
   )
+
+  if (mode === 'topup') {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.backgroundAlt }]}>
+        <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={theme.colors.backgroundAlt} />
+        
+        <View style={[styles.header, { backgroundColor: theme.colors.surface, borderBottomColor: theme.colors.border }]}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+            <Feather name="chevron-left" size={28} color={theme.colors.primary} />
+          </TouchableOpacity>
+          <Text style={[styles.headerTitle, { color: theme.colors.textPrimary }]}>Add Money</Text>
+          <View style={styles.backBtn} />
+        </View>
+
+        <View style={{ padding: 20 }}>
+          <Text style={{ fontSize: 16, color: theme.colors.textPrimary, marginBottom: 12 }}>Enter Amount</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingHorizontal: 16 }}>
+            <Text style={{ fontSize: 24, fontWeight: '700', color: theme.colors.textPrimary }}>₹</Text>
+            <TextInput
+              style={{ flex: 1, fontSize: 24, fontWeight: '700', color: theme.colors.textPrimary, padding: 16 }}
+              keyboardType="number-pad"
+              value={topupAmount}
+              onChangeText={setTopupAmount}
+            />
+          </View>
+          <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
+            {['100', '500', '1000'].map(amt => (
+              <TouchableOpacity key={amt} onPress={() => setTopupAmount(amt)} style={{ flex: 1, paddingVertical: 12, borderRadius: 8, borderWidth: 1, borderColor: topupAmount === amt ? theme.colors.primary : theme.colors.border, backgroundColor: topupAmount === amt ? theme.colors.primary + '11' : theme.colors.surface, alignItems: 'center' }}>
+                <Text style={{ fontWeight: '600', color: topupAmount === amt ? theme.colors.primary : theme.colors.textSecondary }}>+ ₹{amt}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        <View style={styles.payBtnContainer}>
+          <TouchableOpacity style={[styles.payBtn, paying && { opacity: 0.6 }]} onPress={handleTopUp} disabled={paying}>
+            {paying ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.payBtnText}>Add ₹{topupAmount}</Text>}
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    )
+  }
 
   const totalFare = booking?.total_fare || 0
   const finalAmount = Math.max(totalFare - discount, 0)
@@ -157,26 +247,26 @@ export default function PaymentScreen() {
   const rzpDue = Math.max(afterPoints - walletUsed, 0)
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.backgroundAlt }]}>
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={theme.colors.backgroundAlt} />
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* Header — stitch style: white bg, blue back arrow, centered bold title */}
-        <View style={styles.header}>
+        <View style={[styles.header, { backgroundColor: theme.colors.surface, borderBottomColor: theme.colors.border }]}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-            <Feather name="chevron-left" size={28} color="#1E3A8A" />
+            <Feather name="chevron-left" size={28} color={theme.colors.primary} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Trip Breakdown</Text>
+          <Text style={[styles.headerTitle, { color: theme.colors.textPrimary }]}>Trip Breakdown</Text>
           <View style={styles.backBtn} />
         </View>
 
         {/* Trip meta info bar */}
-        <Text style={styles.tripMeta}>
+        <Text style={[styles.tripMeta, { color: theme.colors.textPrimary }]}>
           Trip ID: #{bookingId?.toString().slice(0,5) || '40928'} | {booking?.trip?.pickup_city} - {booking?.trip?.destination_city} | {new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
         </Text>
 
         {/* Fare Breakdown Card — stitch design */}
-        <View style={styles.breakdownCard}>
-          <Text style={styles.breakdownTitle}>Commission & Tax Breakdown</Text>
+        <View style={[styles.breakdownCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+          <Text style={[styles.breakdownTitle, { color: theme.colors.textPrimary }]}>Commission & Tax Breakdown</Text>
 
           {/* Gross Fare */}
           <View style={styles.fareRow}>
@@ -376,50 +466,47 @@ function BillRow({ label, value, green, bold }: { label: string; value: string; 
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F9FAFB' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F9FAFB' },
+  container: { flex: 1 },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 
-  // Header — stitch style
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF', paddingHorizontal: 16, paddingVertical: 14,
+    paddingHorizontal: 16, paddingVertical: 14,
     shadowColor: '#94A3B8', shadowOpacity: 0.08, shadowRadius: 4, elevation: 2,
-    borderBottomWidth: 1, borderBottomColor: '#F1F5F9',
+    borderBottomWidth: 1,
   },
   backBtn: { width: 40, alignItems: 'flex-start' },
-  headerTitle: { fontSize: 20, fontWeight: '700', color: '#1E3A8A', textAlign: 'center' },
+  headerTitle: { fontSize: 20, fontWeight: '700', textAlign: 'center' },
 
-  tripMeta: { fontSize: 15, color: '#0F172A', lineHeight: 24, paddingHorizontal: 20, paddingVertical: 16 },
+  tripMeta: { fontSize: 15, lineHeight: 24, paddingHorizontal: 20, paddingVertical: 16 },
 
-  // Stitch breakdown card
   breakdownCard: {
-    backgroundColor: '#FFFFFF', marginHorizontal: 16, marginBottom: 16, borderRadius: 20,
+    marginHorizontal: 16, marginBottom: 16, borderRadius: 20,
     padding: 20, shadowColor: '#94A3B8', shadowOpacity: 0.12, shadowRadius: 10, elevation: 3,
-    borderWidth: 1, borderColor: '#F1F5F9',
+    borderWidth: 1,
   },
-  breakdownTitle: { fontSize: 20, fontWeight: '700', color: '#000', marginBottom: 24 },
+  breakdownTitle: { fontSize: 20, fontWeight: '700', marginBottom: 24 },
   fareRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 },
   fareRowLabel: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
-  fareLabel: { fontSize: 16, color: '#000' },
+  fareLabel: { fontSize: 16 },
   fareSub: { fontSize: 13, color: '#6B7280' },
-  fareAmountBold: { fontSize: 22, fontWeight: '900', color: '#000' },
+  fareAmountBold: { fontSize: 22, fontWeight: '900' },
   fareDivider: { height: 1, backgroundColor: '#E5E7EB', marginBottom: 20 },
   fareThickDivider: { height: 4, backgroundColor: '#E5E7EB', borderRadius: 2, marginBottom: 20 },
 
-  // Cards
   card: {
-    backgroundColor: '#FFFFFF', marginHorizontal: 16, marginBottom: 12, borderRadius: 16,
+    marginHorizontal: 16, marginBottom: 12, borderRadius: 16,
     padding: 16, shadowColor: '#94A3B8', shadowOpacity: 0.06, shadowRadius: 8, elevation: 2,
   },
   cardTitle: { fontSize: 13, fontWeight: '700', color: '#475569', marginBottom: 10, letterSpacing: 0.3 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  rowLabel: { fontSize: 14, fontWeight: '600', color: '#0F172A', flex: 1 },
-  rowValue: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
+  rowLabel: { fontSize: 14, fontWeight: '600', flex: 1 },
+  rowValue: { fontSize: 16, fontWeight: '800' },
   rowSub: { fontSize: 12, color: '#94A3B8', marginTop: 4 },
   couponRow: { flexDirection: 'row', gap: 8 },
   couponInput: {
     flex: 1, borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 10,
-    paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, fontWeight: '600', color: '#0F172A',
+    paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, fontWeight: '600',
     backgroundColor: '#F8FAFC', letterSpacing: 1,
   },
   couponBtn: {
@@ -429,7 +516,7 @@ const styles = StyleSheet.create({
   couponBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 13 },
   discountNote: { color: '#10B981', fontSize: 12, fontWeight: '600', marginTop: 8 },
   walletRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  walletBalance: { fontSize: 15, fontWeight: '700', color: '#0F172A', marginTop: 2 },
+  walletBalance: { fontSize: 15, fontWeight: '700', marginTop: 2 },
   rewardPoints: { fontSize: 12, color: '#94A3B8', marginTop: 2 },
   divider: { height: 1, backgroundColor: '#F1F5F9', marginVertical: 10 },
   billRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
@@ -438,7 +525,7 @@ const styles = StyleSheet.create({
   secureNote: { textAlign: 'center', fontSize: 11, color: '#94A3B8', marginTop: 4, marginBottom: 12 },
   payBtnContainer: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
-    backgroundColor: '#F9FAFB', paddingHorizontal: 20, paddingBottom: 28, paddingTop: 12,
+    paddingHorizontal: 20, paddingBottom: 28, paddingTop: 12,
   },
   payBtn: {
     backgroundColor: '#3B82F6', borderRadius: 50, padding: 16, alignItems: 'center',

@@ -210,7 +210,8 @@ jobs:
       - name: Build auth-service image
         uses: docker/build-push-action@v5
         with:
-          context: ./backend/auth-service
+          context: .
+          file: ./backend/auth-service/Dockerfile
           push: false
           tags: cabooking/auth-service:ci
           cache-from: type=gha
@@ -219,7 +220,8 @@ jobs:
       - name: Build booking-service image
         uses: docker/build-push-action@v5
         with:
-          context: ./backend/booking-service
+          context: .
+          file: ./backend/booking-service/Dockerfile
           push: false
           tags: cabooking/booking-service:ci
           cache-from: type=gha
@@ -228,7 +230,8 @@ jobs:
       - name: Build admin-web image
         uses: docker/build-push-action@v5
         with:
-          context: ./apps/admin-web
+          context: .
+          file: ./apps/admin-web/Dockerfile
           push: false
           tags: cabooking/admin-web:ci
           cache-from: type=gha
@@ -237,7 +240,8 @@ jobs:
       - name: Build customer-web image
         uses: docker/build-push-action@v5
         with:
-          context: ./apps/customer-web
+          context: .
+          file: ./apps/customer-web/Dockerfile
           push: false
           tags: cabooking/customer-web:ci
           cache-from: type=gha

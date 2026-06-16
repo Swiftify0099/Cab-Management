@@ -159,6 +159,7 @@ async def wallet_pay(
             # Re-notify driver so siren fires (same as Razorpay capture path)
             try:
                 razorpay_svc = RazorpayService(db)
+                await razorpay_svc._credit_driver(booking, tx_id=None)
                 await razorpay_svc._notify_driver_payment_confirmed(booking)
             except Exception as _e:
                 pass  # Non-critical — don't fail payment if driver notify fails
@@ -221,8 +222,9 @@ async def razorpay_webhook(
 )
 async def payment_success(
     request: Request,
-    booking_id: str,
     db: AsyncSession = Depends(get_db),
+    booking_id: Optional[str] = None,
+    is_topup: Optional[str] = None,
 ):
     try:
         form_data = await request.form()
@@ -232,14 +234,45 @@ async def payment_success(
         
         if razorpay_payment_id and razorpay_order_id and razorpay_signature:
             rp = RazorpayService(db)
-            await rp.capture_payment(razorpay_order_id, razorpay_payment_id, razorpay_signature)
+            if is_topup == "true":
+                if not rp.verify_signature(razorpay_order_id, razorpay_payment_id, razorpay_signature):
+                    raise ValueError("Invalid signature")
+                
+                from app.services.wallet_service import WalletService
+                from common.models.all_models import Transaction, PaymentStatus
+                from sqlalchemy import select
+                
+                result = await db.execute(select(Transaction).where(Transaction.gateway_order_id == razorpay_order_id))
+                tx = result.scalar_one_or_none()
+                if tx and tx.status != PaymentStatus.CAPTURED:
+                    tx.status = PaymentStatus.CAPTURED
+                    tx.gateway_ref = razorpay_payment_id
+                    await db.commit()
+                    
+                    wallet_service = WalletService(db)
+                    await wallet_service.credit_wallet(
+                        customer_id=str(tx.user_id),
+                        amount=tx.amount,
+                        description="Wallet top-up via Razorpay",
+                        reference_id=razorpay_payment_id,
+                    )
+            else:
+                await rp.capture_payment(razorpay_order_id, razorpay_payment_id, razorpay_signature)
                 
             html = """
-            <html><body style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;text-align:center;background:#f0f9ff;color:#0369a1;">
+            <html>
+            <head>
+                <script>
+                    setTimeout(() => {
+                        window.location.href = "cabooking-customer://";
+                    }, 1500);
+                </script>
+            </head>
+            <body style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;text-align:center;background:#f0f9ff;color:#0369a1;">
             <div>
                 <h1 style="font-size:3rem;margin-bottom:10px;">✅</h1>
                 <h2>Payment Successful!</h2>
-                <p>Your payment has been captured.<br>You can safely close this window to return to the app.</p>
+                <p>Redirecting back to the app...</p>
             </div>
             </body></html>
             """
@@ -248,11 +281,19 @@ async def payment_success(
         print(f"[PAYMENT CALLBACK ERR] {e}")
         
     html = """
-    <html><body style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;text-align:center;background:#fff1f2;color:#be123c;">
+    <html>
+    <head>
+        <script>
+            setTimeout(() => {
+                window.location.href = "cabooking-customer://";
+            }, 1500);
+        </script>
+    </head>
+    <body style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;text-align:center;background:#fff1f2;color:#be123c;">
     <div>
         <h1 style="font-size:3rem;margin-bottom:10px;">❌</h1>
         <h2>Payment Failed</h2>
-        <p>There was an issue processing your payment.<br>Please close this window and try again.</p>
+        <p>Redirecting back to the app...</p>
     </div>
     </body></html>
     """

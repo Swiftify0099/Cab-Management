@@ -1,10 +1,13 @@
 import { useEffect } from 'react'
 import { useRouter } from 'expo-router'
-import { View, ActivityIndicator } from 'react-native'
+import { View } from 'react-native'
 import { useAuthStore } from '../src/store/auth.store'
+import { useTheme } from '../src/contexts/ThemeContext'
+import { AppLoader } from '../src/components/ui'
 
 export default function Index() {
   const router = useRouter()
+  const { theme } = useTheme()
   const { isAuthenticated, isLoading, user } = useAuthStore()
 
   useEffect(() => {
@@ -19,8 +22,9 @@ export default function Index() {
   }, [isAuthenticated, isLoading, user?.profileComplete])
 
   return (
-    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' }}>
-      <ActivityIndicator size="large" color="#2563EB" />
+    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.background }}>
+      <AppLoader size="large" />
     </View>
   )
 }
+

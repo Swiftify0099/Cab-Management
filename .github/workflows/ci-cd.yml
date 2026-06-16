@@ -65,11 +65,11 @@ jobs:
 
     services:
       postgres:
-        image: postgis/postgis:15-3.3
+        image: postgis/postgis:16-3.4
         env:
-          POSTGRES_DB: cabooking_test
-          POSTGRES_USER: cabooking_user
-          POSTGRES_PASSWORD: cabooking_pass
+          POSTGRES_USER: cabuser
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: cabdb_test
         ports:
           - 5432:5432
         options: >-
@@ -89,7 +89,7 @@ jobs:
           --health-retries 5
 
     env:
-      DATABASE_URL: postgresql+asyncpg://cabooking_user:cabooking_pass@localhost:5432/cabooking_test
+      DATABASE_URL: postgresql+asyncpg://cabuser:testpassword@localhost:5432/cabdb_test
       REDIS_URL: redis://localhost:6379/0
       APP_ENV: testing
       JWT_SECRET_KEY: test-secret-key-ci
@@ -171,7 +171,8 @@ jobs:
       - name: Build and push ${{ matrix.service }}
         uses: docker/build-push-action@v5
         with:
-          context: ./backend/${{ matrix.service }}
+          context: .
+          file: ./backend/${{ matrix.service }}/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -219,7 +220,8 @@ jobs:
       - name: Build and push ${{ matrix.app }}
         uses: docker/build-push-action@v5
         with:
-          context: ./apps/${{ matrix.app }}
+          context: .
+          file: ./apps/${{ matrix.app }}/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

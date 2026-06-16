@@ -204,6 +204,30 @@ class NotificationType(str, PyEnum):
     SOS = "sos"
     SYSTEM = "system"
     THEME = "theme"
+    VENDOR = "vendor"
+    PROPERTY = "property"
+
+
+class VendorStatus(str, PyEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    SUSPENDED = "suspended"
+
+
+class PropertyType(str, PyEnum):
+    HOTEL = "hotel"
+    LODGE = "lodge"
+    ROOM = "room"
+    RESORT = "resort"
+
+
+class PropertyStatus(str, PyEnum):
+    DRAFT = "draft"
+    SUBMITTED = "submitted"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    SUSPENDED = "suspended"
 
 
 # ============================================================
@@ -607,12 +631,41 @@ class Parcel(Base, UUIDMixin, TimestampMixin):
 
 
 # ============================================================
-# HOTEL MODULE
+# ============================================================
+# PROPERTY & VENDOR MODULE
 # ============================================================
 
-class Hotel(Base, UUIDMixin, TimestampMixin, SoftDeleteMixin):
-    __tablename__ = "hotels"
+class Vendor(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "vendors"
 
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
+    business_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    aadhaar_number: Mapped[str] = mapped_column(String(20), nullable=False)
+    pan_number: Mapped[str] = mapped_column(String(20), nullable=False)
+    gst_number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    status: Mapped[VendorStatus] = mapped_column(Enum(VendorStatus), default=VendorStatus.PENDING)
+
+    applications: Mapped[List["VendorApplication"]] = relationship(back_populates="vendor")
+    properties: Mapped[List["Property"]] = relationship(back_populates="vendor")
+
+
+class VendorApplication(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "vendor_applications"
+
+    vendor_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("vendors.id", ondelete="CASCADE"), nullable=False)
+    documents: Mapped[dict] = mapped_column(JSONB, default={})
+    status: Mapped[VendorStatus] = mapped_column(Enum(VendorStatus), default=VendorStatus.PENDING)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewed_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+
+    vendor: Mapped["Vendor"] = relationship(back_populates="applications")
+
+
+class Property(Base, UUIDMixin, TimestampMixin, SoftDeleteMixin):
+    __tablename__ = "properties"
+
+    vendor_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("vendors.id", ondelete="CASCADE"), nullable=False)
+    type: Mapped[PropertyType] = mapped_column(Enum(PropertyType), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     location: Mapped[object] = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=False)
@@ -622,23 +675,47 @@ class Hotel(Base, UUIDMixin, TimestampMixin, SoftDeleteMixin):
     city: Mapped[str] = mapped_column(String(100), nullable=False)
     state: Mapped[str] = mapped_column(String(100), nullable=False)
     pincode: Mapped[str] = mapped_column(String(10), nullable=False)
-    price_per_night: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
-    images: Mapped[List[str]] = mapped_column(ARRAY(String), default=[])
-    amenities: Mapped[dict] = mapped_column(JSONB, default={})
+    status: Mapped[PropertyStatus] = mapped_column(Enum(PropertyStatus), default=PropertyStatus.DRAFT)
+    policies: Mapped[dict] = mapped_column(JSONB, default={})
     rating: Mapped[float] = mapped_column(Float, default=0.0)
-    is_visible: Mapped[bool] = mapped_column(Boolean, default=True)
-    contact_phone: Mapped[Optional[str]] = mapped_column(String(15), nullable=True)
-    google_place_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
-    bookings: Mapped[List["HotelBooking"]] = relationship(back_populates="hotel")
+    vendor: Mapped["Vendor"] = relationship(back_populates="properties")
+    units: Mapped[List["PropertyUnit"]] = relationship(back_populates="property")
+    images: Mapped[List["PropertyImage"]] = relationship(back_populates="property")
+    bookings: Mapped[List["PropertyBooking"]] = relationship(back_populates="property")
 
 
-class HotelBooking(Base, UUIDMixin, TimestampMixin):
-    __tablename__ = "hotel_bookings"
+class PropertyUnit(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "property_units"
 
-    hotel_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hotels.id"), nullable=False)
+    property_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("properties.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    capacity: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    amenities: Mapped[dict] = mapped_column(JSONB, default={})
+    count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    property: Mapped["Property"] = relationship(back_populates="units")
+
+
+class PropertyImage(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "property_images"
+
+    property_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("properties.id", ondelete="CASCADE"), nullable=False)
+    unit_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("property_units.id", ondelete="CASCADE"), nullable=True)
+    url: Mapped[str] = mapped_column(String(512), nullable=False)
+    type: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    property: Mapped["Property"] = relationship(back_populates="images")
+
+
+class PropertyBooking(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "property_bookings"
+
+    property_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("properties.id"), nullable=False)
+    unit_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("property_units.id"), nullable=False)
     customer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("customer_profiles.id"), nullable=False)
-    trip_booking_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("bookings.id"), nullable=True)
+    vendor_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("vendors.id"), nullable=False)
     check_in: Mapped[date] = mapped_column(Date, nullable=False)
     check_out: Mapped[date] = mapped_column(Date, nullable=False)
     nights: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -646,7 +723,16 @@ class HotelBooking(Base, UUIDMixin, TimestampMixin):
     total_fare: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     status: Mapped[BookingStatus] = mapped_column(Enum(BookingStatus), default=BookingStatus.PENDING)
 
-    hotel: Mapped["Hotel"] = relationship(back_populates="bookings")
+    property: Mapped["Property"] = relationship(back_populates="bookings")
+
+
+class BookingGuest(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "booking_guests"
+    
+    booking_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("property_bookings.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    age: Mapped[int] = mapped_column(Integer, nullable=False)
+    id_proof_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
 
 
 # ============================================================

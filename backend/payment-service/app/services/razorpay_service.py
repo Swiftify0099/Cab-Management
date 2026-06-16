@@ -197,7 +197,7 @@ class RazorpayService:
                 await self.db.commit()
 
                 # Credit driver wallet (90%)
-                await self._credit_driver(booking, tx)
+                await self._credit_driver(booking, tx.id)
 
                 # Award reward points to customer
                 await self._award_reward_points(str(tx.user_id), tx.amount)
@@ -276,7 +276,7 @@ class RazorpayService:
 
         return True
 
-    async def _credit_driver(self, booking: Booking, tx: Transaction) -> None:
+    async def _credit_driver(self, booking: Booking, tx_id: Optional[UUID] = None) -> None:
         """Credit 90% of booking fare to driver's wallet."""
         from common.models.all_models import Trip
         
@@ -288,8 +288,9 @@ class RazorpayService:
         if not trip or not trip.driver_id:
             return
 
-        driver_earning = Decimal(str(tx.amount)) * Decimal("0.90")
-        platform_fee = Decimal(str(tx.amount)) - driver_earning
+        total_fare = Decimal(str(booking.total_fare or "0.0"))
+        driver_earning = total_fare * Decimal("0.90")
+        platform_fee = total_fare - driver_earning
 
         # Find driver — trip.driver_id is FK to drivers.id (not user_id)
         result = await self.db.execute(
@@ -306,7 +307,7 @@ class RazorpayService:
                 amount=driver_earning,
                 transaction_type=LedgerType.WALLET_CREDIT,
                 balance_after=driver.wallet_balance,
-                ref_id=tx.id,
+                ref_id=tx_id,
                 description=f"Earning from booking {booking.id}"
             )
             self.db.add(wtx)

@@ -1,6 +1,7 @@
 /**
  * OTP Phone Entry Screen — Customer App
  * Auth: Mobile OTP (primary) + Google Sign-In (secondary via expo-auth-session)
+ * Refactored: StatusBar now theme-aware. All auth logic UNCHANGED.
  */
 import React, { useState, useRef } from 'react'
 import {
@@ -10,7 +11,7 @@ import {
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
-import { Feather, FontAwesome5 } from '@expo/vector-icons'
+import { Feather } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import * as WebBrowser from 'expo-web-browser'
 import * as Google from 'expo-auth-session/providers/google'
