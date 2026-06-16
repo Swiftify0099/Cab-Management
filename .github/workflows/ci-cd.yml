@@ -80,7 +80,6 @@ jobs:
           -e POSTGRES_USER=cabuser
           -e POSTGRES_PASSWORD=testpassword
           -e POSTGRES_DB=cabdb_test
-          -e POSTGRES_HOST_AUTH_METHOD=trust
 
       redis:
         image: redis:7-alpine
@@ -109,10 +108,15 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Install PostGIS extensions
+      - name: Enable PostGIS extension
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gdal-bin libgdal-dev
+          # The postgis/postgis Docker image already has PostGIS installed.
+          # We just need to enable the extension in our test database.
+          PGPASSWORD=testpassword psql -h localhost -U cabuser -d cabdb_test \
+            -c "CREATE EXTENSION IF NOT EXISTS postgis;" \
+            -c "CREATE EXTENSION IF NOT EXISTS postgis_topology;" || true
+          # Install Python spatial dependencies via pip (no system GDAL needed)
+          pip install geoalchemy2 shapely || true
 
       - name: Run Auth Service tests
         run: |
