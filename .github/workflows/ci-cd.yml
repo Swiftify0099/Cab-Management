@@ -77,6 +77,10 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+          -e POSTGRES_USER=cabuser
+          -e POSTGRES_PASSWORD=testpassword
+          -e POSTGRES_DB=cabdb_test
+          -e POSTGRES_HOST_AUTH_METHOD=trust
 
       redis:
         image: redis:7-alpine
