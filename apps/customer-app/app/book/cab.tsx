@@ -815,27 +815,11 @@ const styles = StyleSheet.create({
   },
   mapTitle: { color: '#FFFFFF', fontSize: 28, fontWeight: '700', lineHeight: 36, textShadowColor: '#000', textShadowRadius: 8 },
 
-  // Date picker elements
-  datePicker: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 12,
-    paddingHorizontal: 14, paddingVertical: 12, marginTop: 12,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
-  },
-  datePickerText: { flex: 1, color: '#E5E7EB', fontSize: 14, fontWeight: '500' },
   iosPickerBg: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' },
   iosPicker: {
     backgroundColor: '#1E293B', borderTopLeftRadius: 24, borderTopRightRadius: 24,
     padding: 20, paddingBottom: 40,
   },
-
-  // Seat counter
-  seatCounter: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  seatBtn: {
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center',
-  },
-  seatCount: { color: '#FFFFFF', fontSize: 18, fontWeight: '800', minWidth: 24, textAlign: 'center' },
 
   // Women badge on trip cards
   womenBadge: {
@@ -916,13 +900,4 @@ const styles = StyleSheet.create({
     maxWidth: 180,
   },
   routeChipText: { fontSize: 13, fontWeight: '600', color: '#4338CA' },
-
-  // Saved address chips (per input)
-  savedRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
-  savedChip: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#F8FAFC', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 7,
-    borderWidth: 1, borderColor: '#E2E8F0',
-  },
-  savedChipText: { fontSize: 12, fontWeight: '600', color: '#64748B' },
 })

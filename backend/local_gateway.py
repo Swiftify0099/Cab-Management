@@ -147,6 +147,8 @@ _matching_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.starts
 for k in list(sys.modules.keys()):
     if k == "app" or k.startswith("app."):
         del sys.modules[k]
+sys.path.remove(_matching_path)
+importlib.invalidate_caches()
 # â”€â”€ 4. Load PAYMENT service router â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _payment_path = os.path.join(_ROOT, "payment-service")
 sys.path.insert(0, _payment_path)
@@ -167,6 +169,7 @@ for k in list(sys.modules.keys()):
     if k == "app" or k.startswith("app."):
         del sys.modules[k]
 sys.path.remove(_payment_path)
+importlib.invalidate_caches()
 
 # â”€â”€ 4.5. Load ADMIN, ANALYTICS, PARCEL services â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _admin_path = os.path.join(_ROOT, "admin-service")
@@ -184,6 +187,7 @@ _admin_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.startswit
 for k in list(sys.modules.keys()):
     if k == "app" or k.startswith("app."): del sys.modules[k]
 sys.path.remove(_admin_path)
+importlib.invalidate_caches()
 
 _analytics_path = os.path.join(_ROOT, "analytics-service")
 sys.path.insert(0, _analytics_path)
@@ -199,6 +203,7 @@ _analytics_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.start
 for k in list(sys.modules.keys()):
     if k == "app" or k.startswith("app."): del sys.modules[k]
 sys.path.remove(_analytics_path)
+importlib.invalidate_caches()
 
 _parcel_path = os.path.join(_ROOT, "parcel-service")
 sys.path.insert(0, _parcel_path)
@@ -214,6 +219,7 @@ _parcel_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.startswi
 for k in list(sys.modules.keys()):
     if k == "app" or k.startswith("app."): del sys.modules[k]
 sys.path.remove(_parcel_path)
+importlib.invalidate_caches()
 
 # Restore auth + matching modules
 sys.path.insert(0, _auth_path)

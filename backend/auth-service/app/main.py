@@ -34,6 +34,9 @@ async def lifespan(app: FastAPI):
     logger.info("[START] Auth Service starting up...")
 
     # Create upload directories
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
     await create_upload_dirs()
 
     # Seed default admin user + themes

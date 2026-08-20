@@ -10,6 +10,7 @@ import { Shadows } from './shadows'
 
 export const DarkTheme = {
   dark: true,
+  isDark: true,
   colors: {
     // Backgrounds
     background:      Colors.dark.bg,

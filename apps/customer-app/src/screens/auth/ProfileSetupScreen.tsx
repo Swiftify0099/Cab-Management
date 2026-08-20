@@ -54,7 +54,7 @@ export default function ProfileSetupScreen() {
 
     const result = fromCamera
       ? await ImagePicker.launchCameraAsync({ quality: 0.7, allowsEditing: true, aspect: [1, 1] })
-      : await ImagePicker.launchImageLibraryAsync({ quality: 0.7, allowsEditing: true, aspect: [1, 1], mediaTypes: ImagePicker.MediaTypeOptions.Images })
+      : await ImagePicker.launchImageLibraryAsync({ quality: 0.7, allowsEditing: true, aspect: [1, 1], mediaTypes: ['images'] })
 
     if (!result.canceled && result.assets[0]) {
       const uri = result.assets[0].uri

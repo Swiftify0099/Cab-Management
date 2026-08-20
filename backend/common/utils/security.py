@@ -1,30 +1,33 @@
 """
-Security utilities  password hashing, OTP generation.
+Security utilities - password hashing, OTP generation.
 """
 import random
 import secrets
 import string
-
-from passlib.context import CryptContext
+import bcrypt
 
 from common.config import settings
 
-# bcrypt context for password hashing
-_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 
 # ============================================================
-# Password Hashing
+# Password Hashing (Direct bcrypt, avoiding passlib 72-byte bug)
 # ============================================================
 
 def hash_password(password: str) -> str:
     """Hash a plain-text password using bcrypt."""
-    return _pwd_context.hash(password)
+    pwd_bytes = password[:72].encode("utf-8")
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(pwd_bytes, salt).decode("utf-8")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a plain password against its bcrypt hash."""
-    return _pwd_context.verify(plain_password, hashed_password)
+    try:
+        pwd_bytes = plain_password[:72].encode("utf-8")
+        hash_bytes = hashed_password.encode("utf-8")
+        return bcrypt.checkpw(pwd_bytes, hash_bytes)
+    except Exception:
+        return False
 
 
 # ============================================================

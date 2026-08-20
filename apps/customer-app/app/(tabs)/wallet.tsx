@@ -204,7 +204,7 @@ export default function WalletTab() {
                   {tx.type === 'debit' ? '-' : '+'}₹{tx.amount.toFixed(2)}
                 </AppText>
                 {tx.status && tx.status !== 'completed' && (
-                  <AppText variant="xs" style={{ color: '#F59E0B', marginTop: 2, textTransform: 'capitalize' }}>
+                  <AppText variant="caption" style={{ color: '#F59E0B', marginTop: 2, textTransform: 'capitalize' }}>
                     {tx.status}
                   </AppText>
                 )}
