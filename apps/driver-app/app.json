@@ -85,8 +85,8 @@
       ]
     ],
     "extra": {
-      "apiUrl": "http://192.168.43.157:8001/api/v1",
-      "wsUrl": "http://192.168.43.157:8010",
+      "apiUrl": "http://10.194.201.223/api/v1",
+      "wsUrl":  "http://10.194.201.223:8010",
       "eas": {
         "projectId": "cabooking-driver"
       }

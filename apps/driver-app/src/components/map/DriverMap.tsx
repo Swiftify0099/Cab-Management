@@ -172,7 +172,14 @@ export const DriverMap = forwardRef<MapView, DriverMapProps>(
     const [mapReady, setMapReady] = useState(false)
 
     // Polygon drawing state — vertices collected as driver taps the map
-    const [drawingVertices, setDrawingVertices] = useState<Coordinate[]>([])
+    const [drawingVertices, setDrawingVertices] = useState<{ latitude: number; longitude: number }[]>([])
+
+    // Helper to normalize coordinates for react-native-maps Polygon
+    const toLatLngList = (coords: (Coordinate | { latitude: number; longitude: number })[]) =>
+      coords.map((c: any) => ({
+        latitude: c.latitude ?? c.lat,
+        longitude: c.longitude ?? c.lng,
+      }))
 
     // Merge external ref
     const setRef = (map: MapView | null) => {
@@ -181,22 +188,19 @@ export const DriverMap = forwardRef<MapView, DriverMapProps>(
       else if (ref) (ref as React.MutableRefObject<MapView | null>).current = map
     }
 
-    // Animate camera to follow driver when position updates
+    // Auto-centre on driver location when moving (if followDriver enabled)
     useEffect(() => {
-      if (!followDriver || !driverLat || !driverLng || !mapRef.current || !mapReady) return
-
-      try {
+      if (!followDriver || !mapReady || driverLat === undefined || driverLng === undefined) return
+      if (mapRef.current) {
         mapRef.current.animateCamera(
           {
-            center:  { latitude: driverLat, longitude: driverLng },
+            center: { latitude: driverLat, longitude: driverLng },
             heading: driverHeading,
-            pitch:   45,
-            zoom:    16,
+            pitch: 30,
+            zoom: 16,
           },
           { duration: 1000 }
         )
-      } catch (e) {
-        console.warn('[DriverMap] animateCamera failed:', e)
       }
     }, [driverLat, driverLng, driverHeading, followDriver, mapReady])
 
@@ -220,7 +224,7 @@ export const DriverMap = forwardRef<MapView, DriverMapProps>(
         return
       }
       const type = drawingMode === 'pickup_polygon' ? 'pickup' : 'destination'
-      onPolygonDrawn?.(type, drawingVertices)
+      onPolygonDrawn?.(type, drawingVertices.map(v => ({ lat: v.latitude, lng: v.longitude })))
       setDrawingVertices([])
     }, [drawingVertices, drawingMode, onPolygonDrawn])
 
@@ -258,11 +262,6 @@ export const DriverMap = forwardRef<MapView, DriverMapProps>(
           mapType="standard"
           moveOnMarkerPress={false}
           onPress={drawingMode ? handleMapPress : undefined}
-          // ✅ Native error handler — prevents full app crash on bad API key
-          onError={(e) => {
-            console.error('[DriverMap] Native map error:', e.nativeEvent)
-            setMapError(true)
-          }}
         >
           {/* ── Route polyline ───────────────────────────────────────────────── */}
           {polyline.length > 1 && (
@@ -287,7 +286,7 @@ export const DriverMap = forwardRef<MapView, DriverMapProps>(
           {/* ── Phase 2: Route Corridor Buffer (3KM) — blue, low opacity ──────── */}
           {routeBufferPolygon.length > 2 && (
             <Polygon
-              coordinates={routeBufferPolygon}
+              coordinates={toLatLngList(routeBufferPolygon)}
               strokeColor="rgba(59,130,246,0.6)"
               fillColor="rgba(59,130,246,0.10)"
               strokeWidth={1.5}
@@ -297,7 +296,7 @@ export const DriverMap = forwardRef<MapView, DriverMapProps>(
           {/* ── Phase 2: Pickup Polygon — green ──────────────────────────────── */}
           {pickupPolygon.length > 2 && (
             <Polygon
-              coordinates={pickupPolygon}
+              coordinates={toLatLngList(pickupPolygon)}
               strokeColor="rgba(34,197,94,0.9)"
               fillColor="rgba(34,197,94,0.20)"
               strokeWidth={2}
@@ -308,7 +307,7 @@ export const DriverMap = forwardRef<MapView, DriverMapProps>(
           {/* ── Phase 2: Destination Polygon — red ───────────────────────────── */}
           {destinationPolygon.length > 2 && (
             <Polygon
-              coordinates={destinationPolygon}
+              coordinates={toLatLngList(destinationPolygon)}
               strokeColor="rgba(239,68,68,0.9)"
               fillColor="rgba(239,68,68,0.20)"
               strokeWidth={2}

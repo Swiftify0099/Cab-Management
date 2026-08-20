@@ -175,7 +175,7 @@ export default function FuelTollCalculatorScreen() {
               <View style={styles.dividerLine} />
 
               <ResultRow emoji="🎫" label="Platform Fee (8%)"
-                value={formatINR(result.fareAmount ? (result.fareAmount * 0.08) : 0)}
+                value={formatINR(result.fare ? (result.fare * 0.08) : 0)}
                 color="#64748B"
               />
               <ResultRow emoji="💰" label="Gross Fare"         value={formatINR(result.fare)}       color="#10B981" />

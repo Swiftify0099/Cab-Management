@@ -32,13 +32,14 @@ Notifications.setNotificationHandler({
     shouldShowAlert: true,
     shouldPlaySound: true,
     shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
   }),
 })
 
-// Port 8001 = local_gateway.py (all services in one process)
-// In production, override EXPO_PUBLIC_WS_URL to point to the WebSocket gateway
-const WS_URL = (process.env.EXPO_PUBLIC_WS_URL || 'http://10.0.2.2:8001').replace(/\/api\/v1$/, '')
-const API    = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:8001/api/v1'
+// Fallbacks point to host IP: 8010 for WS gateway, 80 for API gateway
+const WS_URL = (process.env.EXPO_PUBLIC_WS_URL || 'http://10.194.201.223:8010').replace(/\/api\/v1$/, '')
+const API    = process.env.EXPO_PUBLIC_API_URL || 'http://10.194.201.223/api/v1'
 
 // ─── Types ────────────────────────────────────────────────────
 export interface IncomingRequest {
@@ -130,6 +131,8 @@ interface UseDriverSocketReturn {
   emitParcelDelivered: (parcelId: string, tripId: string) => void
 
   joinDriverScan:      (tripId: string) => void
+  respondToRideOffer:  (offerId: string, accepted: boolean, rejectionReason?: string) => void
+  setIncomingRequest:  React.Dispatch<React.SetStateAction<IncomingRequest | null>>
 
   // Generic Event Listeners
   on:  (event: string, callback: (...args: any[]) => void) => void
@@ -213,6 +216,11 @@ export function useDriverSocket(): UseDriverSocketReturn {
       socket.on('connect', () => {
         setConnected(true)
         console.log('[DriverSocket] Connected:', socket!.id)
+        try {
+          const { AvailabilityService } = require('../services/availabilityService')
+          AvailabilityService.setSocketInstance(socket)
+          AvailabilityService.handleNetworkChange(true)
+        } catch {}
         socket!.emit('DRIVER_ONLINE', { driver_id: driverIdRef.current, timestamp: Date.now() })
         startHeartbeat(socket!)
       })
@@ -221,6 +229,63 @@ export function useDriverSocket(): UseDriverSocketReturn {
         setConnected(false)
         stopHeartbeat()
         console.log('[DriverSocket] Disconnected')
+        try {
+          const { AvailabilityService } = require('../services/availabilityService')
+          AvailabilityService.handleNetworkChange(false)
+        } catch {}
+      })
+
+      // ─── Feature 5: On-Demand Ride Request Events ───────────────────────
+      socket.on('RIDE_REQUEST_NEW', (data: any) => {
+        console.log('[DriverSocket] RIDE_REQUEST_NEW:', data.offer_id, 'Fare:', data.trip?.fare)
+        const normalized: IncomingRequest = {
+          offer_id:        data.offer_id,
+          ride_request_id: data.ride_request_id,
+          booking_id:      data.booking_id || data.ride_request_id,
+          driver_id:       data.driver_id || driverIdRef.current,
+          pickup:          data.pickup,
+          destination:     data.destination,
+          trip: data.trip || {
+            from:           data.pickup?.address || '',
+            to:             data.destination?.address || '',
+            departure_time: new Date().toISOString(),
+            distance_km:    data.pickup?.distance_km || 0,
+            seats:          data.seat_info?.requested_seats || 1,
+            has_parcel:     false,
+            fare:           data.trip?.fare || 0,
+            earning:        data.trip?.earning || 0,
+          },
+          category:    data.category || { name: 'Economy', icon: 'car' },
+          seat_info:   data.seat_info || {
+            total_seats: 4,
+            available_seats: 4,
+            available_labels: ['Front Window', 'Rear Left', 'Rear Right', 'Rear Middle'],
+            requested_seats: 1,
+          },
+          customer:    data.customer || { id: '' },
+          timeout_sec: data.timeout_sec || 180,
+          expires_at:  data.expires_at || new Date(Date.now() + 180000).toISOString(),
+          paid:        data.paid ?? true,
+        } as any
+
+        setIncomingRequest(normalized)
+        playSiren()
+      })
+
+      socket.on('RIDE_REQUEST_EXPIRED', (data: any) => {
+        console.log('[DriverSocket] RIDE_REQUEST_EXPIRED:', data.offer_id)
+        setIncomingRequest(null)
+        stopSiren()
+      })
+
+      socket.on('RIDE_REQUEST_CANCELLED', (data: any) => {
+        console.log('[DriverSocket] RIDE_REQUEST_CANCELLED:', data.ride_request_id)
+        setIncomingRequest(null)
+        stopSiren()
+      })
+
+      socket.on('RIDE_ASSIGNED', (data: any) => {
+        console.log('[DriverSocket] RIDE_ASSIGNED:', data.ride_request_id)
       })
 
       socket.on('INCOMING_TRIP_REQUEST', (data: any) => {
@@ -239,7 +304,7 @@ export function useDriverSocket(): UseDriverSocketReturn {
             fare:           data.fare || 0,
           },
           customer:    data.customer || { id: '' },
-          timeout_sec: data.timeout_sec || 40,
+          timeout_sec: data.timeout_sec || 180,
           paid:        data.paid || false,
         } as any
         setIncomingRequest(normalized)
@@ -262,7 +327,7 @@ export function useDriverSocket(): UseDriverSocketReturn {
             fare:           data.fare || 0,
           },
           customer:    data.customer || { id: '' },
-          timeout_sec: data.timeout_sec || 40,
+          timeout_sec: data.timeout_sec || 180,
         } as any
         setIncomingRequest(normalized)
         playSiren()
@@ -345,7 +410,7 @@ export function useDriverSocket(): UseDriverSocketReturn {
             lng:       longitude,
             speed:     Math.max(0, Math.round((speed ?? 0) * 3.6)),
             heading:   Math.round(((heading ?? 0) + 360) % 360),
-            accuracy:  Math.round(loc.coords.accuracy),
+            accuracy:  Math.round(loc.coords.accuracy ?? 5),
             trip_id:   '',
             timestamp: Date.now(),
           } satisfies LocationUpdatePayload)
@@ -467,9 +532,20 @@ export function useDriverSocket(): UseDriverSocketReturn {
     setCorridorCustomers(prev => prev.filter(c => c.customer_id !== customerId))
   }, [])
 
+  const respondToRideOffer = useCallback((offerId: string, accepted: boolean, rejectionReason?: string) => {
+    socketRef.current?.emit('ride_request_respond', {
+      offer_id: offerId,
+      accepted,
+      rejection_reason: rejectionReason,
+      driver_id: driverIdRef.current,
+      timestamp: Date.now(),
+    })
+  }, [])
+
   return {
     connected,
     incomingRequest,
+    setIncomingRequest,
     pendingCustomers,
     corridorCustomers,        // Phase 2
     arrivalAlert,
@@ -488,6 +564,7 @@ export function useDriverSocket(): UseDriverSocketReturn {
     emitParcelPicked,
     emitParcelDelivered,
     joinDriverScan,
+    respondToRideOffer,
     on,
     off,
   }

@@ -143,7 +143,7 @@ export async function startTracking(
         lng: longitude,
         speed: Math.round((speed ?? 0) * 3.6), // m/s → km/h
         heading: Math.round(finalHeading),
-        accuracy: Math.round(accuracy),
+        accuracy: Math.round(accuracy ?? 5),
         trip_id: _tripId || tripId,
         timestamp: Date.now(),
       }

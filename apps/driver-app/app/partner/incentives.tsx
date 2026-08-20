@@ -1,136 +1,326 @@
 /**
- * Incentives & Quests Dashboard — stitch: incentives_quests_dashboard
+ * Feature 18: Opportunities & Incentives Hub Screen
+ * Dynamic campaigns, daily/weekly quests, shift earnings guarantees, and driver referrals.
  */
-import { useState } from 'react'
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, StatusBar } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
-import { Feather, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons'
-import { LinearGradient } from 'expo-linear-gradient'
-import { router } from 'expo-router'
-
-const QUESTS = [
-  { title: 'Complete 5 Trips Today',       reward: '₹250',  progress: 3, total: 5,  icon: 'car-multiple',   color: '#3B82F6' },
-  { title: 'Earn ₹1000 This Week',          reward: '₹150',  progress: 620, total: 1000, icon: 'cash',        color: '#10B981' },
-  { title: 'Maintain 4.8+ Rating',          reward: '₹100',  progress: 4.9, total: 4.8, icon: 'star',         color: '#EAB308' },
-  { title: 'Complete 2 Parcel Deliveries',  reward: '₹75',   progress: 1, total: 2,  icon: 'package',        color: '#8B5CF6' },
-  { title: 'Drive 200 km in a Day',         reward: '₹200',  progress: 149, total: 200, icon: 'map-marker-distance', color: '#06B6D4' },
-]
-
-const REWARDS = [
-  { label: 'Weekend Bonus', amount: '₹500', expires: '2 days', badge: '🔥' },
-  { label: 'Festival Special', amount: '₹1000', expires: '5 days', badge: '🎉' },
-  { label: 'Loyalty Reward', amount: '₹200', expires: '30 days', badge: '⭐' },
-]
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  StatusBar,
+  TouchableOpacity,
+  RefreshControl,
+  ActivityIndicator,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import { router } from 'expo-router';
+import { useTheme } from '../../src/theme';
+import { IncentivesAndPromotionsService } from '../../src/services/incentivesAndPromotionsService';
+import { DriverPromotionsHubData } from '../../src/types/incentivesAndPromotions';
+import {
+  IncentiveQuestCard,
+  GuaranteedEarningsCard,
+  ReferralProgramCard,
+  IncentivesDevSheet,
+} from '../../src/components/incentives';
 
 export default function IncentivesScreen() {
-  const [tab, setTab] = useState<'quests' | 'rewards'>('quests')
-  const totalPoints = 2450
+  const { theme, isDark } = useTheme();
+  const [data, setData] = useState<DriverPromotionsHubData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [activeTab, setActiveTab] = useState<'ACTIVE' | 'COMPLETED'>('ACTIVE');
+  const [devSheetVisible, setDevSheetVisible] = useState(false);
+
+  const loadData = useCallback(async () => {
+    try {
+      const res = await IncentivesAndPromotionsService.getPromotionsHub();
+      setData(res);
+    } catch (e) {
+      console.warn('[IncentivesScreen] Load error:', e);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    loadData();
+  };
+
+  const handleDevScenario = async (scenario: string) => {
+    const res = await IncentivesAndPromotionsService.devSimulate(scenario);
+    if (res?.hub) {
+      setData(res.hub);
+    } else {
+      await loadData();
+    }
+  };
+
+  const styles = StyleSheet.create({
+    root: {
+      flex: 1,
+      backgroundColor: isDark ? '#0B0E1F' : '#F8FAFC',
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      backgroundColor: isDark ? '#0F172A' : '#FFFFFF',
+      borderBottomWidth: 1,
+      borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : '#E2E8F0',
+    },
+    headerLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+    },
+    backBtn: {
+      width: 40,
+      height: 40,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#F1F5F9',
+    },
+    headerTitle: {
+      fontSize: 18,
+      fontWeight: '800',
+      color: isDark ? '#FFFFFF' : '#0F172A',
+    },
+    devBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      backgroundColor: isDark ? 'rgba(234,179,8,0.15)' : '#FEF9C3',
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(234,179,8,0.3)' : '#FEF08A',
+    },
+    devBtnText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: isDark ? '#FDE047' : '#854D0E',
+    },
+    scroll: {
+      flex: 1,
+    },
+    scrollContent: {
+      padding: 16,
+      paddingBottom: 40,
+    },
+    heroBanner: {
+      backgroundColor: isDark ? '#161B33' : '#FFFFFF',
+      borderRadius: 18,
+      padding: 18,
+      marginBottom: 16,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(245,158,11,0.3)' : '#FDE68A',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 3 },
+      shadowOpacity: isDark ? 0.35 : 0.06,
+      shadowRadius: 8,
+      elevation: 3,
+    },
+    heroTag: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginBottom: 6,
+    },
+    heroTagText: {
+      fontSize: 12,
+      fontWeight: '800',
+      color: '#F59E0B',
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    heroAmount: {
+      fontSize: 26,
+      fontWeight: '900',
+      color: isDark ? '#FFFFFF' : '#0F172A',
+      marginBottom: 4,
+    },
+    heroSubtitle: {
+      fontSize: 12,
+      color: isDark ? '#94A3B8' : '#64748B',
+    },
+    tabsRow: {
+      flexDirection: 'row',
+      gap: 10,
+      marginBottom: 16,
+    },
+    tabBtn: {
+      flex: 1,
+      paddingVertical: 10,
+      borderRadius: 12,
+      alignItems: 'center',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#E2E8F0',
+    },
+    tabBtnActive: {
+      backgroundColor: '#3B82F6',
+    },
+    tabText: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: isDark ? '#94A3B8' : '#64748B',
+    },
+    tabTextActive: {
+      color: '#FFFFFF',
+      fontWeight: '800',
+    },
+    sectionTitle: {
+      fontSize: 15,
+      fontWeight: '800',
+      color: isDark ? '#FFFFFF' : '#0F172A',
+      marginBottom: 12,
+      marginTop: 8,
+    },
+    emptyBox: {
+      backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : '#FFFFFF',
+      borderRadius: 16,
+      padding: 24,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.06)' : '#E2E8F0',
+      marginBottom: 16,
+    },
+  });
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#0F172A' }}>
-      <StatusBar barStyle="light-content" backgroundColor="#0F172A" />
-      <SafeAreaView edges={['top']}>
-        <View style={s.header}>
-          <TouchableOpacity onPress={() => router.back()}><Feather name="arrow-left" size={24} color="#FFFFFF" /></TouchableOpacity>
-          <Text style={s.title}>Incentives & Quests</Text>
-          <View style={s.pointsBadge}><Text style={s.pointsText}>{totalPoints} pts</Text></View>
+    <View style={styles.root}>
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={isDark ? '#0F172A' : '#FFFFFF'} />
+      <SafeAreaView edges={['top']} style={{ backgroundColor: isDark ? '#0F172A' : '#FFFFFF' }}>
+        <View style={styles.header}>
+          <View style={styles.headerLeft}>
+            <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+              <Feather name="arrow-left" size={20} color={isDark ? '#FFFFFF' : '#0F172A'} />
+            </TouchableOpacity>
+            <Text style={styles.headerTitle}>Opportunities & Incentives</Text>
+          </View>
+
+          <TouchableOpacity style={styles.devBtn} onPress={() => setDevSheetVisible(true)}>
+            <MaterialCommunityIcons name="developer-board" size={14} color="#EAB308" />
+            <Text style={styles.devBtnText}>Dev Mode</Text>
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
 
-      {/* Points Banner */}
-      <LinearGradient colors={['#EAB308','#F97316']} start={{x:0,y:0}} end={{x:1,y:0}} style={s.banner}>
-        <MaterialCommunityIcons name="crown" size={40} color="#FFFFFF" />
-        <View style={{ marginLeft: 16 }}>
-          <Text style={s.bannerLabel}>Total Points Earned</Text>
-          <Text style={s.bannerPoints}>{totalPoints.toLocaleString()}</Text>
-          <Text style={s.bannerSub}>Gold Partner Status 🥇</Text>
+      {loading ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator size="large" color="#3B82F6" />
+          <Text style={{ marginTop: 12, color: isDark ? '#94A3B8' : '#64748B', fontWeight: '600' }}>
+            Loading active campaigns & quests...
+          </Text>
         </View>
-        <View style={{ marginLeft: 'auto' }}>
-          <TouchableOpacity style={s.redeemBtn}><Text style={s.redeemText}>Redeem</Text></TouchableOpacity>
-        </View>
-      </LinearGradient>
+      ) : (
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        >
+          {/* 1. Hero Earning Opportunity Banner */}
+          <View style={styles.heroBanner}>
+            <View style={styles.heroTag}>
+              <Feather name="zap" size={14} color="#F59E0B" />
+              <Text style={styles.heroTagText}>Today's Bonus Opportunity</Text>
+            </View>
+            <Text style={styles.heroAmount}>
+              ₹{(data?.potential_bonus_total || 2800).toFixed(0)}+ Extra
+            </Text>
+            <Text style={styles.heroSubtitle}>
+              {data?.active_quests.length || 0} active quests available • Auto-credits to wallet on achievement
+            </Text>
+          </View>
 
-      {/* Tabs */}
-      <View style={s.tabs}>
-        {(['quests', 'rewards'] as const).map(t => (
-          <TouchableOpacity key={t} style={[s.tab, tab === t && s.tabActive]} onPress={() => setTab(t)}>
-            <Text style={[s.tabText, tab === t && s.tabTextActive]}>{t.charAt(0).toUpperCase() + t.slice(1)}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+          {/* 2. Quests Tab Switcher */}
+          <View style={styles.tabsRow}>
+            <TouchableOpacity
+              style={[styles.tabBtn, activeTab === 'ACTIVE' && styles.tabBtnActive]}
+              onPress={() => setActiveTab('ACTIVE')}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.tabText, activeTab === 'ACTIVE' && styles.tabTextActive]}>
+                Active Quests ({data?.active_quests.length || 0})
+              </Text>
+            </TouchableOpacity>
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
-        {tab === 'quests' ? (
-          QUESTS.map((q, i) => {
-            const pct = Math.min(q.progress / q.total, 1)
-            const done = pct >= 1
-            return (
-              <View key={i} style={s.questCard}>
-                <View style={[s.questIcon, { backgroundColor: q.color + '20' }]}>
-                  <MaterialCommunityIcons name={q.icon as any} size={24} color={q.color} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <View style={s.questTitleRow}>
-                    <Text style={s.questTitle}>{q.title}</Text>
-                    <Text style={[s.questReward, { color: q.color }]}>{q.reward}</Text>
-                  </View>
-                  <View style={s.progressTrack}>
-                    <View style={[s.progressFill, { width: `${pct * 100}%`, backgroundColor: q.color }]} />
-                  </View>
-                  <Text style={s.progressLabel}>
-                    {done ? '✅ Completed!' : `${q.progress} / ${q.total}`}
+            <TouchableOpacity
+              style={[styles.tabBtn, activeTab === 'COMPLETED' && styles.tabBtnActive]}
+              onPress={() => setActiveTab('COMPLETED')}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.tabText, activeTab === 'COMPLETED' && styles.tabTextActive]}>
+                Completed & Rewards ({data?.completed_quests.length || 0})
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Tab Content */}
+          {activeTab === 'ACTIVE' ? (
+            <>
+              {/* Active Quests */}
+              {data?.active_quests.map((q) => (
+                <IncentiveQuestCard key={q.campaign_id} quest={q} />
+              ))}
+
+              {/* Shift Guaranteed Earnings Card */}
+              {data?.guarantee_card && (
+                <>
+                  <Text style={styles.sectionTitle}>Shift Income Protection</Text>
+                  <GuaranteedEarningsCard data={data.guarantee_card} />
+                </>
+              )}
+
+              {/* Driver Referral Program */}
+              {data?.referral_summary && (
+                <>
+                  <Text style={styles.sectionTitle}>Fleet Referral Program</Text>
+                  <ReferralProgramCard summary={data.referral_summary} />
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              {data?.completed_quests.length === 0 ? (
+                <View style={styles.emptyBox}>
+                  <Feather name="award" size={32} color={isDark ? '#64748B' : '#94A3B8'} />
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: isDark ? '#FFFFFF' : '#0F172A', marginTop: 8 }}>
+                    No completed quests yet today
+                  </Text>
+                  <Text style={{ fontSize: 12, color: isDark ? '#94A3B8' : '#64748B', textAlign: 'center', marginTop: 4 }}>
+                    Complete trips in the Active Quests tab to unlock instant wallet bonus credits!
                   </Text>
                 </View>
-              </View>
-            )
-          })
-        ) : (
-          REWARDS.map((r, i) => (
-            <TouchableOpacity key={i} style={s.rewardCard}>
-              <Text style={s.rewardBadge}>{r.badge}</Text>
-              <View style={{ flex: 1, marginHorizontal: 14 }}>
-                <Text style={s.rewardLabel}>{r.label}</Text>
-                <Text style={s.rewardExpiry}>Expires in {r.expires}</Text>
-              </View>
-              <View style={s.rewardAmount}>
-                <Text style={s.rewardAmountText}>{r.amount}</Text>
-              </View>
-            </TouchableOpacity>
-          ))
-        )}
-      </ScrollView>
-    </View>
-  )
-}
+              ) : (
+                data?.completed_quests.map((q) => (
+                  <IncentiveQuestCard key={q.campaign_id} quest={q} />
+                ))
+              )}
+            </>
+          )}
+        </ScrollView>
+      )}
 
-const s = StyleSheet.create({
-  header: { flexDirection:'row', alignItems:'center', paddingHorizontal:16, paddingVertical:14, gap:12 },
-  title: { flex:1, color:'#FFFFFF', fontSize:18, fontWeight:'800' },
-  pointsBadge: { backgroundColor:'rgba(234,179,8,0.2)', borderRadius:20, paddingHorizontal:12, paddingVertical:4, borderWidth:1, borderColor:'#EAB308' },
-  pointsText: { color:'#EAB308', fontSize:13, fontWeight:'700' },
-  banner: { marginHorizontal:16, borderRadius:20, padding:20, flexDirection:'row', alignItems:'center', marginBottom:12 },
-  bannerLabel: { color:'rgba(255,255,255,0.8)', fontSize:12 },
-  bannerPoints: { color:'#FFFFFF', fontSize:32, fontWeight:'900' },
-  bannerSub: { color:'rgba(255,255,255,0.8)', fontSize:12, marginTop:2 },
-  redeemBtn: { backgroundColor:'rgba(255,255,255,0.2)', borderRadius:20, paddingHorizontal:14, paddingVertical:8 },
-  redeemText: { color:'#FFFFFF', fontWeight:'700', fontSize:13 },
-  tabs: { flexDirection:'row', marginHorizontal:16, marginBottom:4, backgroundColor:'rgba(255,255,255,0.08)', borderRadius:14, padding:4 },
-  tab: { flex:1, paddingVertical:10, alignItems:'center', borderRadius:10 },
-  tabActive: { backgroundColor:'rgba(255,255,255,0.12)' },
-  tabText: { color:'#6B7280', fontWeight:'600' },
-  tabTextActive: { color:'#FFFFFF', fontWeight:'800' },
-  questCard: { backgroundColor:'rgba(28,31,51,0.7)', borderRadius:18, padding:16, marginBottom:10, flexDirection:'row', alignItems:'center', gap:14, borderWidth:1, borderColor:'rgba(255,255,255,0.06)' },
-  questIcon: { width:48, height:48, borderRadius:14, alignItems:'center', justifyContent:'center' },
-  questTitleRow: { flexDirection:'row', justifyContent:'space-between', marginBottom:8 },
-  questTitle: { flex:1, color:'#FFFFFF', fontSize:14, fontWeight:'700' },
-  questReward: { fontWeight:'800', fontSize:14 },
-  progressTrack: { height:6, backgroundColor:'rgba(255,255,255,0.1)', borderRadius:3, marginBottom:6 },
-  progressFill: { height:'100%', borderRadius:3 },
-  progressLabel: { color:'#9CA3AF', fontSize:11 },
-  rewardCard: { backgroundColor:'rgba(28,31,51,0.7)', borderRadius:18, padding:18, marginBottom:10, flexDirection:'row', alignItems:'center', borderWidth:1, borderColor:'rgba(255,255,255,0.06)' },
-  rewardBadge: { fontSize:32 },
-  rewardLabel: { color:'#FFFFFF', fontWeight:'700', fontSize:15 },
-  rewardExpiry: { color:'#9CA3AF', fontSize:12, marginTop:2 },
-  rewardAmount: { backgroundColor:'rgba(234,179,8,0.15)', borderRadius:16, paddingHorizontal:12, paddingVertical:6, borderWidth:1, borderColor:'#EAB308' },
-  rewardAmountText: { color:'#EAB308', fontWeight:'900', fontSize:16 },
-})
+      {/* Developer Sandbox Sheet */}
+      <IncentivesDevSheet
+        visible={devSheetVisible}
+        onClose={() => setDevSheetVisible(false)}
+        onSelectScenario={handleDevScenario}
+      />
+    </View>
+  );
+}

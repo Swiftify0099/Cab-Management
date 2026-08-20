@@ -144,7 +144,7 @@ export function PermissionGate({ status, onRequestAll, isChecking }: Props) {
       <StatusBar barStyle="light-content" backgroundColor="#050811" />
       <LinearGradient
         colors={['#050811', '#0A1020', '#060D1E']}
-        style={StyleSheet.absoluteFillObject}
+        style={StyleSheet.absoluteFill}
       />
 
       {/* Ambient glow blob */}

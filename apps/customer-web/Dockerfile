@@ -7,7 +7,7 @@ WORKDIR /app
 COPY apps/customer-web/package.json apps/customer-web/package-lock.json* ./
 
 # Install dependencies
-RUN npm ci
+RUN npm install
 
 # Copy source code
 COPY apps/customer-web/. .
@@ -22,7 +22,7 @@ FROM nginx:alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
 
 # SPA routing config
-RUN printf 'server {\n    listen 80;\n    location / {\n        root /usr/share/nginx/html;\n        index index.html index.htm;\n        try_files \ \/ /index.html;\n    }\n}\n' > /etc/nginx/conf.d/default.conf
+COPY apps/customer-web/nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
 

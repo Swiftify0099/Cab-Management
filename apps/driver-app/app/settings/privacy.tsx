@@ -52,7 +52,7 @@ export default function PrivacySettingsScreen() {
 
 const styles = StyleSheet.create({
   root:            { flex: 1, backgroundColor: '#0F172A' },
-  bg:              { ...StyleSheet.absoluteFillObject } as any,
+  bg:              { ...StyleSheet.absoluteFill } as any,
   safe:            { flex: 1 },
   header:          { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 20, paddingVertical: 16 },
   backBtn:         { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center' },

@@ -81,19 +81,45 @@ export default function CreateTripScreen() {
   useEffect(() => {
     if (step !== 2 || myVehicles.length > 0) return
     setVehiclesLoading(true)
+    
+    // Attempt live API with fallback to VehicleService
     api.get('/driver/my-vehicles')
       .then(res => {
-        const data: DriverVehicle[] = res.data?.data || []
-        setMyVehicles(data)
-        // Auto-select first verified vehicle
-        const first = data.find(v => v.is_verified) || data[0]
-        if (first) {
-          update('vehicle_type', first.vehicle_type)
-          update('total_seats', first.total_seats)
+        const data = res.data?.data || []
+        if (data.length > 0) {
+          setMyVehicles(data)
+          const first = data.find((v: any) => v.is_verified) || data[0]
+          if (first) {
+            update('vehicle_type', first.vehicle_type)
+            update('total_seats', first.total_seats || first.seat_capacity || 4)
+          }
+          return
         }
+        throw new Error('No API vehicles')
       })
-      .catch(() => {
-        // API not available — keep static VEHICLE_TYPES fallback
+      .catch(async () => {
+        try {
+          const { VehicleService: VS } = require('../src/services/vehicleService')
+          const vsList = await VS.getVehicles()
+          const approved = vsList.filter((v: any) => v.status === 'ACTIVE' || v.status === 'APPROVED' || v.status === 'INACTIVE')
+          if (approved.length > 0) {
+            const mapped = approved.map((v: any) => ({
+              id: v.id,
+              vehicle_type: v.vehicle_type,
+              make: v.make,
+              model: v.model,
+              registration_number: v.registration_number,
+              total_seats: v.seat_capacity,
+              is_verified: true,
+            }))
+            setMyVehicles(mapped)
+            const activeVeh = approved.find((v: any) => v.is_active) || approved[0]
+            if (activeVeh) {
+              update('vehicle_type', activeVeh.vehicle_type)
+              update('total_seats', activeVeh.seat_capacity)
+            }
+          }
+        } catch {}
       })
       .finally(() => setVehiclesLoading(false))
   }, [step])

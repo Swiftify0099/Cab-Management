@@ -91,9 +91,15 @@ async def get_driver_profile(
     if not profile:
         raise HTTPException(status_code=404, detail="Driver profile not found")
 
+    resp_data = DriverProfileResponse.model_validate(profile)
+    if not resp_data.phone:
+        resp_data.phone = current_user.phone
+    if not resp_data.email and hasattr(current_user, '_user') and current_user._user:
+        resp_data.email = current_user._user.email
+
     return APIResponse(
         message="Driver profile fetched",
-        data=DriverProfileResponse.model_validate(profile),
+        data=resp_data,
     )
 
 

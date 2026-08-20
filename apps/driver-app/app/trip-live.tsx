@@ -32,7 +32,7 @@ import type { PendingCustomer, CorridorCustomerPayload } from '../src/hooks/useD
 import IncomingRequestScreen from './incoming-request'
 
 const { width, height } = Dimensions.get('window')
-const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1'
+const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.194.201.223/api/v1'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface CustomerDot {
@@ -318,11 +318,11 @@ export default function TripLiveScreen() {
       {/* Futuristic Deep Gradient Background */}
       <LinearGradient
         colors={['#050811', '#0B0F1E', '#060A14', '#050811']}
-        style={StyleSheet.absoluteFillObject}
+        style={StyleSheet.absoluteFill}
       />
 
       {/* Cyber street grid overlays */}
-      <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
+      <View style={StyleSheet.absoluteFill} pointerEvents="none">
         {Array.from({ length: 15 }).map((_, i) => (
           <View key={`h${i}`} style={[styles.gridH, { top: `${(i / 15) * 100}%` }]} />
         ))}
@@ -427,7 +427,7 @@ export default function TripLiveScreen() {
             {/* Continuous Rotating Radar Sweep Gradient */}
             <Animated.View
               style={[
-                StyleSheet.absoluteFillObject,
+                StyleSheet.absoluteFill,
                 { borderRadius: RADAR_R, transform: [{ rotate: spin }] },
               ]}
             >
@@ -440,7 +440,7 @@ export default function TripLiveScreen() {
                 ]}
                 start={{ x: 0.5, y: 0.5 }}
                 end={{ x: 1, y: 0.5 }}
-                style={[StyleSheet.absoluteFillObject, { borderRadius: RADAR_R }]}
+                style={[StyleSheet.absoluteFill, { borderRadius: RADAR_R }]}
               />
             </Animated.View>
 
@@ -594,7 +594,7 @@ export default function TripLiveScreen() {
           >
             <LinearGradient
               colors={['#0A1224', '#111D36', '#0A1224']}
-              style={StyleSheet.absoluteFillObject}
+              style={StyleSheet.absoluteFill}
             />
 
             {/* Top Handle bar */}
@@ -609,7 +609,7 @@ export default function TripLiveScreen() {
                 <AppText variant="h3" weight="bold" color="inverse">{selected.name.charAt(0)}</AppText>
               </LinearGradient>
               <View style={{ flex: 1 }}>
-                <AppText variant="lg" weight="bold" color="inverse">{selected.name}</AppText>
+                <AppText variant="h4" weight="bold" color="inverse">{selected.name}</AppText>
                 <View style={styles.phoneRow}>
                   <AppIcon name="phone" size={12} colorVariant="textTertiary" />
                   <AppText variant="body2" color="textSecondary">{selected.phone}</AppText>
@@ -942,7 +942,7 @@ const styles = StyleSheet.create({
   glassCardSub: { color: '#64748B', fontSize: 11, marginTop: 4, lineHeight: 14 },
 
   // Sliding Customer Details Panel Styling
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.65)', zIndex: 40 },
+  backdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.65)', zIndex: 40 },
   panel: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
     backgroundColor: '#0A1224',

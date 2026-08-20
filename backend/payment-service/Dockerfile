@@ -13,7 +13,7 @@ COPY backend/common /app/common
 
 # Install Python dependencies
 COPY backend/payment-service/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir setuptools==69.5.1 && pip install --no-cache-dir -r requirements.txt
 
 # Copy service application code
 COPY backend/payment-service/app /app/app

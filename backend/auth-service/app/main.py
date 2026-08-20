@@ -16,7 +16,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from app.api.v1 import auth_router, admin_auth_router, profile_router, driver_router
+from app.api.v1 import auth_router, admin_auth_router, profile_router, driver_router, kyc_router
 from app.core.config import auth_settings
 from app.core.startup import create_upload_dirs, seed_admin_user, seed_default_themes
 from common.database import engine, Base
@@ -105,6 +105,7 @@ app.include_router(auth_router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(admin_auth_router, prefix="/api/v1/admin/auth", tags=["Admin Auth"])
 app.include_router(profile_router, prefix="/api/v1/profile", tags=["Profile"])
 app.include_router(driver_router, prefix="/api/v1/driver", tags=["Driver Onboarding"])
+app.include_router(kyc_router, prefix="/api/v1/driver/kyc", tags=["Driver KYC Lifecycle"])
 
 # ============================================================
 # Dynamic Gateway Mounting (Booking & Matching)
@@ -198,5 +199,6 @@ sys.modules.update(_auth_mods)
 @app.get("/health", tags=["Health"])
 async def health_check():
     return {"status": "healthy", "service": "auth-service", "version": "1.0.0"}
+
 
 

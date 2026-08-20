@@ -28,7 +28,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship as orm_relationship, relationship
 
 from common.database import Base
 Base.metadata.clear()
@@ -130,12 +130,16 @@ class StopType(str, PyEnum):
 
 class DocumentType(str, PyEnum):
     AADHAAR = "aadhaar"
+    PAN = "pan"
+    SELFIE = "selfie"
     LICENSE = "license"
+    POLICE_VERIFICATION = "police_verification"
     RC_BOOK = "rc_book"
     INSURANCE = "insurance"
+    PERMIT = "permit"
+    PUC = "puc"
     VEHICLE_PHOTO = "vehicle_photo"
-    SELFIE = "selfie"
-    PAN = "pan"
+    BANK_ACCOUNT = "bank_account"
 
 
 class ComplaintType(str, PyEnum):
@@ -229,6 +233,30 @@ class PropertyStatus(str, PyEnum):
     REJECTED = "rejected"
     SUSPENDED = "suspended"
 
+
+
+class RideRequestStatus(str, PyEnum):
+    CREATED = "created"
+    DISPATCHING = "dispatching"
+    OFFERED = "offered"
+    ASSIGNED = "assigned"
+    PICKUP = "pickup"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+    EXPIRED = "expired"
+    FAILED = "failed"
+
+
+class RideOfferStatus(str, PyEnum):
+    PENDING = "pending"
+    DELIVERED = "delivered"
+    VIEWED = "viewed"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+    CANCELLED = "cancelled"
+    SUPERSEDED = "superseded"
 
 # ============================================================
 # USER & AUTH
@@ -377,6 +405,15 @@ class Driver(Base, UUIDMixin, TimestampMixin):
     current_location: Mapped[Optional[object]] = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=True)
     home_city: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     referral_code: Mapped[Optional[str]] = mapped_column(String(20), unique=True, nullable=True)
+    experience_years: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Feature 12: Driver Cancellation & Restriction Performance Metrics
+    cancellation_rate: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    total_cancellations: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    penalty_cancellations: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    restriction_status: Mapped[str] = mapped_column(String(30), default="NORMAL", nullable=False)  # NORMAL, WARNING, RESTRICTED, TEMPORARILY_SUSPENDED
+    restriction_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    restriction_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     @property
     def is_online(self) -> bool:
@@ -408,6 +445,7 @@ class Driver(Base, UUIDMixin, TimestampMixin):
     documents: Mapped[List["DriverDocument"]] = relationship(back_populates="driver")
     trips: Mapped[List["Trip"]] = relationship(back_populates="driver", foreign_keys="[Trip.driver_id]")
     penalties: Mapped[List["DriverPenalty"]] = relationship(back_populates="driver")
+    bank_account: Mapped[Optional["DriverBankAccount"]] = relationship(back_populates="driver", uselist=False)
 
 
 class Vehicle(Base, UUIDMixin, TimestampMixin):
@@ -437,13 +475,35 @@ class DriverDocument(Base, UUIDMixin, TimestampMixin):
     driver_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"), nullable=False, index=True)
     doc_type: Mapped[DocumentType] = mapped_column(Enum(DocumentType), nullable=False)
     file_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    document_number: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    issue_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    expires_at: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="uploaded", nullable=False)
+    metadata_json: Mapped[Optional[dict]] = mapped_column(JSONB, default={})
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     verified_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
     rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    expires_at: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
 
     driver: Mapped["Driver"] = relationship(back_populates="documents")
+
+
+class DriverBankAccount(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "driver_bank_accounts"
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
+    account_holder_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    bank_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    account_number_masked: Mapped[str] = mapped_column(String(50), nullable=False)
+    account_number_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    ifsc_code: Mapped[str] = mapped_column(String(20), nullable=False)
+    account_type: Mapped[str] = mapped_column(String(20), default="savings", nullable=False)
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    driver: Mapped["Driver"] = relationship(back_populates="bank_account")
 
 
 class AdminProfile(Base, UUIDMixin, TimestampMixin):
@@ -893,13 +953,24 @@ class SupportTicket(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "support_tickets"
 
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(50), default="GENERAL", nullable=False, index=True)  # ACCOUNT, TRIPS, PAYMENTS, VEHICLE, KYC, SAFETY, EARNINGS, PAYOUT, SETTINGS
+    subcategory: Mapped[str] = mapped_column(String(50), default="OTHER", nullable=False)
     subject: Mapped[str] = mapped_column(String(500), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[TicketStatus] = mapped_column(Enum(TicketStatus), default=TicketStatus.OPEN)
+    status: Mapped[TicketStatus] = mapped_column(Enum(TicketStatus), default=TicketStatus.OPEN, index=True)
     priority: Mapped[str] = mapped_column(String(20), default="normal")  # low, normal, high, urgent
+    ride_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("ride_requests.id", ondelete="SET NULL"), nullable=True)
+    payout_request_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("driver_payout_requests.id", ondelete="SET NULL"), nullable=True)
     assigned_to: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_message_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now(), nullable=False)
+    unread_driver_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    unread_agent_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     messages: Mapped[dict] = mapped_column(JSONB, default={"messages": []})
+
+    # Relationships
+    user: Mapped["User"] = relationship("User", foreign_keys=[user_id])
+    ride_request: Mapped[Optional["RideRequest"]] = relationship("RideRequest", foreign_keys=[ride_id])
 
 
 # ============================================================
@@ -1326,6 +1397,7 @@ class DriverLocation(Base, UUIDMixin):
     """
     Live driver GPS, upserted on every LOCATION_UPDATE WebSocket event.
     One row per driver (unique constraint on driver_id).
+    PostGIS Geography column for efficient ST_DWithin nearby-driver queries.
     """
     __tablename__ = "driver_locations"
     __table_args__ = (UniqueConstraint("driver_id"),)
@@ -1334,17 +1406,1260 @@ class DriverLocation(Base, UUIDMixin):
         UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
         nullable=False, index=True
     )
+    location: Mapped[Optional[object]] = mapped_column(
+        Geography(geometry_type="POINT", srid=4326), nullable=True
+    )
     latitude: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     longitude: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     speed_kmh: Mapped[float] = mapped_column(Float, default=0.0)
     heading: Mapped[float] = mapped_column(Float, default=0.0)
     accuracy_m: Mapped[float] = mapped_column(Float, default=0.0)
+    is_online: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
 
+
 # ============================================================
+# ON-DEMAND RIDE DISPATCH (Feature 5)
+# ============================================================
+
+class RideCategory(Base, UUIDMixin, TimestampMixin):
+    """
+    Ride categories (Economy, Premium, SUV) with fare rules and commission.
+    Managed from Admin panel. Commission is configurable per category.
+    """
+    __tablename__ = "ride_categories"
+
+    name: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)  # economy, premium, suv
+    display_name: Mapped[str] = mapped_column(String(100), nullable=False)  # Economy, Premium, SUV
+    eligible_vehicle_types: Mapped[List[str]] = mapped_column(ARRAY(String), nullable=False)  # ["hatchback","sedan"]
+    base_fare: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=50)
+    per_km_rate: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False, default=12)
+    per_min_rate: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False, default=2)
+    min_fare: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=80)
+    surge_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
+    platform_commission_pct: Mapped[float] = mapped_column(Float, default=0.20, nullable=False)  # 20% default
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    icon_name: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # car, premium-car, suv
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class RideRequest(Base, UUIDMixin, TimestampMixin):
+    """
+    On-demand ride request created by customer.
+    Separate from intercity Trip/Booking system.
+
+    Lifecycle: CREATED -> DISPATCHING -> OFFERED -> ASSIGNED -> PICKUP
+               -> IN_PROGRESS -> COMPLETED
+    Terminal: CANCELLED, EXPIRED, FAILED
+    """
+    __tablename__ = "ride_requests"
+
+    customer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    # Pickup
+    pickup_location: Mapped[object] = mapped_column(
+        Geography(geometry_type="POINT", srid=4326), nullable=False
+    )
+    pickup_lat: Mapped[float] = mapped_column(Float, nullable=False)
+    pickup_lng: Mapped[float] = mapped_column(Float, nullable=False)
+    pickup_address: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Destination
+    destination_location: Mapped[object] = mapped_column(
+        Geography(geometry_type="POINT", srid=4326), nullable=False
+    )
+    destination_lat: Mapped[float] = mapped_column(Float, nullable=False)
+    destination_lng: Mapped[float] = mapped_column(Float, nullable=False)
+    destination_address: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Category & fare (from backend fare engine - authoritative)
+    ride_category_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ride_categories.id"), nullable=True
+    )
+    estimated_distance_km: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    estimated_duration_min: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    estimated_fare: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    surge_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
+    seats_requested: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    seat_preferences: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)  # {"window": True, "seats": ["W1", "M1"]}
+
+    # Route data (cached from Google Routes API)
+    route_polyline: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    route_distance_km: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    route_duration_min: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Assignment
+    status: Mapped[RideRequestStatus] = mapped_column(
+        Enum(RideRequestStatus, native_enum=False, length=50,
+             values_callable=lambda obj: [e.value for e in obj]),
+        default=RideRequestStatus.CREATED, index=True
+    )
+    assigned_driver_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id"), nullable=True
+    )
+    assigned_vehicle_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("vehicles.id"), nullable=True
+    )
+    assigned_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Cancellation
+    cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancellation_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    cancelled_by: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+
+    # Expiry
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Dispatch metadata
+    dispatch_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    max_dispatch_attempts: Mapped[int] = mapped_column(Integer, default=5)
+
+    # Feature 8: Customer Communication & Arrival Tracking
+    pickup_arrived_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_contact_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    contact_attempts_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Feature 9: Ride Start & Multi-Factor Verification
+    start_pin_hash: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    start_pin_plain: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # Dev / Customer app display
+    pin_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    pin_locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    start_lat: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    start_lng: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    start_accuracy: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # Feature 10: During Ride / Live Trip Execution
+    distance_travelled_km: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    waiting_duration_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    waiting_fare: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.0"), nullable=False)
+    current_estimated_fare: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.0"), nullable=False)
+    has_active_sos: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    destination_change_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Feature 11: Waiting System & Pickup Delays
+    free_waiting_ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    paid_waiting_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    pickup_waiting_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    pickup_waiting_fare: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.0"), nullable=False)
+    is_no_show_eligible: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Feature 13 & 14: Trip Completion, Final Fare & Financial Settlement
+    destination_arrived_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    final_fare: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    driver_earning: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    platform_commission: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    payment_method: Mapped[str] = mapped_column(String(30), default="cash", nullable=False)  # cash, upi, card, wallet
+    payment_status: Mapped[str] = mapped_column(String(30), default="pending", nullable=False)  # pending, paid, failed, cash_collected
+    tip_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+
+    # Feature 21: Back-to-Back Rides Continuous Dispatch
+    is_back_to_back: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Feature 26: Scheduled / Reserved Trips
+    is_scheduled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    scheduled_pickup_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    scheduled_status: Mapped[str] = mapped_column(String(30), default="UNASSIGNED", nullable=False)  # UNASSIGNED, RESERVED, DISPATCHED, ACTIVE, CANCELLED, AUTO_RELEASED
+    reservation_accepted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    dispatch_buffer_minutes: Mapped[int] = mapped_column(Integer, default=45, nullable=False)
+    auto_release_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_ride_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("ride_requests.id", ondelete="SET NULL"), nullable=True)
+    next_ride_reserved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_ride_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    customer: Mapped["User"] = relationship(foreign_keys=[customer_id])
+    assigned_driver: Mapped[Optional["Driver"]] = relationship(foreign_keys=[assigned_driver_id])
+    ride_category: Mapped[Optional["RideCategory"]] = relationship(foreign_keys=[ride_category_id])
+    offers: Mapped[List["RideOffer"]] = relationship(back_populates="ride_request")
+
+
+class RideOffer(Base, UUIDMixin, TimestampMixin):
+    """
+    Per-driver offer for a ride request.
+    One ride can have multiple offers (sequential dispatch).
+    Only ONE offer can be ACCEPTED per ride.
+
+    Server-side expiry via expires_at (180s timeout) - driver app timer is display only.
+    """
+    __tablename__ = "ride_offers"
+    __table_args__ = (
+        UniqueConstraint("ride_request_id", "driver_id", name="uq_ride_offer_driver"),
+    )
+
+    ride_request_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ride_requests.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+
+    status: Mapped[RideOfferStatus] = mapped_column(
+        Enum(RideOfferStatus, native_enum=False, length=50,
+             values_callable=lambda obj: [e.value for e in obj]),
+        default=RideOfferStatus.PENDING, index=True
+    )
+
+    # Distance/ETA from driver to pickup (PostGIS straight-line initially)
+    pickup_distance_km: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    pickup_eta_min: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Road distance/ETA (from Google Routes API - cached, nullable)
+    pickup_road_distance_km: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    pickup_road_eta_min: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Earning calculated by backend
+    estimated_fare: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=0)
+    platform_commission: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=0)
+    estimated_earning: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=0)
+
+    # Server-side timestamps for timeout enforcement
+    offered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    responded_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    response_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # Available seat info for display in driver app
+    available_seats: Mapped[int] = mapped_column(Integer, default=4, nullable=False)
+    available_seat_labels: Mapped[Optional[List[str]]] = mapped_column(ARRAY(String), nullable=True)  # ["Window Front", "Window Rear", "Middle"]
+
+    # Relationships
+    ride_request: Mapped["RideRequest"] = relationship(back_populates="offers")
+    driver: Mapped["Driver"] = orm_relationship("Driver", foreign_keys=[driver_id])
+
+
+# ============================================================
+# SMART RIDE SELECTION & RADAR (Feature 6)
+# ============================================================
+
+class DriverPreference(Base, UUIDMixin, TimestampMixin):
+    """
+    Driver personal matching preferences for Smart Ride Selection & Radar.
+    One row per driver.
+    """
+    __tablename__ = "driver_preferences"
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        unique=True, index=True, nullable=False
+    )
+    mode: Mapped[str] = mapped_column(String(30), default="balanced", nullable=False)  # balanced, earnings_focus, nearby_focus, short_trips, long_trips, airport_focus
+    allow_local: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    allow_airport: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    allow_outstation: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    allow_scheduled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    min_earning_cutoff: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    max_pickup_distance_km: Mapped[float] = mapped_column(Float, default=7.0, nullable=False)
+    max_pickup_eta_min: Mapped[int] = mapped_column(Integer, default=15, nullable=False)
+    
+    # Destination Mode (Feature 20)
+    destination_mode: Mapped[str] = mapped_column(String(20), default="off", nullable=False)  # off, flexible, strict
+    destination_address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    destination_location: Mapped[Optional[object]] = mapped_column(
+        Geography(geometry_type="POINT", srid=4326), nullable=True
+    )
+    destination_lat: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    destination_lng: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    destination_mode_state: Mapped[str] = mapped_column(String(30), default="OFF", nullable=False)  # OFF, SETTING, ACTIVE, PAUSED, REACHED, EXPIRED, DISABLED
+    destination_mode_pref: Mapped[str] = mapped_column(String(20), default="balanced", nullable=False)  # flexible, balanced, strict
+    destination_activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    destination_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    destination_rides_completed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    destination_max_rides: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
+    destination_radius_km: Mapped[float] = mapped_column(Float, default=1.5, nullable=False)
+
+    # Relationships
+    driver: Mapped["Driver"] = orm_relationship("Driver", foreign_keys=[driver_id])
+
+
+class AirportZone(Base, UUIDMixin, TimestampMixin):
+    """
+    Authoritative geofenced airport zones for high-precision airport ride classification.
+    """
+    __tablename__ = "airport_zones"
+
+    airport_code: Mapped[str] = mapped_column(String(10), unique=True, nullable=False)  # PNQ, BOM, DEL
+    airport_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    city: Mapped[str] = mapped_column(String(50), nullable=False)
+    boundary: Mapped[Optional[object]] = mapped_column(
+        Geography(geometry_type="POLYGON", srid=4326), nullable=True
+    )
+    center_lat: Mapped[float] = mapped_column(Float, nullable=False)
+    center_lng: Mapped[float] = mapped_column(Float, nullable=False)
+    radius_meters: Mapped[float] = mapped_column(Float, default=2500.0, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class SmartRadarSession(Base, UUIDMixin, TimestampMixin):
+    """
+    Active Smart Ride Radar session for a driver containing candidate offers.
+    """
+    __tablename__ = "smart_radar_sessions"
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        index=True, nullable=False
+    )
+    candidate_ride_ids: Mapped[List[str]] = mapped_column(ARRAY(String), default=[], nullable=False)
+    active_selection_ids: Mapped[List[str]] = mapped_column(ARRAY(String), default=[], nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)  # active, closed, matched, expired
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    driver: Mapped["Driver"] = orm_relationship("Driver", foreign_keys=[driver_id])
+
+
+# ============================================================
+# NAVIGATION & ROAD HAZARDS (Feature 7)
+# ============================================================
+
+class RoadHazard(Base, UUIDMixin, TimestampMixin):
+    """
+    Driver-reported and system-verified road hazards with PostGIS spatial clustering.
+    """
+    __tablename__ = "road_hazards"
+
+    hazard_type: Mapped[str] = mapped_column(String(50), nullable=False)  # construction, pothole, accident, road_closed, heavy_traffic, flooding, other
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    location: Mapped[object] = mapped_column(
+        Geography(geometry_type="POINT", srid=4326), nullable=False
+    )
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    heading: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    speed_kmh: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    
+    # Validation & Clustering
+    status: Mapped[str] = mapped_column(String(30), default="reported", nullable=False)  # reported, verified, resolved, expired
+    confidence_score: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)  # increases with multiple reports
+    report_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    reported_by_driver_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    ride_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+    # Relationships
+    reporter: Mapped[Optional["Driver"]] = relationship(foreign_keys=[reported_by_driver_id])
+
+
+class RouteNavigationLog(Base, UUIDMixin, TimestampMixin):
+    """
+    Audit log for tracking external Map/Route API requests vs internal PostGIS cache hits.
+    Provides authoritative cost monitoring KPI: API Calls Per Completed Ride.
+    """
+    __tablename__ = "route_navigation_logs"
+
+    provider: Mapped[str] = mapped_column(String(50), default="google_routes", nullable=False)  # google_routes, postgis_math, redis_cache
+    endpoint: Mapped[str] = mapped_column(String(100), nullable=False)
+    ride_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    driver_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    request_type: Mapped[str] = mapped_column(String(50), nullable=False)  # initial_route, reroute, arrival_check, hazard_lookup
+    cache_hit: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    prevented_by_postgis: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    response_time_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="success", nullable=False)
+    estimated_cost_usd: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+
+
+
+# ============================================================
+# CUSTOMER COMMUNICATION & RIDE START (Features 8 & 9)
+# ============================================================
+
+class RideMessage(Base, UUIDMixin, TimestampMixin):
+    """
+    In-App real-time chat messages between Driver and Customer for active ride.
+    Server-authoritative validation ensures participants belong to the ride.
+    """
+    __tablename__ = "ride_messages"
+
+    ride_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ride_requests.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    sender_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    receiver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    sender_type: Mapped[str] = mapped_column(String(20), nullable=False)  # driver, customer, system
+    message_type: Mapped[str] = mapped_column(String(30), default="text", nullable=False)  # text, quick_message, system_message, location_share
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    is_delivered: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    read_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    metadata_json: Mapped[dict] = mapped_column(JSONB, default={}, nullable=False)
+
+    # Relationships
+    ride_request: Mapped["RideRequest"] = orm_relationship("RideRequest", foreign_keys=[ride_id])
+    sender: Mapped["User"] = relationship(foreign_keys=[sender_id])
+    receiver: Mapped["User"] = relationship(foreign_keys=[receiver_id])
+
+
+class CallSession(Base, UUIDMixin, TimestampMixin):
+    """
+    Secure masked phone calling session. Real phone numbers are NEVER exposed.
+    """
+    __tablename__ = "call_sessions"
+
+    ride_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ride_requests.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    customer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    caller_role: Mapped[str] = mapped_column(String(20), default="driver", nullable=False)  # driver, customer
+    status: Mapped[str] = mapped_column(String(30), default="requesting", nullable=False)  # requesting, ringing, connected, ended, failed, declined, missed
+    virtual_proxy_number: Mapped[str] = mapped_column(String(30), default="+91-80-4567-8900", nullable=False)
+    provider_ref: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    duration_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    ride_request: Mapped["RideRequest"] = orm_relationship("RideRequest", foreign_keys=[ride_id])
+    driver: Mapped["Driver"] = orm_relationship("Driver", foreign_keys=[driver_id])
+    customer: Mapped["User"] = relationship(foreign_keys=[customer_id])
+
+
+class RideEventLog(Base, UUIDMixin, TimestampMixin):
+    """
+    Server-authoritative audit log for ride lifecycle, assistance events, and fraud detection.
+    """
+    __tablename__ = "ride_event_logs"
+
+    ride_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ride_requests.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    actor_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    actor_role: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    details: Mapped[dict] = mapped_column(JSONB, default={}, nullable=False)
+
+# ============================================================
+
+
+# ============================================================
+# DURING RIDE: MULTI-STOP & EMERGENCY SOS (Feature 10)
+# ============================================================
+
+class RideStop(Base, UUIDMixin, TimestampMixin):
+    """
+    Intermediate stops added by Customer or Driver during an active ride.
+    """
+    __tablename__ = "ride_stops"
+
+    ride_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ride_requests.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    address: Mapped[str] = mapped_column(Text, nullable=False)
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    location: Mapped[object] = mapped_column(
+        Geography(geometry_type="POINT", srid=4326), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(30), default="pending", nullable=False)  # pending, accepted, arrived, completed, skipped
+    requested_by: Mapped[str] = mapped_column(String(20), default="customer", nullable=False)  # customer, driver
+    stop_fee: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("30.00"), nullable=False)
+    waiting_time_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    arrived_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    departed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    ride_request: Mapped["RideRequest"] = orm_relationship("RideRequest", foreign_keys=[ride_id])
+
+
+class RideSOSEvent(Base, UUIDMixin, TimestampMixin):
+    """
+    Emergency SOS incident event with PostGIS location snapshot and audit trail.
+    """
+    __tablename__ = "ride_sos_events"
+
+    ride_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ride_requests.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    customer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    triggered_by: Mapped[str] = mapped_column(String(20), default="driver", nullable=False)  # driver, customer
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    accuracy: Mapped[float] = mapped_column(Float, default=10.0, nullable=False)
+    location: Mapped[object] = mapped_column(
+        Geography(geometry_type="POINT", srid=4326), nullable=False
+    )
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="active", nullable=False)  # active, investigating, resolved, false_alarm
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolution_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Relationships
+    ride_request: Mapped["RideRequest"] = orm_relationship("RideRequest", foreign_keys=[ride_id])
+    driver: Mapped["Driver"] = orm_relationship("Driver", foreign_keys=[driver_id])
+    customer: Mapped["User"] = relationship(foreign_keys=[customer_id])
+
+
+
+
+# ============================================================
+# CANCELLATION & PERFORMANCE METRICS (Feature 12)
+# ============================================================
+
+class RideCancellationEvent(Base, UUIDMixin, TimestampMixin):
+    """
+    Canonical cancellation audit event recording actor, reason, fee, penalty, and policy version.
+    """
+    __tablename__ = "ride_cancellation_events"
+
+    ride_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ride_requests.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    actor_type: Mapped[str] = mapped_column(String(20), default="driver", nullable=False)  # driver, customer, system, no_show
+    actor_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    reason_code: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    reason_details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    cancellation_fee: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    driver_penalty: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    driver_payout: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    is_penalty_exempt: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(20), default="v1.0", nullable=False)
+
+    # Relationships
+    ride_request: Mapped["RideRequest"] = orm_relationship("RideRequest", foreign_keys=[ride_id])
+    actor: Mapped["User"] = relationship(foreign_keys=[actor_id])
+
+
+
+
+# ============================================================
+# TRIP COMPLETION, RECEIPTS & EARNINGS LEDGER (Features 13 & 14)
+# ============================================================
+
+class RideReceipt(Base, UUIDMixin, TimestampMixin):
+    """
+    Immutable financial receipt for completed rides recording transparent itemized breakdowns.
+    """
+    __tablename__ = "ride_receipts"
+
+    ride_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ride_requests.id", ondelete="CASCADE"),
+        unique=True, nullable=False, index=True
+    )
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    customer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    receipt_number: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+    base_fare: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    distance_km: Mapped[float] = mapped_column(Float, nullable=False)
+    distance_charge: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    duration_min: Mapped[int] = mapped_column(Integer, nullable=False)
+    time_charge: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    waiting_charge: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    stops_fee: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    tolls_charge: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    parking_charge: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    taxes_and_fees: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    discount_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    surge_multiplier: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    customer_final_fare: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    platform_commission: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    driver_net_earning: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    payment_method: Mapped[str] = mapped_column(String(30), default="cash", nullable=False)
+    payment_status: Mapped[str] = mapped_column(String(30), default="paid", nullable=False)
+    tip_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+
+    # Feature 21: Back-to-Back Rides Continuous Dispatch
+    is_back_to_back: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    next_ride_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("ride_requests.id", ondelete="SET NULL"), nullable=True)
+    next_ride_reserved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_ride_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    ride_request: Mapped["RideRequest"] = orm_relationship("RideRequest", foreign_keys=[ride_id])
+    driver: Mapped["Driver"] = orm_relationship("Driver", foreign_keys=[driver_id])
+    customer: Mapped["User"] = relationship(foreign_keys=[customer_id])
+
+
+class DriverEarningLedger(Base, UUIDMixin, TimestampMixin):
+    """
+    Immutable double-entry financial journal for driver earnings, commissions, tips, cash, and payouts.
+    """
+    __tablename__ = "driver_earning_ledger"
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    ride_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ride_requests.id", ondelete="SET NULL"),
+        nullable=True, index=True
+    )
+    entry_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)  # TRIP_EARNING, COMMISSION, TIP, INCENTIVE, BONUS, CASH_COLLECTED, REFUND_ADJUSTMENT, PAYOUT
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), default="INR", nullable=False)
+    direction: Mapped[str] = mapped_column(String(10), default="CREDIT", nullable=False)  # CREDIT, DEBIT
+    status: Mapped[str] = mapped_column(String(20), default="SETTLED", nullable=False)  # SETTLED, PENDING, FAILED
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    effective_date: Mapped[date] = mapped_column(Date, server_default=func.current_date(), nullable=False, index=True)
+    metadata_json: Mapped[dict] = mapped_column(JSONB, default={}, nullable=False)
+
+    # Relationships
+    driver: Mapped["Driver"] = orm_relationship("Driver", foreign_keys=[driver_id])
+    ride_request: Mapped[Optional["RideRequest"]] = orm_relationship("RideRequest", foreign_keys=[ride_id])
+
+
+class DriverCustomerRating(Base, UUIDMixin, TimestampMixin):
+    """
+    Mutual customer rating by driver with tags and optional feedback.
+    """
+    __tablename__ = "driver_customer_ratings"
+
+    ride_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ride_requests.id", ondelete="CASCADE"),
+        unique=True, nullable=False, index=True
+    )
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    customer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    rating: Mapped[float] = mapped_column(Float, nullable=False)
+    tags: Mapped[list] = mapped_column(JSONB, default=[], nullable=False)
+    feedback: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Relationships
+    ride_request: Mapped["RideRequest"] = orm_relationship("RideRequest", foreign_keys=[ride_id])
+    driver: Mapped["Driver"] = orm_relationship("Driver", foreign_keys=[driver_id])
+    customer: Mapped["User"] = relationship(foreign_keys=[customer_id])
+
+
+
+
+# ============================================================
+# FEATURE 15: PAYOUT AND WALLET SYSTEM
+# ============================================================
+
+class DriverPayoutMethod(Base, UUIDMixin, TimestampMixin):
+    """
+    Verified payout methods (Bank Account or UPI) for driver withdrawals.
+    """
+    __tablename__ = "driver_payout_methods"
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    method_type: Mapped[str] = mapped_column(String(20), nullable=False)  # BANK, UPI
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    
+    # Bank fields
+    bank_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    account_holder_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    account_number_masked: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    account_number_hash: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    ifsc_code: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    account_type: Mapped[Optional[str]] = mapped_column(String(20), default="savings", nullable=True)
+    
+    # UPI fields
+    upi_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    upi_id_masked: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    upi_id_hash: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    
+    # Verification and Status
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="ACTIVE", nullable=False)  # ACTIVE, PENDING, REJECTED, DISABLED
+    rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Relationships
+    driver: Mapped["Driver"] = orm_relationship("Driver", foreign_keys=[driver_id])
+
+
+class DriverPayoutRequest(Base, UUIDMixin, TimestampMixin):
+    """
+    Authoritative payout lifecycle transaction with idempotency and double-entry reservation.
+    """
+    __tablename__ = "driver_payout_requests"
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    payout_reference: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    fee: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    net_payout: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), default="INR", nullable=False)
+    payout_method: Mapped[str] = mapped_column(String(20), nullable=False)  # BANK, UPI
+    destination_masked: Mapped[str] = mapped_column(String(100), nullable=False)
+    payout_method_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("driver_payout_methods.id", ondelete="SET NULL"),
+        nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(30), default="REQUESTED", nullable=False, index=True)  # REQUESTED, PROCESSING, SUCCESS, FAILED, REVERSED, CANCELLED
+    failure_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    provider_ref: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    provider_payload: Mapped[dict] = mapped_column(JSONB, default={}, nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now(), nullable=False)
+    processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    settled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    reversed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_auto_payout: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Relationships
+    driver: Mapped["Driver"] = orm_relationship("Driver", foreign_keys=[driver_id])
+
+
+class DriverAutoPayoutSetting(Base, UUIDMixin, TimestampMixin):
+    """
+    Driver-configurable automated payout rules with balance threshold triggers.
+    """
+    __tablename__ = "driver_auto_payout_settings"
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        unique=True, nullable=False, index=True
+    )
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    threshold_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("2000.00"), nullable=False)
+    frequency: Mapped[str] = mapped_column(String(30), default="THRESHOLD_ONLY", nullable=False)  # DAILY, WEEKLY, THRESHOLD_ONLY
+    payout_method_type: Mapped[str] = mapped_column(String(20), default="BANK", nullable=False)  # BANK, UPI
+    payout_method_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("driver_payout_methods.id", ondelete="SET NULL"),
+        nullable=True
+    )
+    last_auto_payout_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    driver: Mapped["Driver"] = orm_relationship("Driver", foreign_keys=[driver_id])
+
+
+# ============================================================
+# FEATURE 16: DRIVER PERFORMANCE AND SESSION ANALYTICS
+# ============================================================
+
+class DriverOnlineSession(Base, UUIDMixin, TimestampMixin):
+    """
+    Authoritative driver online session tracking for accurate online hours and fatigue metrics.
+    """
+    __tablename__ = "driver_online_sessions"
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now(), nullable=False, index=True)
+    ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="ACTIVE", nullable=False)  # ACTIVE, ENDED
+    total_distance_km: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    trips_completed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Relationships
+    driver: Mapped["Driver"] = orm_relationship("Driver", foreign_keys=[driver_id])
+
+
+class DriverPerformanceDaily(Base, UUIDMixin, TimestampMixin):
+    """
+    Materialized daily/weekly/monthly analytics snapshot for sub-millisecond dashboard queries.
+    """
+    __tablename__ = "driver_performance_daily"
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    period_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    period_type: Mapped[str] = mapped_column(String(20), default="DAILY", nullable=False)  # DAILY, WEEKLY, MONTHLY
+    acceptance_rate: Mapped[float] = mapped_column(Float, default=100.0, nullable=False)
+    cancellation_rate: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    completion_rate: Mapped[float] = mapped_column(Float, default=100.0, nullable=False)
+    rating_avg: Mapped[float] = mapped_column(Float, default=5.0, nullable=False)
+    rating_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    complaints_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_offers: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    accepted_offers: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    rejected_offers: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    missed_offers: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_rides: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    completed_rides: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cancelled_rides: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    online_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    distance_km: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    gross_earnings: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"), nullable=False)
+    net_earnings: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"), nullable=False)
+    earnings_per_hour: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    formula_version: Mapped[str] = mapped_column(String(20), default="v1.0", nullable=False)
+
+    # Relationships
+    driver: Mapped["Driver"] = orm_relationship("Driver", foreign_keys=[driver_id])
+
+
+
+
+# ============================================================
+# FEATURE 17: RATING & FEEDBACK SYSTEM
+# ============================================================
+
+class CustomerDriverRating(Base, UUIDMixin, TimestampMixin):
+    """
+    Authoritative customer rating of driver on completed ride requests.
+    Supports 1-5 integer star rating, structured compliments, complaints, and moderation/dispute status.
+    """
+    __tablename__ = "customer_driver_ratings"
+    __table_args__ = (
+        UniqueConstraint("ride_id", name="uq_customer_driver_rating_ride"),
+    )
+
+    ride_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ride_requests.id", ondelete="CASCADE"),
+        unique=True, nullable=False, index=True
+    )
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    customer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)  # 1 to 5 stars
+    compliments: Mapped[list] = mapped_column(JSONB, default=[], nullable=False)  # ["CLEAN_VEHICLE", "SAFE_DRIVING", ...]
+    complaint_tags: Mapped[list] = mapped_column(JSONB, default=[], nullable=False)  # ["UNSAFE_DRIVING", "LATE_PICKUP", ...]
+    feedback: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="APPROVED", nullable=False)  # APPROVED, FLAGGED, DISPUTED, HIDDEN
+    dispute_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    disputed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    ride_request: Mapped["RideRequest"] = orm_relationship("RideRequest", foreign_keys=[ride_id])
+    driver: Mapped["Driver"] = orm_relationship("Driver", foreign_keys=[driver_id])
+    customer: Mapped["User"] = relationship(foreign_keys=[customer_id])
+
+
+
+
+# ============================================================
+# FEATURE 22: DRIVER SAFETY INTELLIGENCE & INCIDENT SYSTEM
+# ============================================================
+
+class DriverTrustedContact(Base, UUIDMixin, TimestampMixin):
+    """
+    Verified emergency contacts for driver SOS and live trip sharing alerts.
+    """
+    __tablename__ = "driver_trusted_contacts"
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    phone_masked: Mapped[str] = mapped_column(String(50), nullable=False)
+    phone_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    relationship_type: Mapped[str] = mapped_column("relationship", String(50), default="Family", nullable=False)
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    @property
+    def relationship(self) -> str:
+        return self.relationship_type
+
+    @relationship.setter
+    def relationship(self, val: str) -> None:
+        self.relationship_type = val
+
+    # Relationships
+    driver: Mapped["Driver"] = orm_relationship("Driver", foreign_keys=[driver_id])
+
+
+class LiveTripShareSession(Base, UUIDMixin, TimestampMixin):
+    """
+    Secure, short-lived tokenized trip sharing for active rides with auto-expiration.
+    """
+    __tablename__ = "live_trip_share_sessions"
+
+    ride_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ride_requests.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    share_token: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="ACTIVE", nullable=False)  # ACTIVE, COMPLETED, REVOKED, EXPIRED
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    # Relationships
+    ride_request: Mapped["RideRequest"] = orm_relationship("RideRequest", foreign_keys=[ride_id])
+    driver: Mapped["Driver"] = orm_relationship("Driver", foreign_keys=[driver_id])
+
+
+class DriverSafetyAlert(Base, UUIDMixin, TimestampMixin):
+    """
+    Real-time safety anomalies and warnings (route deviation, long stops, speed alerts)
+    with driver acknowledgment / 'I'm Safe' tracking.
+    """
+    __tablename__ = "driver_safety_alerts"
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    ride_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ride_requests.id", ondelete="SET NULL"),
+        nullable=True, index=True
+    )
+    alert_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)  # ROUTE_DEVIATION, LONG_STOP, OVERSPEED, SUSPICIOUS_GPS
+    severity: Mapped[str] = mapped_column(String(20), default="WARNING", nullable=False)  # NORMAL, OBSERVATION, WARNING, URGENT
+    status: Mapped[str] = mapped_column(String(30), default="ACTIVE", nullable=False)  # ACTIVE, ACKNOWLEDGED_SAFE, ESCALATED, AUTO_RESOLVED
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    details_json: Mapped[dict] = mapped_column(JSONB, default={}, nullable=False)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolution_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # IM_SAFE, DISMISSED, SUPPORT_CALL, AUTO_TIMEOUT
+
+    # Relationships
+    driver: Mapped["Driver"] = orm_relationship("Driver", foreign_keys=[driver_id])
+    ride_request: Mapped[Optional["RideRequest"]] = orm_relationship("RideRequest", foreign_keys=[ride_id])
+
+
+class SafetyIncidentReport(Base, UUIDMixin, TimestampMixin):
+    """
+    Structured incident reporting lifecycle for unsafe passengers, accidents, vehicle issues.
+    """
+    __tablename__ = "safety_incident_reports"
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    ride_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ride_requests.id", ondelete="SET NULL"),
+        nullable=True, index=True
+    )
+    incident_category: Mapped[str] = mapped_column(String(50), nullable=False, index=True)  # UNSAFE_PASSENGER, ACCIDENT, ROAD_HAZARD, VEHICLE_ISSUE, MEDICAL_EMERGENCY, HARASSMENT, OTHER
+    severity: Mapped[str] = mapped_column(String(20), default="MEDIUM", nullable=False)  # LOW, MEDIUM, HIGH, CRITICAL
+    status: Mapped[str] = mapped_column(String(30), default="REPORTED", nullable=False)  # REPORTED, RECEIVED, UNDER_REVIEW, ACTION_REQUIRED, RESOLVED, CLOSED
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_urls: Mapped[list] = mapped_column(JSONB, default=[], nullable=False)
+    latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    resolution_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    driver: Mapped["Driver"] = orm_relationship("Driver", foreign_keys=[driver_id])
+    ride_request: Mapped[Optional["RideRequest"]] = orm_relationship("RideRequest", foreign_keys=[ride_id])
+
+
+
+
+# ============================================================
+# FEATURE 23: AI / SMART DRIVER FEATURES & RISK TELEMETRY
+# ============================================================
+
+class DriverRiskSignal(Base, UUIDMixin, TimestampMixin):
+    """
+    Internal AI & telemetry risk signals (impossible speed, fake GPS, abnormal cancellation).
+    Zero PII exposure; strictly server-side authoritative.
+    """
+    __tablename__ = "driver_risk_signals"
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    ride_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ride_requests.id", ondelete="SET NULL"),
+        nullable=True, index=True
+    )
+    signal_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)  # FAKE_GPS, IMPOSSIBLE_SPEED, ABNORMAL_CANCELLATION, SENSOR_MISMATCH, REPEATED_REJECTS
+    risk_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)  # 0.0 to 100.0
+    severity: Mapped[str] = mapped_column(String(20), default="LOW", nullable=False)  # LOW, MEDIUM, HIGH, CRITICAL
+    status: Mapped[str] = mapped_column(String(30), default="LOGGED", nullable=False)  # LOGGED, UNDER_REVIEW, DISMISSED, ACTIONED
+    details_json: Mapped[dict] = mapped_column(JSONB, default={}, nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now(), nullable=False)
+
+    # Relationships
+    driver: Mapped["Driver"] = relationship(foreign_keys=[driver_id])
+    ride_request: Mapped[Optional["RideRequest"]] = relationship(foreign_keys=[ride_id])
+
+
+class DriverFatigueLog(Base, UUIDMixin, TimestampMixin):
+    """
+    Authoritative continuous driving tracking and constructive break advisories.
+    """
+    __tablename__ = "driver_fatigue_logs"
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    continuous_online_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    continuous_driving_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    advisory_level: Mapped[str] = mapped_column(String(20), default="NONE", nullable=False)  # NONE, SUGGESTION, RECOMMENDED_BREAK, MANDATORY_REST
+    reminder_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    driver_acknowledged_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    driver: Mapped["Driver"] = relationship(foreign_keys=[driver_id])
+
+
+class DemandForecastZone(Base, UUIDMixin, TimestampMixin):
+    """
+    Spatial demand predictions and opportunity zone clusters (PostGIS backed).
+    """
+    __tablename__ = "demand_forecast_zones"
+
+    zone_name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    zone_code: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
+    center_latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    center_longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    current_demand_level: Mapped[str] = mapped_column(String(20), default="NORMAL", nullable=False)  # LOW, NORMAL, HIGH, SURGE
+    forecast_15m_level: Mapped[str] = mapped_column(String(20), default="NORMAL", nullable=False)
+    forecast_30m_level: Mapped[str] = mapped_column(String(20), default="NORMAL", nullable=False)
+    forecast_60m_level: Mapped[str] = mapped_column(String(20), default="NORMAL", nullable=False)
+    surge_multiplier: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    expected_hourly_earning: Mapped[float] = mapped_column(Float, default=250.0, nullable=False)
+    active_drivers_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    polygon_geojson: Mapped[dict] = mapped_column(JSONB, default={}, nullable=False)
+
+
+
+
+# ============================================================
+# FEATURE 24: IN-APP SUPPORT SYSTEM & FAQ ENGINE
+# ============================================================
+
+class SupportTicketMessage(Base, UUIDMixin, TimestampMixin):
+    """
+    Structured message thread for support tickets between driver and agents.
+    """
+    __tablename__ = "support_ticket_messages"
+
+    ticket_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("support_tickets.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    sender_type: Mapped[str] = mapped_column(String(20), nullable=False)  # DRIVER, SUPPORT_AGENT, SYSTEM, BOT
+    sender_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    sender_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    message_text: Mapped[str] = mapped_column(Text, nullable=False)
+    attachments: Mapped[list] = mapped_column(JSONB, default=[], nullable=False)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    read_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    ticket: Mapped["SupportTicket"] = relationship("SupportTicket", foreign_keys=[ticket_id])
+    sender: Mapped["User"] = relationship("User", foreign_keys=[sender_id])
+
+
+class FAQArticle(Base, UUIDMixin, TimestampMixin):
+    """
+    Searchable Help Center FAQ articles with helpful/unhelpful feedback counters.
+    """
+    __tablename__ = "faq_articles"
+
+    category: Mapped[str] = mapped_column(String(50), nullable=False, index=True)  # ACCOUNT, TRIPS, PAYMENTS, VEHICLE, KYC, SAFETY, EARNINGS, PAYOUT, SETTINGS
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_markdown: Mapped[str] = mapped_column(Text, nullable=False)
+    helpful_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    unhelpful_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    is_published: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    tags: Mapped[list] = mapped_column(JSONB, default=[], nullable=False)
+
+
+
+
+# ============================================================
+# FEATURE 18: INCENTIVES & PROMOTIONS SYSTEM
+# ============================================================
+
+class IncentiveCampaign(Base, UUIDMixin, TimestampMixin):
+    """
+    Authoritative campaign definition for driver incentives, targets, milestones,
+    peak-hour quests, shift guarantees, and location-aware zone bonuses.
+    """
+    __tablename__ = "incentive_campaigns"
+
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    campaign_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)  # DAILY_TARGET, WEEKLY_TARGET, RIDE_MILESTONE, PEAK_HOUR, GUARANTEED_EARNINGS, ZONE_INCENTIVE, FESTIVAL, REFERRAL
+    target_count: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    reward_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("500.00"), nullable=False)
+    guaranteed_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    zone_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    zone_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    vehicle_category: Mapped[Optional[str]] = mapped_column(String(50), default="all", nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    rules_json: Mapped[dict] = mapped_column(JSONB, default={}, nullable=False)
+
+
+class DriverIncentiveProgress(Base, UUIDMixin, TimestampMixin):
+    """
+    Per-driver progress tracking for an active incentive campaign.
+    Authoritative state evaluated server-side upon ride completions.
+    """
+    __tablename__ = "driver_incentive_progress"
+    __table_args__ = (
+        UniqueConstraint("driver_id", "campaign_id", name="uq_driver_incentive_campaign"),
+    )
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    campaign_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("incentive_campaigns.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    current_progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    target_count: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    current_actual_earnings: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    reward_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="ACTIVE", nullable=False, index=True)  # AVAILABLE, ACTIVE, IN_PROGRESS, COMPLETED, EARNED, EXPIRED, CANCELLED
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    earned_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    ledger_entry_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+
+    # Relationships
+    driver: Mapped["Driver"] = relationship(foreign_keys=[driver_id])
+    campaign: Mapped["IncentiveCampaign"] = relationship(foreign_keys=[campaign_id])
+
+
+class DriverReferral(Base, UUIDMixin, TimestampMixin):
+    """
+    Driver referral relationship and milestone qualification tracking.
+    Credits referral reward to referrer's ledger once referred driver finishes target trips.
+    """
+    __tablename__ = "driver_referrals"
+    __table_args__ = (
+        UniqueConstraint("referrer_driver_id", "referred_driver_id", name="uq_driver_referral_pair"),
+    )
+
+    referrer_driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    referred_driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    referral_code_used: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    required_rides: Mapped[int] = mapped_column(Integer, default=25, nullable=False)
+    completed_rides: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    reward_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("1000.00"), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="PENDING", nullable=False, index=True)  # PENDING, QUALIFIED, REWARDED
+    rewarded_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    referrer: Mapped["Driver"] = relationship(foreign_keys=[referrer_driver_id])
+    referred: Mapped["Driver"] = relationship(foreign_keys=[referred_driver_id])
+
+
+
+
+# ============================================================
+# FEATURE 19: DEMAND / HEATMAP & SURGE ENGINE
+# ============================================================
+
+class DemandZone(Base, UUIDMixin, TimestampMixin):
+    """
+    Authoritative spatial polygon zone model for PostGIS-first demand aggregation,
+    hotspot opportunity scoring, and dynamic surge multipliers.
+    Zero external Google Maps API dependency for demand and surge calculations.
+    """
+    __tablename__ = "demand_zones"
+
+    name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    city_name: Mapped[str] = mapped_column(String(100), default="Pune", nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(50), default="COMMERCIAL", nullable=False)  # AIRPORT, TECH_PARK, TRANSIT_HUB, SHOPPING_MALL, NIGHTLIFE, COMMERCIAL
+    centroid_lat: Mapped[float] = mapped_column(Float, nullable=False)
+    centroid_lng: Mapped[float] = mapped_column(Float, nullable=False)
+    boundary_geojson: Mapped[dict] = mapped_column(JSONB, default={}, nullable=False)
+    current_surge_multiplier: Mapped[Decimal] = mapped_column(Numeric(3, 2), default=Decimal("1.00"), nullable=False)
+    demand_level: Mapped[str] = mapped_column(String(20), default="NORMAL", nullable=False)  # LOW, NORMAL, MODERATE, HIGH, CRITICAL
+    active_requests_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    available_drivers_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+
+
+# ============================================================
+# FEATURE 25: DRIVER NOTIFICATION PREFERENCES
+# ============================================================
+
+class DriverNotificationPreference(Base, UUIDMixin, TimestampMixin):
+    """
+    Granular driver notification preferences per category.
+    """
+    __tablename__ = "driver_notification_preferences"
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        unique=True, nullable=False, index=True
+    )
+    trip_alerts: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    earnings_alerts: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    payout_alerts: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    safety_alerts: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    promotions_alerts: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    sound_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    vibration_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Relationships
+    driver: Mapped["Driver"] = relationship("Driver", foreign_keys=[driver_id])
+
+
 # COMPATIBILITY ALIASES
 # (admin-service and parcel-service import these names)
 # ============================================================
@@ -1363,3 +2678,34 @@ ComplaintStatus = TicketStatus
 
 # Alias: CouponType -> DiscountType
 CouponType = DiscountType
+
+
+# ============================================================
+# DRIVER APP SETTINGS & PREFERENCES (Feature 28)
+# ============================================================
+
+class DriverAppSetting(Base, UUIDMixin, TimestampMixin):
+    """
+    Authoritative driver app preferences including language, navigation, audio alerts, and auto-accept.
+    """
+    __tablename__ = "driver_app_settings"
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        unique=True, nullable=False, index=True
+    )
+    language: Mapped[str] = mapped_column(String(10), default="en", nullable=False)  # en, mr, hi
+    navigation_app: Mapped[str] = mapped_column(String(30), default="IN_APP", nullable=False)  # IN_APP, GOOGLE_MAPS, WAZE
+    auto_accept_rides: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    auto_accept_min_fare: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    voice_navigation_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    sound_alerts_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    high_contrast_mode: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    theme_mode: Mapped[str] = mapped_column(String(20), default="system", nullable=False)  # light, dark, system
+    speed_limit_warning: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_deactivated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    deactivation_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    deactivated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    driver: Mapped["Driver"] = relationship(foreign_keys=[driver_id])

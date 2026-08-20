@@ -2,9 +2,9 @@
  * Admin Trips Page — Manage intercity trips.
  */
 import { useState, useEffect } from 'react'
-import { Search, Filter, Eye, RefreshCw, Map } from 'lucide-react'
+import { Search, Filter, RefreshCw } from 'lucide-react'
 import { adminApi } from '../../api/client'
-import toast from 'react-hot-toast'
+
 
 const STATUS_COLORS: Record<string, string> = {
   published: 'bg-blue-100 text-blue-700',

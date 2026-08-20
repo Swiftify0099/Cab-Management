@@ -87,12 +87,12 @@ class BaseAppSettings(BaseSettings):
         "http://10.0.2.2:8001",
         "http://10.0.2.2:3000",
         # Current Wi-Fi LAN IP (physical Android device) — updated 2026-06-16
-        "http://192.168.43.127:8001",
-        "http://192.168.43.96:3000",
-        "http://192.168.43.96:5173",
-        "http://192.168.43.96:8010",
+        "http://10.243.212.223:8001",
+        "http://10.243.212.223:3000",
+        "http://10.243.212.223:5173",
+        "http://10.243.212.223:8010",
         # Keep old IP as fallback (can be removed when stable)
-        "http://192.168.43.157:8001",
+        "http://10.243.212.223:8001",
     ]
 
     # Rate Limiting

@@ -10,7 +10,7 @@ import { Phone, Star, Clock, Navigation, X } from 'lucide-react'
 import { useSocket } from '../../hooks/useSocket'
 import { bookingApi } from '../../api/client'
 import toast from 'react-hot-toast'
-import Map, { Marker } from 'react-map-gl'
+import Map, { Marker } from 'react-map-gl/maplibre'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 

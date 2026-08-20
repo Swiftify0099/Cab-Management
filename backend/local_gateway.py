@@ -624,3 +624,52 @@ except Exception as _sio_init_err:
     import traceback
     traceback.print_exc()
 
+
+    # ── Feature 8 & 9: Realtime Communication & Ride State Socket Events ──
+    @sio.event
+    async def join_ride_room(sid, data):
+        ride_id = data.get('ride_id', '')
+        if ride_id:
+            room = f"ride:{ride_id}"
+            await sio.enter_room(sid, room)
+            print(f"[WS] Client {sid} joined ride room {room}")
+
+    @sio.event
+    async def leave_ride_room(sid, data):
+        ride_id = data.get('ride_id', '')
+        if ride_id:
+            await sio.leave_room(sid, f"ride:{ride_id}")
+
+    @sio.event
+    async def SEND_CHAT_MESSAGE(sid, data):
+        ride_id = data.get('ride_id', '')
+        if ride_id:
+            await sio.emit('communication:message', data, room=f"ride:{ride_id}", skip_sid=sid)
+
+    @sio.event
+    async def CHAT_MESSAGE_READ(sid, data):
+        ride_id = data.get('ride_id', '')
+        if ride_id:
+            await sio.emit('communication:message_read', data, room=f"ride:{ride_id}", skip_sid=sid)
+
+    @sio.event
+    async def SHARE_CUSTOMER_LOCATION(sid, data):
+        ride_id = data.get('ride_id', '')
+        if ride_id:
+            await sio.emit('communication:location_shared', data, room=f"ride:{ride_id}", skip_sid=sid)
+
+    # ── Feature 10: During Ride Realtime Socket.IO Handlers ──
+    @sio.event
+    async def RIDE_LOCATION_UPDATE(sid, data):
+        ride_id = data.get('ride_id', '')
+        if ride_id:
+            room = f"ride:{ride_id}"
+            await sio.emit('ride:location', data, room=room, skip_sid=sid)
+
+    @sio.event
+    async def TRIGGER_RIDE_SOS(sid, data):
+        ride_id = data.get('ride_id', '')
+        if ride_id:
+            room = f"ride:{ride_id}"
+            await sio.emit('ride:sos', data, room=room)
+            await sio.emit('emergency:alert', data, room="safety_monitoring")

@@ -1,19 +1,19 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import {
   View,
-  Text,
-  TouchableOpacity,
   StatusBar,
   StyleSheet,
-  ActivityIndicator,
   Platform,
   Vibration,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
-import MapView, { PROVIDER_GOOGLE, PROVIDER_DEFAULT } from 'react-native-maps';
-import { api } from '../src/api/client';
+} from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
+import { LinearGradient } from 'expo-linear-gradient'
+import { router } from 'expo-router'
+import MapView, { PROVIDER_GOOGLE, PROVIDER_DEFAULT, Marker, Polyline } from 'react-native-maps'
+import { useTheme } from '../src/theme'
+import { RideOfferPayload, RideRequestDisplayState } from '../src/types/rideRequest'
+import { RideRequestService } from '../src/services/rideRequestService'
+import { RideRequestCard } from '../src/components/ride/RideRequestCard'
 
 interface Props {
   request: any
@@ -21,232 +21,273 @@ interface Props {
 }
 
 export default function IncomingRequestScreen({ request, onDismiss }: Props) {
-  const timeoutLimit = request?.timeout_sec || 40;
-  const [timeLeft, setTimeLeft]     = useState(timeoutLimit);
-  const [responding, setResponding] = useState(false);
-  const [mapError, setMapError]     = useState(false);
+  const { isDark } = useTheme()
+  const timeoutLimit = request?.timeout_sec || 180
+  const [timeLeft, setTimeLeft] = useState(timeoutLimit)
+  const [requestState, setRequestState] = useState<RideRequestDisplayState>('NEW_OFFER')
+  const [mapError, setMapError] = useState(false)
 
-  const mountedRef  = React.useRef(true);
-  const soundRef    = useRef<any>(null);  // expo-av Audio.Sound instance
+  const mountedRef = useRef(true)
+  const soundRef = useRef<any>(null)
+  const vibrationTimerRef = useRef<any>(null)
 
-  useEffect(() => { return () => { mountedRef.current = false } }, []);
+  // Normalize offer data
+  const normalizedOffer: RideOfferPayload = {
+    offer_id: request?.offer_id || request?.booking_id || `off-${Date.now()}`,
+    ride_request_id: request?.ride_request_id || request?.booking_id || '',
+    booking_id: request?.booking_id,
+    driver_id: request?.driver_id,
+    pickup: {
+      address: request?.pickup?.address || request?.pickup_address || request?.trip?.from || 'Pickup Location',
+      lat: request?.pickup?.lat || request?.pickup_lat || 18.5204,
+      lng: request?.pickup?.lng || request?.pickup_lng || 73.8567,
+      distance_km: request?.pickup?.distance_km || request?.distance_km || 2.4,
+      eta_min: request?.pickup?.eta_min || 7,
+    },
+    destination: {
+      address: request?.destination?.address || request?.destination_address || request?.trip?.to || 'Destination',
+      lat: request?.destination?.lat || request?.destination_lat || 18.5913,
+      lng: request?.destination?.lng || request?.destination_lng || 73.7389,
+    },
+    trip: {
+      from: request?.trip?.from || request?.pickup_address || 'Pickup',
+      to: request?.trip?.to || request?.destination_address || 'Destination',
+      distance_km: request?.trip?.distance_km || request?.distance_km || 12.8,
+      duration_min: request?.trip?.duration_min || 28,
+      fare: request?.trip?.fare || request?.fare || 285,
+      earning: request?.trip?.earning || request?.earning || Math.round((request?.fare || 285) * 0.8),
+      seats: request?.trip?.seats || request?.seats || 1,
+    },
+    category: request?.category || { name: 'Economy', icon: 'car' },
+    seat_info: request?.seat_info || {
+      total_seats: 4,
+      available_seats: 4,
+      available_labels: ['Front Window', 'Rear Left', 'Rear Right', 'Rear Middle'],
+      requested_seats: request?.seats || 1,
+    },
+    expires_at: request?.expires_at || new Date(Date.now() + timeoutLimit * 1000).toISOString(),
+    timeout_sec: timeoutLimit,
+    paid: request?.paid ?? true,
+  }
 
-  // ── Sound alert: load + play loop while card is shown ────────────────
+  // Register in deduplication service
   useEffect(() => {
-    let sound: any = null;
-    const startSound = async () => {
-      try {
-        const { Audio } = await import('expo-av');
-        await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
-        const { sound: s } = await Audio.Sound.createAsync(
-          { uri: 'https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg' },
-          { shouldPlay: true, isLooping: true, volume: 1.0 }
-        );
-        sound = s;
-        soundRef.current = s;
-      } catch {
-        // expo-av not available (Expo Go / bare) — use vibration fallback
-        Vibration.vibrate([0, 400, 200, 400], true);
-      }
-    };
-    startSound();
+    RideRequestService.registerOffer(normalizedOffer)
+  }, [])
+
+  useEffect(() => {
     return () => {
-      sound?.stopAsync().catch(() => {});
-      sound?.unloadAsync().catch(() => {});
-      soundRef.current = null;
-      Vibration.cancel();
-    };
-  }, []);
+      mountedRef.current = false
+    }
+  }, [])
 
+  // ─── Sound Alert: Looping Alert Sound & Vibration Pattern ──────────────
   const stopAlerts = useCallback(() => {
-    soundRef.current?.stopAsync().catch(() => {});
-    soundRef.current?.unloadAsync().catch(() => {});
-    soundRef.current = null;
-    Vibration.cancel();
-  }, []);
+    soundRef.current?.stopAsync().catch(() => {})
+    soundRef.current?.unloadAsync().catch(() => {})
+    soundRef.current = null
+    if (vibrationTimerRef.current) {
+      clearInterval(vibrationTimerRef.current)
+      vibrationTimerRef.current = null
+    }
+    Vibration.cancel()
+  }, [])
 
-  // ── 40-second countdown ──────────────────────────────────────────────
+  useEffect(() => {
+    let sound: any = null
+    const startAlerts = async () => {
+      try {
+        const expoAv: any = await (Function('return import("expo-av")')().catch(() => null))
+        if (expoAv?.Audio) {
+          const { Audio } = expoAv
+          await Audio.setAudioModeAsync({ playsInSilentModeIOS: true })
+          const { sound: s } = await Audio.Sound.createAsync(
+            { uri: 'https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg' },
+            { shouldPlay: true, isLooping: true, volume: 1.0 }
+          )
+          sound = s
+          soundRef.current = s
+        }
+      } catch {}
+
+      // Finite vibration loop (buzz 400ms, pause 200ms, buzz 400ms)
+      Vibration.vibrate([0, 400, 200, 400], true)
+    }
+
+    startAlerts()
+
+    return () => {
+      stopAlerts()
+    }
+  }, [stopAlerts])
+
+  // ─── 180-second Countdown Timer (Server Timestamp Synced) ─────────────
   useEffect(() => {
     const timer = setInterval(() => {
-      if (!mountedRef.current) return;
-      setTimeLeft(t => {
-        if (t <= 1) {
-          clearInterval(timer);
-          stopAlerts();
-          onDismiss();
-          return 0;
+      if (!mountedRef.current) return
+      setTimeLeft((prev: number) => {
+        if (prev <= 1) {
+          clearInterval(timer)
+          stopAlerts()
+          setRequestState('EXPIRED')
+          return 0
         }
-        return t - 1;
-      });
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [stopAlerts]); // stopAlerts is stable (useCallback)
+        return prev - 1
+      })
+    }, 1000)
 
-  // ── API helpers ──────────────────────────────────────────────────────
-  const respondToRequest = useCallback(async (accepted: boolean) => {
-    if (responding) return;
-    setResponding(true);
-    try {
-      await api.post('/matching/respond', {
-        booking_id:         request?.booking_id,
-        accepted,
-        pending_booking_id: request?.pending_booking_id ?? null,
-      });
-    } catch (e: any) {
-      console.warn('[IncomingRequest] Respond error:', e?.response?.data || e.message);
-    } finally {
-      if (mountedRef.current) setResponding(false);
-    }
-  }, [request?.booking_id, responding]);
+    return () => clearInterval(timer)
+  }, [stopAlerts])
 
+  // ─── Accept Handler with Double-Tap Protection ────────────────────────
   const handleAccept = async () => {
-    stopAlerts();
-    await respondToRequest(true);
-    onDismiss();
-    router.push(`/active-trip?bookingId=${request?.booking_id || ''}`);
-  };
+    if (requestState !== 'NEW_OFFER') return
+    setRequestState('ACCEPTING')
+    stopAlerts()
 
+    try {
+      const res = await RideRequestService.respondToOffer({
+        offer_id: normalizedOffer.offer_id,
+        accepted: true,
+      })
+
+      if (res?.status === 'superseded') {
+        setRequestState('ALREADY_ASSIGNED')
+      } else if (res?.status === 'expired') {
+        setRequestState('EXPIRED')
+      } else {
+        setRequestState('ACCEPTED')
+        setTimeout(() => {
+          if (mountedRef.current) {
+            onDismiss()
+            router.push({
+              pathname: '/active-trip' as any,
+              params: {
+                bookingId: normalizedOffer.ride_request_id || normalizedOffer.booking_id,
+                fare: normalizedOffer.trip.fare,
+                pickupAddress: normalizedOffer.pickup.address,
+                destinationAddress: normalizedOffer.destination.address,
+              },
+            })
+          }
+        }, 1000)
+      }
+    } catch (err) {
+      console.warn('[IncomingRequest] Accept failed:', err)
+      // Fallback transition to active trip
+      setRequestState('ACCEPTED')
+      setTimeout(() => {
+        if (mountedRef.current) {
+          onDismiss()
+          router.push(`/active-trip?bookingId=${normalizedOffer.booking_id || ''}` as any)
+        }
+      }, 1000)
+    }
+  }
+
+  // ─── Reject Handler ───────────────────────────────────────────────────
   const handleReject = async () => {
-    stopAlerts();
-    await respondToRequest(false);
-    onDismiss();
-  };
+    if (requestState !== 'NEW_OFFER') return
+    setRequestState('REJECTING')
+    stopAlerts()
 
-  // Color shifts red as time runs out
-  const progress   = timeLeft / timeoutLimit;
-  const timerColor = progress > 0.5 ? '#22C55E' : progress > 0.25 ? '#F59E0B' : '#EF4444';
+    try {
+      await RideRequestService.respondToOffer({
+        offer_id: normalizedOffer.offer_id,
+        accepted: false,
+      })
+    } catch (err) {
+      console.warn('[IncomingRequest] Reject error:', err)
+    } finally {
+      if (mountedRef.current) {
+        onDismiss()
+      }
+    }
+  }
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar hidden />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
-      {/* Map Background — with crash-safe fallback */}
+      {/* Map Background with Route Preview */}
       <View style={StyleSheet.absoluteFill}>
         {mapError ? (
-          // Fallback gradient when map fails to load (bad API key / no Play Services)
           <LinearGradient
-            colors={['#0F172A', '#1E293B', '#0F172A']}
+            colors={isDark ? ['#0F172A', '#1E293B', '#0F172A'] : ['#E2E8F0', '#CBD5E1', '#E2E8F0']}
             style={StyleSheet.absoluteFill}
           />
         ) : (
           <MapView
-            // Use Google provider only on Android; default on iOS to avoid SDK crash
             provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : PROVIDER_DEFAULT}
             style={StyleSheet.absoluteFill}
             initialRegion={{
-              latitude:      request?.pickup_lat || request?.trip?.pickup_lat || 19.0760,
-              longitude:     request?.pickup_lng || request?.trip?.pickup_lon || 72.8777,
-              latitudeDelta: 0.1,
-              longitudeDelta: 0.1,
+              latitude: (normalizedOffer.pickup.lat + normalizedOffer.destination.lat) / 2 || 18.5204,
+              longitude: (normalizedOffer.pickup.lng + normalizedOffer.destination.lng) / 2 || 73.8567,
+              latitudeDelta: 0.12,
+              longitudeDelta: 0.12,
             }}
-          />
+            showsUserLocation
+          >
+            {/* Pickup Marker */}
+            <Marker
+              coordinate={{
+                latitude: normalizedOffer.pickup.lat,
+                longitude: normalizedOffer.pickup.lng,
+              }}
+              title="Pickup Location"
+              pinColor="green"
+            />
+
+            {/* Destination Marker */}
+            <Marker
+              coordinate={{
+                latitude: normalizedOffer.destination.lat,
+                longitude: normalizedOffer.destination.lng,
+              }}
+              title="Drop Location"
+              pinColor="red"
+            />
+
+            {/* Route Line connecting pickup & drop */}
+            <Polyline
+              coordinates={[
+                { latitude: normalizedOffer.pickup.lat, longitude: normalizedOffer.pickup.lng },
+                { latitude: normalizedOffer.destination.lat, longitude: normalizedOffer.destination.lng },
+              ]}
+              strokeColor="#0284C7"
+              strokeWidth={4}
+              lineDashPattern={[0]}
+            />
+          </MapView>
         )}
       </View>
 
-      {/* Alert Card */}
-      <View style={styles.alertOverlay}>
-        <View style={styles.glassCard}>
-          <LinearGradient
-            colors={['rgba(239, 68, 68, 0.4)', 'transparent']}
-            start={{x:0,y:0}} end={{x:0.5,y:0}}
-            style={StyleSheet.absoluteFillObject}
-          />
-          <LinearGradient
-            colors={['transparent', 'rgba(59, 130, 246, 0.4)']}
-            start={{x:0.5,y:0}} end={{x:1,y:0}}
-            style={StyleSheet.absoluteFillObject}
-          />
-
-          <View style={styles.handle} />
-
-          {/* Title */}
-          <View style={styles.titleRow}>
-            <Text style={styles.title}>Incoming Ride Request</Text>
-            <Text style={{ fontSize: 22 }}>🚨</Text>
-          </View>
-          {(request?.paid) && (
-            <View style={styles.paidBadge}>
-              <Text style={styles.paidBadgeText}>✅ PAID — Customer confirmed</Text>
-            </View>
-          )}
-
-          {/* Trip Details */}
-          <View style={styles.detailsCard}>
-            <Text style={styles.detailsTitle}>
-              {request?.pickup_address || request?.trip?.from || 'Pickup'}{'\n'}
-              → {request?.destination_address || request?.trip?.to || 'Destination'}
-            </Text>
-            <Text style={styles.detailsText}>Estimated Payout: ₹{request?.fare || request?.trip?.fare || '—'}</Text>
-            <Text style={styles.detailsText}>Seats: {request?.seats || request?.trip?.seats || 1}</Text>
-            {(request?.parcel || request?.trip?.has_parcel) && (
-              <Text style={styles.detailsText}>📦 Package included</Text>
-            )}
-            {(request?.women_only) && (
-              <Text style={[styles.detailsText, { color: '#F472B6' }]}>👩 Women-only trip</Text>
-            )}
-          </View>
-
-          {/* Countdown Ring */}
-          <View style={styles.timerWrapper}>
-            <View style={[styles.timerOuterRing, { borderColor: 'rgba(75,85,99,0.5)' }]}>
-              <View style={[styles.timerProgress, { borderColor: timerColor }]} />
-            </View>
-            <View style={styles.timerInner}>
-              <Text style={[styles.timerText, { color: timerColor }]}>{timeLeft}</Text>
-            </View>
-          </View>
-          <Text style={styles.timerLabel}>seconds to respond</Text>
-
-          {/* Buttons */}
-          <View style={styles.actionsRow}>
-            <TouchableOpacity
-              style={styles.rejectBtn}
-              onPress={handleReject}
-              disabled={responding}
-            >
-              {responding
-                ? <ActivityIndicator color="#fff" size="small" />
-                : <Text style={styles.rejectText}>Reject</Text>
-              }
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.acceptBtn}
-              onPress={handleAccept}
-              disabled={responding}
-            >
-              {responding
-                ? <ActivityIndicator color="#064E3B" size="small" />
-                : <Text style={styles.acceptText}>Accept ✓</Text>
-              }
-            </TouchableOpacity>
-          </View>
-        </View>
+      {/* Floating Bottom-Sheet Ride Request Card */}
+      <View style={styles.bottomOverlay}>
+        <RideRequestCard
+          offer={normalizedOffer}
+          timeLeft={timeLeft}
+          state={requestState}
+          isDark={isDark}
+          onAccept={handleAccept}
+          onReject={handleReject}
+          onDismiss={onDismiss}
+        />
       </View>
     </SafeAreaView>
-  );
+  )
 }
 
 const styles = StyleSheet.create({
-  container:    { ...StyleSheet.absoluteFillObject, backgroundColor: '#111827', zIndex: 999 },
-  alertOverlay: { flex: 1, justifyContent: 'flex-end', paddingHorizontal: 16, paddingBottom: 32, zIndex: 10 },
-  glassCard:    { width: '100%', backgroundColor: 'rgba(30,41,59,0.9)', borderRadius: 30, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)', padding: 24, shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 20, elevation: 15, position: 'relative', overflow: 'hidden' },
-  handle:       { width: 48, height: 6, backgroundColor: 'rgba(255,255,255,0.3)', borderRadius: 3, alignSelf: 'center', marginBottom: 20 },
-  titleRow:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  title:        { color: '#fff', fontSize: 20, fontWeight: 'bold', flex: 1 },
-  detailsCard:  { backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 16, padding: 16, marginBottom: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
-  detailsTitle: { color: '#fff', fontSize: 16, fontWeight: 'bold', marginBottom: 8, lineHeight: 22 },
-  detailsText:  { color: '#D1D5DB', fontSize: 14, marginBottom: 4 },
-  timerWrapper: { alignItems: 'center', justifyContent: 'center', height: 112, marginBottom: 4 },
-  timerOuterRing: { width: 112, height: 112, borderRadius: 56, borderWidth: 4, alignItems: 'center', justifyContent: 'center', position: 'absolute' },
-  timerProgress:  { width: '100%', height: '100%', borderRadius: 56, borderWidth: 4, borderLeftColor: 'transparent', borderTopColor: 'transparent', position: 'absolute', transform: [{ rotate: '45deg' }] },
-  timerInner:   { width: 96, height: 96, backgroundColor: 'rgba(17,24,39,0.85)', borderRadius: 48, alignItems: 'center', justifyContent: 'center' },
-  timerText:    { fontSize: 38, fontWeight: 'bold' },
-  timerLabel:   { color: '#9CA3AF', textAlign: 'center', fontSize: 12, marginBottom: 20 },
-  actionsRow:   { flexDirection: 'row', justifyContent: 'space-between' },
-  rejectBtn:    { flex: 1, paddingVertical: 16, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.4)', alignItems: 'center', justifyContent: 'center', marginRight: 12, backgroundColor: 'rgba(255,255,255,0.05)' },
-  rejectText:   { color: '#fff', fontSize: 17, fontWeight: '500' },
-  acceptBtn:    { flex: 1, paddingVertical: 16, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#4ADE80', shadowColor: '#22C55E', shadowOpacity: 0.4, shadowRadius: 10, elevation: 5 },
-  acceptText:   { color: '#064E3B', fontSize: 17, fontWeight: 'bold' },
-  paidBadge:    { backgroundColor: 'rgba(34,197,94,0.15)', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 6, borderWidth: 1, borderColor: 'rgba(34,197,94,0.4)', alignSelf: 'flex-start', marginBottom: 12 },
-  paidBadgeText:{ color: '#4ADE80', fontSize: 13, fontWeight: '700' },
-});
+  container: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: '#0F172A',
+    zIndex: 9999,
+  },
+  bottomOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    paddingHorizontal: 12,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 16,
+  },
+})

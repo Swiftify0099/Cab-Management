@@ -73,7 +73,7 @@ export const AppButton: React.FC<AppButtonProps> = ({
       overflow: 'hidden',
     },
     gradient: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       borderRadius: theme.radius.md,
     }
   });

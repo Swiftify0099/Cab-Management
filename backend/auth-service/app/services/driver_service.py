@@ -49,16 +49,20 @@ async def get_or_create_driver_profile(
     profile = Driver(
         user_id=user.id,
         full_name=data.full_name,
+        phone=user.phone,
         gender=data.gender,
+        experience_years=data.experience_years or 0,
         home_city=data.home_city,
         referral_code=referral_code,
         kyc_status=KYCStatus.PENDING,
         status=DriverStatus.OFFLINE,
-        rating=0.0,
+        rating=5.0,
         total_trips=0,
         total_earnings=0,
         wallet_balance=0,
     )
+    if data.email:
+        user.email = data.email
     db.add(profile)
     user.is_profile_complete = True
     await db.flush()
@@ -74,6 +78,10 @@ async def update_driver_profile(
     data: DriverProfileUpdate,
 ) -> Driver:
     update_data = data.model_dump(exclude_unset=True)
+    if "email" in update_data:
+        email_val = update_data.pop("email")
+        if profile.user:
+            profile.user.email = email_val
     for field, value in update_data.items():
         setattr(profile, field, value)
     await db.flush()
