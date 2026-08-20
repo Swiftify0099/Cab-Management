@@ -83,7 +83,8 @@
         {
           "googleMapsApiKey": "AIzaSyCZw4DVNyJwP85ZeDG1y_x8DLQ7bF8J0EU"
         }
-      ]
+      ],
+      "./plugins/withDisabledPngCrunching"
     ],
     "extra": {
       "apiUrl": "https://cab-management-1.onrender.com/api/v1",
