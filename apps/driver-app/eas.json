@@ -1,0 +1,39 @@
+{
+  "cli": {
+    "version": ">= 14.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://cab-management-1.onrender.com/api/v1",
+        "EXPO_PUBLIC_WS_URL": "https://cab-management-1.onrender.com",
+        "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY": "AIzaSyCZw4DVNyJwP85ZeDG1y_x8DLQ7bF8J0EU"
+      }
+    },
+    "production": {
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://cab-management-1.onrender.com/api/v1",
+        "EXPO_PUBLIC_WS_URL": "https://cab-management-1.onrender.com",
+        "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY": "AIzaSyCZw4DVNyJwP85ZeDG1y_x8DLQ7bF8J0EU",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "cabbookingsystem-d0065",
+        "EXPO_PUBLIC_FCM_SENDER_ID": "514560559715"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

@@ -27,7 +27,7 @@
     "expo-web-browser": "~56.0.5",
     "jwt-decode": "^4.0.0",
     "lottie-react-native": "^7.3.8",
-    "nativewind": "^4",
+    "nativewind": "^4.2.4",
     "react": "19.2.3",
     "react-native": "0.85.3",
     "react-native-gesture-handler": "~2.31.1",
