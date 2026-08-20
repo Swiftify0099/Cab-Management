@@ -85,8 +85,8 @@
       ]
     ],
     "extra": {
-      "apiUrl": "http://10.194.201.223/api/v1",
-      "wsUrl":  "http://10.194.201.223:8010",
+      "apiUrl": "https://cab-management-1.onrender.com/api/v1",
+      "wsUrl":  "https://cab-management-1.onrender.com",
       "eas": {
         "projectId": "cabooking-driver"
       }

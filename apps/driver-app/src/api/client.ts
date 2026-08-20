@@ -7,7 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 import { router } from 'expo-router'
 
 export const BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL || 'http://10.194.201.223/api/v1'
+  process.env.EXPO_PUBLIC_API_URL || 'https://cab-management-1.onrender.com/api/v1'
 
 export const api = axios.create({
   baseURL: BASE_URL,

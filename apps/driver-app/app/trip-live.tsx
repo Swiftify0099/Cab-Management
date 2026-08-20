@@ -32,7 +32,7 @@ import type { PendingCustomer, CorridorCustomerPayload } from '../src/hooks/useD
 import IncomingRequestScreen from './incoming-request'
 
 const { width, height } = Dimensions.get('window')
-const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.194.201.223/api/v1'
+const API = process.env.EXPO_PUBLIC_API_URL || 'https://cab-management-1.onrender.com/api/v1'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface CustomerDot {

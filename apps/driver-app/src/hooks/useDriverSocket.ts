@@ -38,8 +38,8 @@ Notifications.setNotificationHandler({
 })
 
 // Fallbacks point to host IP: 8010 for WS gateway, 80 for API gateway
-const WS_URL = (process.env.EXPO_PUBLIC_WS_URL || 'http://10.194.201.223:8010').replace(/\/api\/v1$/, '')
-const API    = process.env.EXPO_PUBLIC_API_URL || 'http://10.194.201.223/api/v1'
+const WS_URL = (process.env.EXPO_PUBLIC_WS_URL || 'https://cab-management-1.onrender.com').replace(/\/api\/v1$/, '')
+const API    = process.env.EXPO_PUBLIC_API_URL || 'https://cab-management-1.onrender.com/api/v1'
 
 // ─── Types ────────────────────────────────────────────────────
 export interface IncomingRequest {

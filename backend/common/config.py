@@ -27,14 +27,14 @@ class BaseAppSettings(BaseSettings):
     SECRET_KEY: str = "change-me-in-production-min-32-chars"
 
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://cabooking_user:cabooking_pass@localhost:5432/cabooking"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:fpqSlqh3DiQm68o0@db.iyndjpsmahgugrcpkvip.supabase.co:5432/postgres"
     DB_POOL_SIZE: int = 20
     DB_MAX_OVERFLOW: int = 40
     DB_POOL_TIMEOUT: int = 30
     DB_ECHO: bool = False
 
     # Redis
-    REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_URL: str = "rediss://default:gQAAAAAAApumAAIgcDJhYWMyMzA5NmNkOTI0MGYzOTYzNDY4YTJkMzU1YjBkMw@stunning-squid-170918.upstash.io:6379"
     REDIS_POOL_SIZE: int = 20
 
     # JWT
