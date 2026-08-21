@@ -143,18 +143,23 @@ async def send_otp(
         sms_accusage = os.getenv("SMS_ACCUSAGE", "1")
         sms_template = os.getenv("SMS_TEMPLATE", "Your Verification Code for login is {otp}. - intracity cab booking")
         msg = sms_template.replace("{otp}", otp_code) if "{otp}" in sms_template else f"Your Verification Code for login is {otp_code}. - intracity cab booking"
-        encoded_msg = urllib.parse.quote(msg)
-        gateway_url = (
-            f"https://mobicomm.dove-sms.com//submitsms.jsp?"
-            f"user={urllib.parse.quote(sms_user)}"
-            f"&key={urllib.parse.quote(sms_key)}"
-            f"&mobile=+91{cleaned}"
-            f"&message={encoded_msg}"
-            f"&accusage={sms_accusage}"
-            f"&senderid={urllib.parse.quote(sms_sender)}"
-        )
+        sms_entity_id = os.getenv('SMS_ENTITY_ID', '')
+        sms_template_id = os.getenv('SMS_TEMPLATE_ID', '')
+        sms_params = {
+            'user': sms_user,
+            'key': sms_key,
+            'mobile': cleaned,
+            'message': msg,
+            'accusage': sms_accusage,
+            'senderid': sms_sender,
+        }
+        if sms_entity_id:
+            sms_params['entityid'] = sms_entity_id
+        if sms_template_id:
+            sms_params['tempid'] = sms_template_id
+
         async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.get(gateway_url)
+            resp = await client.get('https://mobicomm.dove-sms.com//submitsms.jsp', params=sms_params)
             logger.info("Dove SMS gateway sent from backend", status=resp.status_code, response=resp.text)
     except Exception as sms_err:
         logger.warning("Dove SMS dispatch error in backend", error=str(sms_err))
