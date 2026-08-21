@@ -65,7 +65,7 @@ const MENU_SECTIONS = [
   {
     title: 'Settings',
     items: [
-      { icon: 'settings', label: 'App Settings', route: '/settings/index', color: '#475569' },
+      { icon: 'settings', label: 'App Settings', route: '/settings', color: '#475569' },
       { icon: 'bell', label: 'Notification Center & Alerts', route: '/notifications', color: '#F59E0B' },
       { icon: 'shield', label: 'Privacy & Security', route: '/settings/privacy', color: '#10B981' },
     ],
@@ -131,42 +131,44 @@ export default function ProfileScreen() {
         ? (statsRes.value.data?.data || statsRes.value.data || {})
         : {}
 
-      const name = pData.full_name || 'Rahul Sharma'
-      const initials = name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)
+      let phoneVal = pData.phone || ''
+      if (!phoneVal) {
+        const rawUser = await SecureStore.getItemAsync('user_data')
+        if (rawUser) {
+          try {
+            const parsed = JSON.parse(rawUser)
+            if (parsed.phone) phoneVal = parsed.phone
+          } catch {}
+        }
+      }
 
-      let driverIdTag = 'DRV-8942'
+      const name = pData.full_name || (phoneVal ? `Driver (${phoneVal.slice(-4)})` : 'Driver Partner')
+      const initials = name.split(' ').map((n: string) => n[0]).filter(Boolean).join('').toUpperCase().slice(0, 2) || 'DP'
+
+      let driverIdTag = 'DRV-PARTNER'
       if (pData.id) {
         driverIdTag = `DRV-${pData.id.replace(/-/g, '').slice(0, 4).toUpperCase()}`
       } else if (pData.referral_code) {
         driverIdTag = pData.referral_code
       }
 
-      let phoneVal = pData.phone || ''
-      if (!phoneVal) {
-        const rawUser = await SecureStore.getItemAsync('user_data')
-        if (rawUser) {
-          const parsed = JSON.parse(rawUser)
-          if (parsed.phone) phoneVal = parsed.phone
-        }
-      }
-
       setDriverProfile({
         id: pData.id,
         driver_id_display: driverIdTag,
         full_name: name,
-        phone: phoneVal || '+91 98765 43210',
-        email: pData.email || 'rahul.sharma@example.com',
-        experience_years: pData.experience_years ?? 4,
-        initials: initials || 'RS',
+        phone: phoneVal || '',
+        email: pData.email || '',
+        experience_years: pData.experience_years ?? 0,
+        initials: initials,
         profile_photo: pData.profile_photo || undefined,
-        rating: sData.rating || pData.rating || 4.9,
-        total_trips: sData.total_trips || pData.total_trips || 348,
-        monthly_trips: pData.monthly_trips || 56,
-        total_earnings: sData.total_earnings || pData.total_earnings || 42000,
-        kyc_status: vData.kyc_status || 'verified',
-        vehicle_status: vData.vehicle_status || 'verified',
+        rating: Number(sData.rating ?? pData.rating ?? 5.0),
+        total_trips: Number(sData.total_trips ?? pData.total_trips ?? 0),
+        monthly_trips: Number(pData.monthly_trips ?? 0),
+        total_earnings: Number(sData.total_earnings ?? pData.total_earnings ?? 0),
+        kyc_status: vData.kyc_status || pData.kyc_status || 'pending',
+        vehicle_status: vData.vehicle_status || 'not_registered',
         status: pData.status ? pData.status.toUpperCase() : 'ACTIVE',
-        is_online: pData.is_online ?? true,
+        is_online: pData.is_online ?? false,
       })
 
       // Fetch live Feature 17 Rating Summary

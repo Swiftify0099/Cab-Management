@@ -12,6 +12,7 @@ import { Feather } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { router, useLocalSearchParams } from 'expo-router'
 import * as SecureStore from 'expo-secure-store'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { authApi } from '../../src/api/client'
 
 export default function DriverOtpScreen() {
@@ -84,12 +85,17 @@ export default function DriverOtpScreen() {
         }
         // Store user metadata as JSON so hooks can read driver_id from SecureStore
         if (tokenData.user_id) {
-          await SecureStore.setItemAsync('user_data', JSON.stringify({
-            id: tokenData.user_id,
-            phone: rawPhone,
-            role: tokenData.role || 'driver',
-          }))
+          await SecureStore.setItemAsync(
+            'user_data',
+            JSON.stringify({
+              id: tokenData.user_id,
+              phone: rawPhone,
+              role: tokenData.role || 'driver',
+            })
+          )
+          await AsyncStorage.setItem('user_id', tokenData.user_id || '')
         }
+        await AsyncStorage.setItem('access_token', accessToken)
       }
 
       if (tokenData.profile_complete === false || tokenData.is_new_user === true) {
@@ -98,14 +104,11 @@ export default function DriverOtpScreen() {
         router.replace('/(tabs)/' as any)
       }
     } catch (err: any) {
-      const detail = err?.response?.data?.detail
-      if (detail && typeof detail === 'string') {
-        Alert.alert('Verification Failed', detail)
-      } else {
-        // Demo fallback — store a demo token and proceed
-        await SecureStore.setItemAsync('access_token', 'demo_token')
-        router.replace('/(tabs)/' as any)
-      }
+      const detail =
+        err?.response?.data?.detail ||
+        err?.response?.data?.message ||
+        'Invalid verification code. Please check and try again.'
+      Alert.alert('Verification Failed', detail)
     } finally {
       setLoading(false)
     }

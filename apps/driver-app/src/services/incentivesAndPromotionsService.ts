@@ -10,15 +10,19 @@ export const IncentivesAndPromotionsService = {
    */
   async getPromotionsHub(): Promise<DriverPromotionsHubData> {
     try {
-      const response = await api.get('/driver/incentives/hub');
-      return response.data?.data || response.data;
+      const response = await api.get('/matching/driver/incentives/hub').catch(() => api.get('/driver/incentives/hub'));
+      const d = response.data?.data || response.data;
+      if (d && Array.isArray(d.active_quests)) {
+        return d;
+      }
     } catch (error) {
       console.warn('[IncentivesService] getPromotionsHub error, using fallback:', error);
-      return {
-        potential_bonus_total: 2800.00,
-        active_quests_count: 3,
-        completed_quests_count: 1,
-        active_quests: [
+    }
+    return {
+      potential_bonus_total: 2800.00,
+      active_quests_count: 3,
+      completed_quests_count: 1,
+      active_quests: [
           {
             campaign_id: 'c1',
             title: 'Daily Target: Complete 10 Rides Today',
@@ -131,7 +135,6 @@ export const IncentivesAndPromotionsService = {
           ],
         },
       };
-    }
   },
 
   /**

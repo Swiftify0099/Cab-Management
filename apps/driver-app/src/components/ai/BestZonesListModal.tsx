@@ -59,17 +59,25 @@ export const BestZonesListModal: React.FC<BestZonesListModalProps> = ({
 
             {/* Zones List */}
             <ScrollView style={styles.scrollList} showsVerticalScrollIndicator={false}>
-              {zones.map((zone, idx) => (
-                <View
-                  key={zone.zone_id || idx}
-                  style={[
-                    styles.zoneCard,
-                    {
-                      backgroundColor: isDark ? '#1E293B' : '#F8FAFC',
-                      borderColor: idx === 0 ? '#6366F1' : isDark ? '#334155' : '#E2E8F0',
-                    },
-                  ]}
-                >
+              {(!zones || zones.length === 0) ? (
+                <View style={{ padding: 24, alignItems: 'center' }}>
+                  <Feather name="map" size={36} color={theme.colors.textSecondary} style={{ marginBottom: 10 }} />
+                  <Text style={{ color: theme.colors.textSecondary, fontSize: 14, textAlign: 'center' }}>
+                    Scanning city for high-demand zones...
+                  </Text>
+                </View>
+              ) : (
+                zones.map((zone, idx) => (
+                  <View
+                    key={zone.zone_id || idx}
+                    style={[
+                      styles.zoneCard,
+                      {
+                        backgroundColor: isDark ? '#1E293B' : '#F8FAFC',
+                        borderColor: idx === 0 ? '#6366F1' : isDark ? '#334155' : '#E2E8F0',
+                      },
+                    ]}
+                  >
                   <View style={styles.zoneHeader}>
                     <View style={styles.zoneRankRow}>
                       <View
@@ -128,7 +136,7 @@ export const BestZonesListModal: React.FC<BestZonesListModalProps> = ({
                     </TouchableOpacity>
                   )}
                 </View>
-              ))}
+              )))}
 
               <View style={styles.disclaimerBox}>
                 <Feather name="info" size={13} color={theme.colors.textSecondary} style={{ marginRight: 6 }} />

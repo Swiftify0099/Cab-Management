@@ -50,18 +50,18 @@ export default function EditProfileScreen() {
   const [showPhotoModal, setShowPhotoModal] = useState(false)
 
   // Form fields
-  const [fullName, setFullName] = useState('Rahul Sharma')
-  const [email, setEmail] = useState('rahul.sharma@example.com')
-  const [experienceYears, setExperienceYears] = useState('4')
+  const [fullName, setFullName] = useState('')
+  const [email, setEmail] = useState('')
+  const [experienceYears, setExperienceYears] = useState('0')
   const [homeCity, setHomeCity] = useState('')
   const [gender, setGender] = useState<'male' | 'female' | 'other'>('male')
   const [photoUri, setPhotoUri] = useState<string | null>(null)
 
   // Read-only server fields
-  const [driverId, setDriverId] = useState('DRV-8942')
-  const [phone, setPhone] = useState('+91 98765 43210')
-  const [rating, setRating] = useState(4.9)
-  const [totalTrips, setTotalTrips] = useState(348)
+  const [driverId, setDriverId] = useState('DRV-PARTNER')
+  const [phone, setPhone] = useState('')
+  const [rating, setRating] = useState(5.0)
+  const [totalTrips, setTotalTrips] = useState(0)
   const [accountStatus, setAccountStatus] = useState('Active')
 
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -91,8 +91,8 @@ export default function EditProfileScreen() {
         setDriverId(data.referral_code)
       }
 
-      setRating(data.rating ?? 4.9)
-      setTotalTrips(data.total_trips ?? 348)
+      setRating(data.rating ?? 5.0)
+      setTotalTrips(data.total_trips ?? 0)
       setAccountStatus(data.status ? data.status.charAt(0).toUpperCase() + data.status.slice(1).toLowerCase() : 'Active')
 
       // Get phone from SecureStore user_data if not in profile
@@ -101,8 +101,10 @@ export default function EditProfileScreen() {
       } else {
         const rawUser = await SecureStore.getItemAsync('user_data')
         if (rawUser) {
-          const parsed = JSON.parse(rawUser)
-          if (parsed.phone) setPhone(parsed.phone)
+          try {
+            const parsed = JSON.parse(rawUser)
+            if (parsed.phone) setPhone(parsed.phone)
+          } catch {}
         }
       }
     } catch (e) {

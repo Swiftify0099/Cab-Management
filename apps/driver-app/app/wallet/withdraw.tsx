@@ -45,7 +45,8 @@ export default function WithdrawScreen() {
     try {
       const data = await PayoutAndWalletService.getWalletSummary()
       setWalletData(data)
-      const defaultM = data.payout_methods.find(m => m.is_default && m.is_verified) || data.payout_methods.find(m => m.is_verified)
+      const methods = Array.isArray(data?.payout_methods) ? data.payout_methods : []
+      const defaultM = methods.find(m => m.is_default && m.is_verified) || methods.find(m => m.is_verified) || methods[0]
       if (defaultM) {
         setSelectedMethodId(defaultM.id)
       }

@@ -76,46 +76,11 @@ export default function DriverPhoneScreen() {
     setLoading(true)
     const fullPhone = `+91${cleaned}`
     try {
-      const res = await authApi.sendOtp(fullPhone)
-      const responseData = res.data?.data
-
-      // Check if user was auto-verified and tokens were returned directly
-      if (responseData?.is_existing && responseData?.tokens) {
-        const { access_token, refresh_token, user_id, role, profile_complete } = responseData.tokens
-        await SecureStore.setItemAsync('access_token', access_token)
-        if (refresh_token) {
-          await SecureStore.setItemAsync('refresh_token', refresh_token)
-        }
-        await SecureStore.setItemAsync('user_data', JSON.stringify({
-          id: user_id,
-          phone: fullPhone,
-          role: role || 'driver',
-        }))
-
-        if (!profile_complete) {
-          router.replace('/onboarding/profile' as any)
-        } else {
-          router.replace('/(tabs)/' as any)
-        }
-        return
-      }
-
+      await authApi.sendOtp(fullPhone)
       router.push({ pathname: '/auth/otp', params: { phone: fullPhone } })
     } catch (err: any) {
-      const detail = err?.response?.data?.detail || err?.response?.data?.message
-      if (detail && typeof detail === 'string') {
-        if (detail.toLowerCase().includes('suspended') || detail.toLowerCase().includes('blocked')) {
-          Alert.alert(
-            'Account Restricted',
-            detail,
-            [{ text: 'Contact Support', onPress: () => {} }, { text: 'OK', style: 'cancel' }]
-          )
-          return
-        }
-        Alert.alert('Login Notice', detail)
-      }
-      // Demo / fallback navigation if in development
-      router.push({ pathname: '/auth/otp', params: { phone: fullPhone } })
+      const detail = err?.response?.data?.detail || err?.response?.data?.message || 'Failed to send OTP. Please check your network and try again.'
+      Alert.alert('Login Notice', detail)
     } finally {
       setLoading(false)
     }

@@ -11,9 +11,10 @@ export const RatingAndFeedbackService = {
    */
   async getRatingSummary(): Promise<DriverRatingSummary> {
     try {
-      const res = await api.get('/matching/driver/ratings/summary');
-      if (res.data?.success && res.data?.data) {
-        return res.data.data;
+      const res = await api.get('/matching/driver/ratings/summary').catch(() => api.get('/driver/ratings/summary'));
+      const d = res.data?.data || res.data;
+      if (d && d.breakdown && Array.isArray(d.breakdown)) {
+        return d;
       }
     } catch (e) {
       console.warn('[RatingService] getRatingSummary error:', e);
@@ -52,9 +53,10 @@ export const RatingAndFeedbackService = {
    */
   async getRatingHistory(limit: number = 20, offset: number = 0): Promise<DriverRatingHistoryItem[]> {
     try {
-      const res = await api.get(`/matching/driver/ratings/history?limit=${limit}&offset=${offset}`);
-      if (res.data?.success && Array.isArray(res.data?.data)) {
-        return res.data.data;
+      const res = await api.get(`/matching/driver/ratings/history?limit=${limit}&offset=${offset}`).catch(() => api.get(`/driver/ratings/history?limit=${limit}&offset=${offset}`));
+      const d = res.data?.data || res.data?.history || res.data;
+      if (Array.isArray(d)) {
+        return d;
       }
     } catch (e) {
       console.warn('[RatingService] getRatingHistory error:', e);

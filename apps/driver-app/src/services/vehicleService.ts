@@ -503,6 +503,39 @@ export class VehicleService {
    */
   static async getVehicles(): Promise<DriverVehicle[]> {
     try {
+      const res = await api.get('/driver/vehicles').catch(() => api.get('/driver/my-vehicles')).catch(() => null)
+      if (res?.data?.data && Array.isArray(res.data.data) && res.data.data.length > 0) {
+        const backendVehicles: DriverVehicle[] = res.data.data.map((v: any) => ({
+          id: v.id || `veh-${v.vehicle_number || Date.now()}`,
+          vehicle_type: v.vehicle_type || 'sedan',
+          make: v.make || v.brand || 'Vehicle',
+          model: v.model || '',
+          variant: v.variant || '',
+          year: Number(v.year || 2023),
+          color: v.color || 'White',
+          registration_number: v.registration_number || v.vehicle_number || 'MH12XX0000',
+          seat_capacity: Number(v.capacity || v.seat_capacity || 4),
+          fuel_type: v.fuel_type || 'petrol',
+          ownership_type: v.ownership_type || 'self',
+          registered_owner_name: v.registered_owner_name || 'Driver Partner',
+          has_ac: v.has_ac ?? true,
+          parcel_capable: v.parcel_capable ?? false,
+          is_active: !!v.is_active,
+          status: (v.status ? v.status.toUpperCase() : (v.is_active ? 'ACTIVE' : 'APPROVED')) as VehicleStatus,
+          status_label: v.is_active ? 'Active & Online Ready' : 'Approved (Standby)',
+          inspection_status: v.inspection_status || 'PASSED',
+          photos: v.photos || [],
+          documents: v.documents || [],
+          created_at: v.created_at || new Date().toISOString(),
+        }))
+        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(backendVehicles))
+        return backendVehicles
+      }
+    } catch (e) {
+      console.warn('[VehicleService] Backend load notice:', e)
+    }
+
+    try {
       const raw = await AsyncStorage.getItem(STORAGE_KEY)
       if (raw) {
         const parsed: DriverVehicle[] = JSON.parse(raw)
