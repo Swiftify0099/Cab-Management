@@ -27,7 +27,7 @@ class BaseAppSettings(BaseSettings):
     SECRET_KEY: str = "change-me-in-production-min-32-chars"
 
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:fpqSlqh3DiQm68o0@db.iyndjpsmahgugrcpkvip.supabase.co:5432/postgres"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres.iyndjpsmahgugrcpkvip:fpqSlqh3DiQm68o0@aws-0-ap-south-1.pooler.supabase.com:5432/postgres"
     DB_POOL_SIZE: int = 20
     DB_MAX_OVERFLOW: int = 40
     DB_POOL_TIMEOUT: int = 30
