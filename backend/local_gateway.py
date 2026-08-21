@@ -225,6 +225,17 @@ sys.modules.update(_admin_mods)
 sys.modules.update(_analytics_mods)
 sys.modules.update(_parcel_mods)
 
+# Fix module attribute collisions across merged microservices
+_cfg = sys.modules.get('app.core.config')
+if _cfg:
+    from common.config import settings
+    if not hasattr(_cfg, 'auth_settings'): setattr(_cfg, 'auth_settings', settings)
+    if not hasattr(_cfg, 'ws_settings'): setattr(_cfg, 'ws_settings', settings)
+    if not hasattr(_cfg, 'payment_settings'): setattr(_cfg, 'payment_settings', settings)
+    if not hasattr(_cfg, 'booking_settings'): setattr(_cfg, 'booking_settings', settings)
+    if not hasattr(_cfg, 'matching_settings'): setattr(_cfg, 'matching_settings', settings)
+    if not hasattr(_cfg, 'settings'): setattr(_cfg, 'settings', settings)
+
 
 # â”€â”€ 5. Build FastAPI app â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @asynccontextmanager

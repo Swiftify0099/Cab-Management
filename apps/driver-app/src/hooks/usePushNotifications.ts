@@ -57,7 +57,11 @@ export function usePushNotifications() {
         // ── Send FCM token to backend ──
         api.post('/auth/device-token', { token, platform: Platform.OS })
           .then(() => console.log('[PushNotif] FCM token registered with backend ✅'))
-          .catch((err) => console.warn('[PushNotif] Backend token registration failed:', err?.response?.data || err?.message));
+          .catch(() => {
+            api.post('/driver/fcm-token', { fcm_token: token })
+              .then(() => console.log('[PushNotif] FCM token registered via driver endpoint ✅'))
+              .catch((err) => console.warn('[PushNotif] Backend token registration failed:', err?.response?.data || err?.message));
+          });
       }
     });
 

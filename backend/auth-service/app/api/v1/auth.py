@@ -1,3 +1,4 @@
+import os
 """
 Auth API endpoints  OTP flow for customers/drivers.
 Includes rate limiting and mock OTP (123456 in dev mode).
