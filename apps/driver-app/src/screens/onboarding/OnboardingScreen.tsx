@@ -35,6 +35,20 @@ export default function DriverOnboardingScreen() {
   const [loading, setLoading] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
 
+  React.useEffect(() => {
+    import('expo-secure-store').then(SecureStore => {
+      SecureStore.getItemAsync('access_token').then(token => {
+        if (!token || token === 'demo_token') {
+          Alert.alert(
+            'Authentication Required',
+            'Please verify your phone number first to register as a driver.',
+            [{ text: 'Sign In / Register', onPress: () => router.replace('/auth/phone' as any) }]
+          )
+        }
+      })
+    })
+  }, [])
+
   const validate = () => {
     const e: Record<string, string> = {}
     if (!fullName.trim() || fullName.trim().length < 2) {

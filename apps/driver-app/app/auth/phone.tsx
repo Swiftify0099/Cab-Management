@@ -87,7 +87,9 @@ export default function DriverPhoneScreen() {
   }
 
   const handleRegister = () => {
-    router.push('/onboarding/profile' as any)
+    if (!showInput) {
+      setShowInput(true)
+    }
   }
 
   return (
