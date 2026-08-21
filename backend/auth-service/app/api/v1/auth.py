@@ -132,38 +132,30 @@ async def send_otp(
         expire_seconds=auth_settings.OTP_EXPIRE_MINUTES * 60,
     )
 
-    # Real Dove SMS Gateway Integration
+    # Real Dove SMS Gateway Integration (Matched exactly to working PhoneAuth.java template)
     try:
         import httpx
-        import urllib.parse
         cleaned = "".join(filter(str.isdigit, phone))[-10:]
         sms_user = os.getenv("SMS_USERNAME", "Experts")
         sms_key = os.getenv("SMS_AUTH_KEY", "ba9dcdcdfcXX")
         sms_sender = os.getenv("SMS_SENDER_ID", "EXTSKL")
         sms_accusage = os.getenv("SMS_ACCUSAGE", "1")
-        sms_template = os.getenv("SMS_TEMPLATE", "Your Verification Code for login is {otp}. - intracity cab booking")
-        msg = sms_template.replace("{otp}", otp_code) if "{otp}" in sms_template else f"Your Verification Code for login is {otp_code}. - intracity cab booking"
-        sms_entity_id = os.getenv('SMS_ENTITY_ID', '')
-        sms_template_id = os.getenv('SMS_TEMPLATE_ID', '')
-        sms_params = {
-            'user': sms_user,
-            'key': sms_key,
-            'mobile': cleaned,
-            'message': msg,
-            'accusage': sms_accusage,
-            'senderid': sms_sender,
-        }
-        if sms_entity_id:
-            sms_params['entityid'] = sms_entity_id
-        if sms_template_id:
-            sms_params['tempid'] = sms_template_id
-
+        msg = f"Your Verification Code for login is {otp_code}. - Expertskill Technology."
+        encoded_msg = msg.replace(" ", "%20")
+        gateway_url = (
+            "https://mobicomm.dove-sms.com//submitsms.jsp?"
+            + "user=" + sms_user
+            + "&key=" + sms_key
+            + "&mobile=+91" + cleaned
+            + "&message=" + encoded_msg
+            + "&accusage=" + sms_accusage
+            + "&senderid=" + sms_sender
+        )
         async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.get('https://mobicomm.dove-sms.com//submitsms.jsp', params=sms_params)
+            resp = await client.get(gateway_url)
             logger.info("Dove SMS gateway sent from backend", status=resp.status_code, response=resp.text)
     except Exception as sms_err:
         logger.warning("Dove SMS dispatch error in backend", error=str(sms_err))
-
 
     logger.info("OTP sent", phone=phone, dev_mode=auth_settings.OTP_DEV_MODE)
 
