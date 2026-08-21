@@ -20,8 +20,12 @@ async def get_redis() -> aioredis.Redis:
     """Get the Redis connection (creates pool on first call)."""
     global _redis_pool
     if _redis_pool is None:
+        redis_url = settings.REDIS_URL
+        if not redis_url or 'localhost' in redis_url or '127.0.0.1' in redis_url:
+            redis_url = 'rediss://default:gQAAAAAAApumAAIgcDJhYWMyMzA5NmNkOTI0MGYzOTYzNDY4YTJkMzU1YjBkMw@stunning-squid-170918.upstash.io:6379'
+
         _redis_pool = aioredis.from_url(
-            settings.REDIS_URL,
+            redis_url,
             encoding="utf-8",
             decode_responses=True,
             max_connections=settings.REDIS_POOL_SIZE,
