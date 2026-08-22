@@ -10,6 +10,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { Feather } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { router } from 'expo-router'
+import * as SecureStore from 'expo-secure-store'
 import { authApi } from '../../src/api/client'
 
 const { width, height } = Dimensions.get('window')
@@ -69,19 +70,25 @@ export default function DriverPhoneScreen() {
 
     const cleaned = phone.replace(/\D/g, '')
     if (cleaned.length < 10) {
-      Alert.alert('Invalid Number', 'Please enter a valid 10-digit mobile number')
+      Alert.alert('Invalid Mobile Number', 'Please enter a valid 10-digit mobile number to proceed.')
       return
     }
     setLoading(true)
+    const fullPhone = `+91${cleaned}`
     try {
-      await authApi.sendOtp(`+91${cleaned}`)
-      router.push({ pathname: '/auth/otp', params: { phone: `+91${cleaned}` } })
-    } catch (err) {
-      console.warn('OTP Send Error:', err)
-      // Demo: navigate anyway if local dev fails
-      router.push({ pathname: '/auth/otp', params: { phone: `+91${cleaned}` } })
+      await authApi.sendOtp(fullPhone)
+      router.push({ pathname: '/auth/otp', params: { phone: fullPhone } })
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.message || 'Failed to send OTP. Please check your network and try again.'
+      Alert.alert('Login Notice', detail)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleRegister = () => {
+    if (!showInput) {
+      setShowInput(true)
     }
   }
 
@@ -93,7 +100,7 @@ export default function DriverPhoneScreen() {
       <LinearGradient
         colors={['#0B0E1F', '#1C1938', '#0F1836', '#080C17']}
         locations={[0, 0.4, 0.7, 1]}
-        style={StyleSheet.absoluteFillObject}
+        style={StyleSheet.absoluteFill}
       />
 
       <SafeAreaView style={styles.safeArea}>
@@ -121,74 +128,77 @@ export default function DriverPhoneScreen() {
           style={styles.bottomSection}
         >
           <Animated.View style={{ width: '100%', alignItems: 'center', opacity: contentOpacity, transform: [{ translateY: contentTranslateY }] }}>
-            <Text style={styles.welcomeTitle}>Welcome, Partner</Text>
+            <Text style={styles.welcomeTitle}>Log In to Drive</Text>
             <Text style={styles.welcomeSub}>
-              Connect. Drive. Earn. Intercity mobility redefined.
+              Enter your mobile number to continue
             </Text>
 
-            {/* Hidden Input field, shown on click */}
-            {showInput && (
-              <Animated.View style={[styles.inputRow, { opacity: inputOpacity, transform: [{ translateY: inputTranslateY }] }]}>
-                <View style={styles.dialCode}>
-                  <Text style={styles.dialCodeText}>🇮🇳 +91</Text>
-                </View>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter Mobile Number"
-                  placeholderTextColor="#6B7280"
-                  keyboardType="phone-pad"
-                  value={phone}
-                  onChangeText={t => setPhone(t.replace(/\D/g, '').slice(0, 10))}
-                  maxLength={10}
-                  autoFocus
-                />
-              </Animated.View>
-            )}
+            {/* Input field */}
+            <View style={[styles.inputRow, showInput && styles.inputRowActive]}>
+              <View style={styles.dialCode}>
+                <Text style={styles.flagEmoji}>🇮🇳</Text>
+                <Text style={styles.dialCodeText}>+91</Text>
+                <Feather name="chevron-down" size={14} color="#94A3B8" style={{ marginLeft: 2 }} />
+              </View>
+              <TextInput
+                style={styles.input}
+                placeholder="Mobile Number"
+                placeholderTextColor="#64748B"
+                keyboardType="phone-pad"
+                value={phone}
+                onFocus={() => setShowInput(true)}
+                onChangeText={t => {
+                  setShowInput(true)
+                  setPhone(t.replace(/\D/g, '').slice(0, 10))
+                }}
+                maxLength={10}
+                selectionColor="#3B82F6"
+              />
+            </View>
 
-            {/* Login Button */}
+            {/* Continue / Login Button */}
             <TouchableOpacity
-              style={[styles.loginBtn, (loading) && { opacity: 0.6 }]}
+              style={[styles.loginBtn, loading && { opacity: 0.6 }]}
               onPress={handleLogin}
               disabled={loading}
               activeOpacity={0.85}
             >
               <LinearGradient
-                colors={['#DCB260', '#2E66D8']}
+                colors={['#2563EB', '#3B82F6']}
                 start={{ x: 0, y: 0.5 }}
                 end={{ x: 1, y: 0.5 }}
                 style={styles.loginBtnGradient}
               >
-                {loading
-                  ? <ActivityIndicator color="#fff" />
-                  : <Text style={styles.loginBtnText}>{showInput ? "Continue" : "Login as Partner"}</Text>
-                }
+                {loading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.loginBtnText}>Continue</Text>
+                )}
               </LinearGradient>
             </TouchableOpacity>
 
-            {/* Register Button */}
-            {!showInput && (
-              <TouchableOpacity style={styles.registerBtn} activeOpacity={0.8}>
-                <Text style={styles.registerBtnText}>Register New Vehicle</Text>
+            {/* Register Link */}
+            <View style={styles.registerRow}>
+              <Text style={styles.registerPrompt}>Don't have an account? </Text>
+              <TouchableOpacity onPress={handleRegister} activeOpacity={0.7}>
+                <Text style={styles.registerLink}>Register Driver</Text>
               </TouchableOpacity>
-            )}
+            </View>
           </Animated.View>
         </KeyboardAvoidingView>
 
         {/* ── Footer ── */}
-        {!showInput && (
-          <Animated.View style={[styles.footerContainer, { opacity: footerOpacity, transform: [{ translateY: footerTranslateY }] }]}>
-            <View style={styles.footer}>
-              <TouchableOpacity style={styles.footerChip}>
-                <Feather name="globe" size={14} color="#FFFFFF" />
-                <Text style={styles.footerChipText}>English</Text>
-                <Feather name="chevron-down" size={14} color="#FFFFFF" />
-              </TouchableOpacity>
-              <TouchableOpacity><Text style={styles.footerLink}>Hindi</Text></TouchableOpacity>
-              <TouchableOpacity><Text style={styles.footerLink}>Help</Text></TouchableOpacity>
-              <TouchableOpacity><Text style={styles.footerLink}>Terms</Text></TouchableOpacity>
-            </View>
-          </Animated.View>
-        )}
+        <Animated.View style={[styles.footerContainer, { opacity: footerOpacity, transform: [{ translateY: footerTranslateY }] }]}>
+          <View style={styles.footer}>
+            <TouchableOpacity style={styles.footerChip}>
+              <Feather name="globe" size={14} color="#FFFFFF" />
+              <Text style={styles.footerChipText}>English</Text>
+              <Feather name="chevron-down" size={14} color="#FFFFFF" />
+            </TouchableOpacity>
+            <TouchableOpacity><Text style={styles.footerLink}>Help</Text></TouchableOpacity>
+            <TouchableOpacity><Text style={styles.footerLink}>Terms</Text></TouchableOpacity>
+          </View>
+        </Animated.View>
       </SafeAreaView>
     </View>
   )
@@ -200,10 +210,10 @@ const styles = StyleSheet.create({
 
   logoRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    marginTop: 20, zIndex: 10,
+    marginTop: 16, zIndex: 10,
   },
   logoIP: {
-    color: '#D4AF37', fontSize: 32, fontWeight: '900', fontStyle: 'italic', marginRight: 8,
+    color: '#D4AF37', fontSize: 26, fontWeight: '900', fontStyle: 'italic', marginRight: 8,
   },
   logoTextWrap: { marginLeft: 2 },
   logoLine1: { color: '#FFFFFF', fontSize: 18, fontWeight: '800', lineHeight: 20 },
@@ -211,8 +221,8 @@ const styles = StyleSheet.create({
 
   busContainer: {
     width: width,
-    height: height * 0.45,
-    marginTop: 20,
+    height: height * 0.35,
+    marginTop: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -223,58 +233,66 @@ const styles = StyleSheet.create({
 
   bottomSection: {
     paddingHorizontal: 24,
-    paddingBottom: 20,
+    paddingBottom: 16,
     alignItems: 'center',
   },
   welcomeTitle: {
-    color: '#FFFFFF', fontSize: 32, fontWeight: '800',
-    textAlign: 'center', marginBottom: 10,
+    color: '#FFFFFF', fontSize: 28, fontWeight: '800',
+    textAlign: 'center', marginBottom: 6,
   },
   welcomeSub: {
-    color: '#9CA3AF', fontSize: 14, lineHeight: 22, 
-    textAlign: 'center', marginBottom: 30, paddingHorizontal: 10
+    color: '#9CA3AF', fontSize: 14, lineHeight: 20, 
+    textAlign: 'center', marginBottom: 24,
   },
 
   inputRow: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 50, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
-    paddingHorizontal: 16, height: 56, marginBottom: 20, width: '100%'
+    flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 16, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.12)',
+    paddingHorizontal: 16, height: 56, marginBottom: 18, width: '100%',
   },
-  dialCode: { marginRight: 12, borderRightWidth: 1, borderRightColor: 'rgba(255,255,255,0.15)', paddingRight: 12 },
-  dialCodeText: { color: '#D1D5DB', fontSize: 15, fontWeight: '600' },
-  input: { flex: 1, color: '#FFFFFF', fontSize: 16 },
+  inputRowActive: {
+    borderColor: '#3B82F6',
+    backgroundColor: 'rgba(59,130,246,0.08)',
+    shadowColor: '#3B82F6', shadowOpacity: 0.3, shadowRadius: 8, elevation: 4,
+  },
+  dialCode: {
+    flexDirection: 'row', alignItems: 'center',
+    marginRight: 12, borderRightWidth: 1, borderRightColor: 'rgba(255,255,255,0.15)',
+    paddingRight: 12,
+  },
+  flagEmoji: { fontSize: 18, marginRight: 6 },
+  dialCodeText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+  input: { flex: 1, color: '#FFFFFF', fontSize: 17, fontWeight: '600' },
 
   loginBtn: { 
-    width: '100%', borderRadius: 50, overflow: 'hidden', marginBottom: 16, 
+    width: '100%', borderRadius: 16, overflow: 'hidden', marginBottom: 18,
+    shadowColor: '#2563EB', shadowOpacity: 0.4, shadowRadius: 10, elevation: 6,
   },
-  loginBtnGradient: { height: 56, alignItems: 'center', justifyContent: 'center' },
-  loginBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+  loginBtnGradient: { height: 54, alignItems: 'center', justifyContent: 'center' },
+  loginBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.5 },
 
-  registerBtn: {
-    width: '100%', height: 56, borderRadius: 50, 
-    borderWidth: 1.5, borderColor: '#DCB260',
-    alignItems: 'center', justifyContent: 'center', marginBottom: 10,
-  },
-  registerBtnText: { color: '#DCB260', fontSize: 16, fontWeight: '700' },
+  registerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 4 },
+  registerPrompt: { color: '#94A3B8', fontSize: 14 },
+  registerLink: { color: '#DCB260', fontSize: 14, fontWeight: '700', textDecorationLine: 'underline' },
 
   footerContainer: {
     alignItems: 'center',
-    marginBottom: 30,
-    paddingHorizontal: 30,
-    width: '100%'
+    marginBottom: 20,
+    paddingHorizontal: 24,
+    width: '100%',
   },
   footer: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 50,
-    paddingHorizontal: 14, paddingVertical: 12, width: '100%',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 50,
+    paddingHorizontal: 16, paddingVertical: 10, width: '100%',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
   },
   footerChip: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20, 
-    paddingHorizontal: 12, paddingVertical: 6,
+    backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 20, 
+    paddingHorizontal: 10, paddingVertical: 4,
   },
-  footerChipText: { color: '#FFFFFF', fontSize: 13, fontWeight: '500', marginHorizontal: 2 },
-  footerLink: { color: '#E2E8F0', fontSize: 13, fontWeight: '500' },
+  footerChipText: { color: '#FFFFFF', fontSize: 12, fontWeight: '600' },
+  footerLink: { color: '#94A3B8', fontSize: 13, fontWeight: '500' },
 })
 

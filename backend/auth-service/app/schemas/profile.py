@@ -160,15 +160,19 @@ class SavedRouteResponse(BaseModel):
 # ============================================================
 
 class DriverProfileCreate(BaseModel):
-    """Driver basic profile  first step of onboarding."""
+    """Driver basic profile — first step of onboarding."""
     full_name: str = Field(..., min_length=2, max_length=255)
+    email: Optional[str] = Field(None, max_length=255)
     gender: Optional[Gender] = None
+    experience_years: Optional[int] = Field(0, ge=0, le=50)
     home_city: Optional[str] = Field(None, max_length=100)
 
 
 class DriverProfileUpdate(BaseModel):
     full_name: Optional[str] = None
+    email: Optional[str] = None
     gender: Optional[Gender] = None
+    experience_years: Optional[int] = None
     home_city: Optional[str] = None
 
 
@@ -211,7 +215,10 @@ class DriverProfileResponse(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID
     full_name: str
-    gender: Optional[Gender]
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    gender: Optional[Gender] = None
+    experience_years: Optional[int] = 0
     profile_photo: Optional[str]
     kyc_status: str
     status: str

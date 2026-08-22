@@ -374,6 +374,33 @@ async def sos_trigger(sid, data):
     logger.critical("SOS triggered!", user_id=client.get("user_id"), data=data)
 
 
+
+@sio.event
+async def ride_request_respond(sid, data):
+    """
+    Driver accepts or rejects an on-demand RIDE_REQUEST_NEW offer.
+    Stores response in Redis for RideDispatchService sequential queue.
+    """
+    client = _connected_clients.get(sid, {})
+    offer_id = data.get("offer_id")
+    accepted = data.get("accepted", False)
+    rejection_reason = data.get("rejection_reason")
+    driver_id = client.get("user_id")
+
+    if not offer_id:
+        return
+
+    r = await get_redis()
+    response_key = f"ride_offer:response:{offer_id}"
+    await r.setex(response_key, 60, "accepted" if accepted else "rejected")
+    logger.info("Driver responded to ride offer via WS", driver_id=driver_id, offer_id=offer_id, accepted=accepted)
+
+    await sio.emit("RIDE_OFFER_ACK", {
+        "offer_id": offer_id,
+        "accepted": accepted,
+    }, to=sid)
+
+
 # 
 # Mount as ASGI
 # 

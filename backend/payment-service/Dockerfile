@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+﻿FROM python:3.12-slim
 
 # System dependencies (no libgdal-dev - avoids broken libpoppler on Ubuntu 24.04)
 RUN apt-get update && apt-get install -y \
@@ -13,7 +13,7 @@ COPY backend/common /app/common
 
 # Install Python dependencies
 COPY backend/payment-service/requirements.txt .
-RUN pip install --no-cache-dir "setuptools<70" && pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir setuptools==69.5.1 && pip install --no-cache-dir -r requirements.txt
 
 # Copy service application code
 COPY backend/payment-service/app /app/app

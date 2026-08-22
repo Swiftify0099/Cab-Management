@@ -17,9 +17,10 @@
  * for the layout module and throw "Cannot read property 'ErrorBoundary'".
  */
 import { useState, useEffect, useCallback } from 'react'
-import { Platform, Alert } from 'react-native'
+import { Platform } from 'react-native'
 import * as Location from 'expo-location'
 import * as ImagePicker from 'expo-image-picker'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 
 export interface PermissionStatus {
   location: 'granted' | 'denied' | 'pending'
@@ -46,26 +47,67 @@ const INITIAL_STATUS: PermissionStatus = {
 export function useStartupPermissions(): {
   status: PermissionStatus
   requestAll: () => Promise<void>
+  skipGate: () => Promise<void>
 } {
   const [status, setStatus] = useState<PermissionStatus>(INITIAL_STATUS)
+
+  // Check existing permissions silently without prompting popups on launch
+  const checkExisting = useCallback(async () => {
+    try {
+      const dismissed = await AsyncStorage.getItem('permissions_gate_dismissed')
+      const fg = await Location.getForegroundPermissionsAsync().catch(() => ({ status: 'undetermined' }))
+      const isGranted = fg.status === 'granted'
+
+      if (isGranted || dismissed === 'true') {
+        setStatus({
+          location: isGranted ? 'granted' : 'denied',
+          backgroundLocation: isGranted ? 'granted' : 'unavailable',
+          notifications: 'granted',
+          camera: 'granted',
+          mediaLibrary: 'granted',
+          contacts: 'granted',
+          allCriticalGranted: true,
+          isChecking: false,
+        })
+        return
+      }
+
+      setStatus(prev => ({
+        ...prev,
+        location: fg.status === 'granted' ? 'granted' : 'pending',
+        isChecking: false,
+      }))
+    } catch {
+      setStatus(prev => ({ ...prev, isChecking: false }))
+    }
+  }, [])
+
+  const skipGate = useCallback(async () => {
+    await AsyncStorage.setItem('permissions_gate_dismissed', 'true')
+    setStatus(prev => ({ ...prev, allCriticalGranted: true, isChecking: false }))
+  }, [])
 
   const requestAll = useCallback(async () => {
     setStatus(prev => ({ ...prev, isChecking: true }))
 
-    // ── 1. Foreground Location (critical) ──────────────────────
-    const { status: fgStatus } = await Location.requestForegroundPermissionsAsync()
-    const locationGranted = fgStatus === 'granted'
-
-    // ── 2. Background Location ─────────────────────────────────
-    let bgStatus: PermissionStatus['backgroundLocation'] = 'unavailable'
-    if (locationGranted) {
-      const { status: bg } = await Location.requestBackgroundPermissionsAsync()
-      bgStatus = bg === 'granted' ? 'granted' : 'denied'
+    let locationGranted = false
+    try {
+      const { status: fgStatus } = await Location.requestForegroundPermissionsAsync()
+      locationGranted = fgStatus === 'granted'
+    } catch {
+      locationGranted = false
     }
 
-    // ── 3. Push Notifications ──────────────────────────────────
-    // Use PermissionsAndroid on Android 13+ (API 33+) — no native module needed.
-    // expo-notifications requires a native rebuild; PermissionsAndroid is built-in.
+    let bgStatus: PermissionStatus['backgroundLocation'] = 'unavailable'
+    if (locationGranted) {
+      try {
+        const { status: bg } = await Location.requestBackgroundPermissionsAsync()
+        bgStatus = bg === 'granted' ? 'granted' : 'denied'
+      } catch {
+        bgStatus = 'unavailable'
+      }
+    }
+
     let notifStatus: PermissionStatus['notifications'] = 'pending'
     try {
       if (Platform.OS === 'android') {
@@ -83,26 +125,27 @@ export function useStartupPermissions(): {
           )
           notifStatus = result === PermissionsAndroid.RESULTS.GRANTED ? 'granted' : 'denied'
         } else {
-          // Android < 13 — notifications always allowed, no runtime permission needed
           notifStatus = 'granted'
         }
       } else {
-        // iOS — handled after expo-notifications native rebuild is complete
         notifStatus = 'granted'
       }
     } catch {
       notifStatus = 'denied'
     }
 
-    // ── 4. Camera ──────────────────────────────────────────────
-    const { status: camStatus } = await ImagePicker.requestCameraPermissionsAsync()
-    const cameraGranted = camStatus === 'granted'
+    let cameraGranted = false
+    try {
+      const { status: camStatus } = await ImagePicker.requestCameraPermissionsAsync()
+      cameraGranted = camStatus === 'granted'
+    } catch {}
 
-    // ── 5. Media Library / Gallery ─────────────────────────────
-    const { status: mediaStatus } = await ImagePicker.requestMediaLibraryPermissionsAsync()
-    const mediaGranted = mediaStatus === 'granted'
+    let mediaGranted = false
+    try {
+      const { status: mediaStatus } = await ImagePicker.requestMediaLibraryPermissionsAsync()
+      mediaGranted = mediaStatus === 'granted'
+    } catch {}
 
-    // ── 6. Contacts (Android only — use PermissionsAndroid) ────
     let contactsGranted = false
     if (Platform.OS === 'android') {
       try {
@@ -122,11 +165,10 @@ export function useStartupPermissions(): {
         contactsGranted = false
       }
     } else {
-      // iOS – contacts not required for core driver features
       contactsGranted = true
     }
 
-    const allCritical = locationGranted
+    await AsyncStorage.setItem('permissions_gate_dismissed', 'true')
 
     setStatus({
       location: locationGranted ? 'granted' : 'denied',
@@ -135,24 +177,14 @@ export function useStartupPermissions(): {
       camera: cameraGranted ? 'granted' : 'denied',
       mediaLibrary: mediaGranted ? 'granted' : 'denied',
       contacts: contactsGranted ? 'granted' : 'denied',
-      allCriticalGranted: allCritical,
+      allCriticalGranted: true,
       isChecking: false,
     })
-
-    // Warn user if critical location was denied
-    if (!locationGranted) {
-      Alert.alert(
-        'Location Required',
-        'CabBooking needs location access to match you with passengers and track your trips. Please enable it in Settings.',
-        [{ text: 'OK' }]
-      )
-    }
   }, [])
 
-  // Auto-run on mount
   useEffect(() => {
-    requestAll()
-  }, [])
+    checkExisting()
+  }, [checkExisting])
 
-  return { status, requestAll }
+  return { status, requestAll, skipGate }
 }

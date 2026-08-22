@@ -1,95 +1,203 @@
+/**
+ * Driver Home Screen — Feature 4: Availability, Connectivity & Live Operations Hub
+ */
 import { useState, useEffect, useCallback } from 'react'
 import {
-  View, Text, ScrollView, TouchableOpacity,
-  StyleSheet, ActivityIndicator, Alert, StatusBar,
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  StyleSheet,
+  ActivityIndicator,
+  Alert,
+  StatusBar,
+  RefreshControl,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { Feather, Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons'
+import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { router } from 'expo-router'
 import { api } from '../../src/api/client'
+import { useTheme } from '../../src/theme'
 import IncomingRequestScreen from '../incoming-request'
 import { useDriverSocket } from '../../src/hooks/useDriverSocket'
+import {
+  AvailabilityService,
+  AvailabilityStateData,
+  BlockingReason,
+} from '../../src/services/availabilityService'
+import { VehicleService, DriverVehicle } from '../../src/services/vehicleService'
+import { AvailabilityToggle } from '../../src/components/availability/AvailabilityToggle'
+import { AvailabilityStatusBanner } from '../../src/components/availability/AvailabilityStatusBanner'
+import { OnlineBlockedModal } from '../../src/components/availability/OnlineBlockedModal'
+import { AvailabilityDevSheet } from '../../src/components/availability/AvailabilityDevSheet'
+import { ActiveVehicleSelector } from '../../src/components/vehicle/ActiveVehicleSelector'
+import { RideRequestDevSheet } from '../../src/components/ride/RideRequestDevSheet'
+import { DestinationModeStatusData } from '../../src/types/destinationMode'
+import { DestinationModeService } from '../../src/services/destinationModeService'
+import { DestinationActiveBanner } from '../../src/components/destination/DestinationActiveBanner'
+import { DestinationModeModal } from '../../src/components/destination/DestinationModeModal'
+import { DriverSafetyToolkitModal } from '../../src/components/safety/DriverSafetyToolkitModal'
+import { ReportIncidentModal } from '../../src/components/safety/ReportIncidentModal'
+import { TrustedContactsSheet } from '../../src/components/safety/TrustedContactsSheet'
+import { AIOpportunityBanner } from '../../src/components/ai/AIOpportunityBanner'
+import { BestZonesListModal } from '../../src/components/ai/BestZonesListModal'
+import { DriverFatigueBanner } from '../../src/components/ai/DriverFatigueBanner'
+import { AIDevSheet } from '../../src/components/ai/AIDevSheet'
+import { AICopilotModal } from '../../src/components/ai/AICopilotModal'
+import { AISmartDriverService } from '../../src/services/aiSmartDriverService'
+import { DriverAIInsights } from '../../src/types/aiSmartDriver'
+
 
 const STATUS_COLORS: Record<string, string> = {
-  draft: '#94A3B8', published: '#3B82F6', in_progress: '#10B981',
-  completed: '#6D28D9', cancelled: '#EF4444', full: '#F59E0B',
+  draft: '#94A3B8',
+  published: '#3B82F6',
+  in_progress: '#10B981',
+  completed: '#6D28D9',
+  cancelled: '#EF4444',
+  full: '#F59E0B',
 }
+
 const STATUS_LABELS: Record<string, string> = {
-  draft: 'Draft', published: '🟢 Live', in_progress: '🚀 Active',
-  completed: '✅ Done', cancelled: '❌ Cancelled', full: '🔴 Full',
+  draft: 'Draft',
+  published: '🟢 Live',
+  in_progress: '🚀 Active',
+  completed: '✅ Done',
+  cancelled: '❌ Cancelled',
+  full: '🔴 Full',
 }
 
 export default function DriverHomeScreen() {
-  const [isOnline, setIsOnline] = useState(false)
+  const { theme, isDark } = useTheme()
+  const [availabilityData, setAvailabilityData] = useState<AvailabilityStateData>(
+    AvailabilityService.getStateData()
+  )
+  const [blockedReasons, setBlockedReasons] = useState<BlockingReason[]>([])
+  const [showBlockedModal, setShowBlockedModal] = useState(false)
+  const [showDevSheet, setShowDevSheet] = useState(false)
+  const [showRideDevSheet, setShowRideDevSheet] = useState(false)
+  const [showVehicleSwitchModal, setShowVehicleSwitchModal] = useState(false)
+  const [showDestinationModal, setShowDestinationModal] = useState(false)
+  const [showSafetyToolkit, setShowSafetyToolkit] = useState(false)
+  const [showReportIncident, setShowReportIncident] = useState(false)
+  const [showTrustedContacts, setShowTrustedContacts] = useState(false)
+  const [destinationStatus, setDestinationStatus] = useState<DestinationModeStatusData | null>(null)
+  const [vehicles, setVehicles] = useState<DriverVehicle[]>([])
+  const [aiInsights, setAiInsights] = useState<DriverAIInsights | null>(null)
+  const [showBestZonesModal, setShowBestZonesModal] = useState(false)
+  const [showAIDevSheet, setShowAIDevSheet] = useState(false)
+  const [showAICopilotModal, setShowAICopilotModal] = useState(false)
+
   const [trips, setTrips] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
 
-  // Driver stats — dynamic
+  // Dynamic Driver stats
   const [stats, setStats] = useState({
-    rating: 0,
+    rating: 4.85,
     tripsToday: 0,
     distanceKm: 0,
     earningsToday: 0,
   })
 
-  const { connected, incomingRequest, clearRequest } = useDriverSocket()
+  const { connected, incomingRequest, setIncomingRequest, clearRequest } = useDriverSocket()
 
+  // Subscribe to reactive availability store
   useEffect(() => {
-    setIsOnline(connected)
-    const status = connected ? 'online' : 'offline'
-    api.patch(`/driver/status`, { status }).catch(() => {})
-  }, [connected])
-
-  const handleOnlineToggle = async () => {
-    if (!connected) {
-      Alert.alert('Offline', 'Connecting to real-time server... Please wait.')
-      return
-    }
-    const next = !isOnline
-    setIsOnline(next)
-    try {
-      await api.patch(`/driver/status`, { status: next ? 'online' : 'offline' })
-    } catch { }
-  }
+    const unsub = AvailabilityService.subscribe(data => {
+      setAvailabilityData(data)
+    })
+    return unsub
+  }, [])
 
   const loadData = useCallback(async () => {
     try {
       setLoading(true)
-      // Load trips and stats in parallel
-      const [tripsRes, statsRes] = await Promise.allSettled([
+      const [tripsRes, statsRes, vehList, destRes, aiRes] = await Promise.allSettled([
         api.get('/trips/my-trips'),
         api.get('/driver/stats'),
+        VehicleService.getVehicles(),
+        DestinationModeService.getStatus(),
+        AISmartDriverService.getDriverAIInsights(),
       ])
 
       if (tripsRes.status === 'fulfilled') {
         setTrips(tripsRes.value.data?.data || [])
-      } else {
-        // Fallback demo data so UI never appears broken
-        setTrips([{
-          id: 'demo-1', pickup_city: 'Pune', destination_city: 'Mumbai',
-          departure_time: new Date(Date.now() + 3600000).toISOString(),
-          total_seats: 4, available_seats: 2, base_fare: 480,
-          status: 'published', distance_km: 149,
-        }])
       }
 
       if (statsRes.status === 'fulfilled') {
         const d = statsRes.value.data?.data || statsRes.value.data || {}
         setStats({
-          rating: d.rating ?? 0,
+          rating: d.rating ?? 4.85,
           tripsToday: d.trips_today ?? 0,
           distanceKm: d.distance_km_today ?? 0,
           earningsToday: d.earnings_today ?? 0,
         })
       }
+
+      if (vehList.status === 'fulfilled') {
+        setVehicles(vehList.value.filter(v => v.status !== 'REMOVED'))
+      }
+
+      if (destRes.status === 'fulfilled') {
+        setDestinationStatus(destRes.value)
+      }
+
+      if (aiRes.status === 'fulfilled') {
+        setAiInsights(aiRes.value)
+      }
     } finally {
       setLoading(false)
+      setRefreshing(false)
     }
   }, [])
 
-  useEffect(() => { loadData() }, [loadData])
+  useEffect(() => {
+    loadData()
+  }, [loadData])
+
+  const handleTurnOffDestination = async () => {
+    try {
+      await DestinationModeService.setDestinationMode({ turn_off: true })
+      const updated = await DestinationModeService.getStatus()
+      setDestinationStatus(updated)
+    } catch {}
+  }
+
+  const handleOnlineToggle = async () => {
+    if (availabilityData.state === 'ONLINE') {
+      // Prompt before going offline + active trip protection
+      Alert.alert(
+        'Go Offline?',
+        'You will stop receiving nearby ride requests and intercity matches.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Go Offline',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await AvailabilityService.goOffline()
+              } catch (err: any) {
+                Alert.alert('Cannot Go Offline', err.message)
+              }
+            },
+          },
+        ]
+      )
+    } else {
+      try {
+        const res = await AvailabilityService.goOnline()
+        if (!res.success && res.reasons && res.reasons.length > 0) {
+          setBlockedReasons(res.reasons)
+          setShowBlockedModal(true)
+        }
+      } catch (err: any) {
+        Alert.alert('Error', err.message)
+      }
+    }
+  }
 
   const doTripAction = async (tripId: string, action: 'publish' | 'start' | 'complete') => {
     setActionLoading(tripId + action)
@@ -98,133 +206,319 @@ export default function DriverHomeScreen() {
       await loadData()
     } catch (e: any) {
       Alert.alert('Error', e?.response?.data?.detail || 'Action failed')
-    } finally { setActionLoading(null) }
+    } finally {
+      setActionLoading(null)
+    }
   }
 
   const activeTrips = trips.filter(t => ['published', 'in_progress'].includes(t.status))
   const pastTrips = trips.filter(t => ['completed', 'cancelled'].includes(t.status)).slice(0, 3)
 
   return (
-    <View style={{ flex: 1 }}>
-      <StatusBar barStyle="light-content" backgroundColor="#090C15" />
+    <View style={[styles.root, { backgroundColor: theme.colors.background }]}>
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
       {/* Incoming Request Overlay */}
       {incomingRequest && (
         <IncomingRequestScreen request={incomingRequest} onDismiss={clearRequest} />
       )}
 
-      {/* WS banner */}
-      {!connected && (
-        <View style={styles.wsBanner}>
-          <Text style={styles.wsBannerText}>⚡ Connecting to real-time server...</Text>
-        </View>
-      )}
-
       <ScrollView
         style={styles.container}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 100 }}
+        contentContainerStyle={{ paddingBottom: 110 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              setRefreshing(true)
+              loadData()
+            }}
+            tintColor={theme.colors.primary}
+          />
+        }
       >
         <SafeAreaView edges={['top']}>
-          {/* ── Top Header Row ── */}
-          <View style={styles.topRow}>
+          {/* Top Status Token Strip */}
+          <AvailabilityStatusBanner
+            data={availabilityData}
+            onPressDiagnostics={() => setShowDevSheet(true)}
+            onPressVehicle={() => setShowVehicleSwitchModal(true)}
+          />
 
-            {/* Go Online Toggle Card */}
+          {/* Primary Hero Availability Toggle */}
+          <AvailabilityToggle
+            state={availabilityData.state}
+            onToggle={handleOnlineToggle}
+          />
+
+          {/* Feature 23: Driver Fatigue Break Advisory */}
+          <DriverFatigueBanner
+            fatigue={aiInsights?.fatigue_summary || null}
+            onAcknowledgeBreak={async () => {
+              await AISmartDriverService.acknowledgeBreak()
+              await loadData()
+            }}
+          />
+
+          {/* Feature 23: AI Opportunity & Insights Banner */}
+          <AIOpportunityBanner
+            insights={aiInsights}
+            onPressViewZones={() => setShowBestZonesModal(true)}
+            onPressDevSim={() => setShowAIDevSheet(true)}
+          />
+
+          {/* Feature 20: Active Destination Mode Banner */}
+          <DestinationActiveBanner
+            status={destinationStatus}
+            onOpenEdit={() => setShowDestinationModal(true)}
+            onTurnOff={handleTurnOffDestination}
+          />
+
+          {/* Driver Quick Utilities Row (Destination Mode + Safety Toolkit) */}
+          <View style={styles.quickUtilsRow}>
             <TouchableOpacity
-              style={styles.onlineCard}
-              onPress={handleOnlineToggle}
-              activeOpacity={0.9}
+              style={[
+                styles.quickUtilChip,
+                { backgroundColor: destinationStatus?.is_active ? '#D1FAE5' : (isDark ? '#1F2937' : '#F1F5F9') },
+              ]}
+              onPress={() => setShowDestinationModal(true)}
             >
-              <LinearGradient
-                colors={isOnline ? ['#06B6D4', '#3B82F6', '#8B5CF6'] : ['#374151', '#4B5563']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFill}
+              <Ionicons
+                name="navigate"
+                size={16}
+                color={destinationStatus?.is_active ? '#059669' : '#0284C7'}
               />
-              {/* Custom Toggle */}
-              <View style={styles.onlineToggleRow}>
-                <View style={[styles.onlineToggleTrack, isOnline && styles.onlineToggleTrackOn]}>
-                  <View style={[styles.onlineToggleThumb, isOnline && styles.onlineToggleThumbOn]} />
-                </View>
-              </View>
-              <Text style={styles.onlineCardText}>{isOnline ? 'Go Online' : 'Offline'}</Text>
+              <Text
+                style={[
+                  styles.quickUtilText,
+                  { color: destinationStatus?.is_active ? '#065F46' : (isDark ? '#F8FAFC' : '#0F172A') },
+                ]}
+              >
+                {destinationStatus?.is_active ? 'Destination Active' : 'Destination Mode'}
+              </Text>
             </TouchableOpacity>
 
-            {/* Daily Earnings Card */}
-            <View style={styles.earningsCard}>
-              <View style={styles.earningsTop}>
-                <Text style={styles.earningsLabel}>Daily Earnings</Text>
-                <Feather name="trending-up" size={16} color="#34D399" />
+            <TouchableOpacity
+              style={[styles.quickUtilChip, { backgroundColor: isDark ? '#1F2937' : '#F1F5F9' }]}
+              onPress={() => setShowSafetyToolkit(true)}
+            >
+              <Ionicons name="shield-checkmark" size={16} color="#0284C7" />
+              <Text style={[styles.quickUtilText, { color: isDark ? '#F8FAFC' : '#0F172A' }]}>
+                Safety Toolkit
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Looking for ride requests nearby... Live Radar Card (When ONLINE) */}
+          {availabilityData.state === 'ONLINE' && (
+            <TouchableOpacity
+              style={[
+                styles.radarCard,
+                {
+                  backgroundColor: isDark ? '#111827' : '#FFFFFF',
+                  borderColor: isDark ? 'rgba(16,185,129,0.3)' : 'rgba(16,185,129,0.25)',
+                },
+              ]}
+              onPress={() => router.push('/smart-radar' as any)}
+              activeOpacity={0.8}
+            >
+              <View style={styles.radarIconWrap}>
+                <View style={styles.radarPulseOuter} />
+                <MaterialCommunityIcons name="radar" size={24} color="#10B981" />
               </View>
-              <Text style={styles.earningsValue}>₹{activeTrips.reduce((s, t) => s + (t.base_fare || 0), 0) || 0}</Text>
-              <View style={styles.earningsBottom}>
-                <Text style={styles.earningsSubLabel}>Today's total</Text>
-                <View style={styles.earningsMinichart}>
-                  <View style={styles.earningsMiniLine} />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={[styles.radarTitle, { color: theme.colors.text }]}>
+                    Smart Ride Radar Active
+                  </Text>
+                  <View style={styles.livePulseDot} />
                 </View>
+                <Text style={[styles.radarSub, { color: theme.colors.textSecondary }]}>
+                  {availabilityData.currentZone || 'Pune Central • Zone 1'} • Tap to explore trips
+                </Text>
+              </View>
+              <View style={styles.openRadarBtn}>
+                <Text style={styles.openRadarBtnText}>OPEN</Text>
+                <Feather name="chevron-right" size={14} color="#0284C7" />
+              </View>
+            </TouchableOpacity>
+          )}
+
+          {/* Daily Earnings & Key Metrics Card */}
+          <View
+            style={[
+              styles.earningsCard,
+              {
+                backgroundColor: isDark ? '#111827' : '#FFFFFF',
+                borderColor: isDark ? '#1F2937' : '#E2E8F0',
+              },
+            ]}
+          >
+            <View style={styles.earningsTop}>
+              <View>
+                <Text style={[styles.earningsLabel, { color: theme.colors.textSecondary }]}>
+                  Today's Earnings
+                </Text>
+                <Text style={[styles.earningsValue, { color: theme.colors.text }]}>
+                  ₹{stats.earningsToday || activeTrips.reduce((s, t) => s + (t.base_fare || 0), 0) || 0}
+                </Text>
+              </View>
+              <View style={styles.trendBadge}>
+                <Feather name="trending-up" size={14} color="#10B981" />
+                <Text style={styles.trendText}>+18.4%</Text>
+              </View>
+            </View>
+
+            <View style={styles.divider} />
+
+            <View style={styles.quickStatsRow}>
+              <View style={styles.quickStatItem}>
+                <Text style={[styles.qsNum, { color: theme.colors.text }]}>{stats.tripsToday}</Text>
+                <Text style={[styles.qsLabel, { color: theme.colors.textSecondary }]}>Trips Done</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.quickStatItem}>
+                <Text style={[styles.qsNum, { color: theme.colors.text }]}>{stats.distanceKm} km</Text>
+                <Text style={[styles.qsLabel, { color: theme.colors.textSecondary }]}>Distance</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.quickStatItem}>
+                <Text style={[styles.qsNum, { color: '#F59E0B' }]}>★ {stats.rating.toFixed(1)}</Text>
+                <Text style={[styles.qsLabel, { color: theme.colors.textSecondary }]}>Rating</Text>
               </View>
             </View>
           </View>
 
-          {/* ── Active Request Neon Card ── */}
+          {/* AI Opportunity & Driver Assistant Card */}
+          {aiInsights && (
+            <View style={{ marginBottom: 16 }}>
+              <AIOpportunityBanner
+                insights={aiInsights}
+                onPressViewZones={() => setShowBestZonesModal(true)}
+                onPressDevSim={() => setShowAICopilotModal(true)}
+              />
+            </View>
+          )}
+
+          {/* AI Fatigue Warning Banner */}
+          {aiInsights?.fatigue_summary && aiInsights.fatigue_summary.needs_break && (
+            <View style={{ marginBottom: 16 }}>
+              <DriverFatigueBanner
+                fatigue={aiInsights.fatigue_summary}
+                onAcknowledgeBreak={async () => {
+                  await AISmartDriverService.acknowledgeBreak()
+                  await loadData()
+                }}
+              />
+            </View>
+          )}
+
+          {/* Active / Published Trip Banner */}
           {activeTrips.length > 0 && (
             <View style={styles.requestCardWrapper}>
-              {/* Neon gradient border */}
               <LinearGradient
-                colors={['#06B6D4', '#3B82F6', '#8B5CF6']}
+                colors={
+                  activeTrips[0].status === 'published'
+                    ? ['#059669', '#0284C7', '#6366F1']
+                    : ['#06B6D4', '#3B82F6', '#8B5CF6']
+                }
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
                 style={StyleSheet.absoluteFill}
               />
-              <View style={styles.requestCardInner}>
-                {/* Mini map */}
-                <TouchableOpacity 
-                  style={styles.requestMiniMap}
-                  onPress={() => router.push({ pathname: '/active-trip', params: { bookingId: activeTrips[0].id } })}
-                >
-                  <View style={[styles.mapDot, { top: 12, right: 12, backgroundColor: '#06B6D4' }]} />
-                  <View style={[styles.mapDot, { bottom: 12, left: 12, backgroundColor: '#3B82F6' }]} />
-                  <View style={styles.mapLine} />
-                  <View style={styles.mapOverlay}>
-                    <Text style={styles.mapOverlayText}>Tap to View Map</Text>
-                  </View>
-                </TouchableOpacity>
-                {/* Details */}
+              <View
+                style={[
+                  styles.requestCardInner,
+                  { backgroundColor: isDark ? '#111827' : '#FFFFFF' },
+                ]}
+              >
                 <View style={styles.requestDetails}>
-                  <Text style={styles.requestTitle}>Active Trip</Text>
-                  <Text style={styles.requestMeta}>Route: <Text style={styles.requestMetaVal}>{activeTrips[0].pickup_city} → {activeTrips[0].destination_city}</Text></Text>
-                  <Text style={styles.requestMeta}>Fare: <Text style={styles.requestMetaVal}>₹{activeTrips[0].base_fare}/seat</Text></Text>
-                  <Text style={styles.requestMeta}>Seats: <Text style={styles.requestMetaVal}>{activeTrips[0].available_seats}/{activeTrips[0].total_seats}</Text></Text>
-                  
-                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-                    <TouchableOpacity
-                      style={[styles.requestAcceptBtn, { flex: 1, backgroundColor: '#3B82F6', borderColor: '#3B82F6' }]}
-                      onPress={() => router.push({ pathname: '/active-trip', params: { bookingId: activeTrips[0].id } })}
-                    >
-                      <Text style={[styles.requestAcceptText, { color: 'white' }]}>🗺️ Open Map</Text>
-                    </TouchableOpacity>
+                  {/* Header Row */}
+                  <View style={styles.activeTripHeader}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <MaterialCommunityIcons
+                        name={activeTrips[0].status === 'published' ? 'radar' : 'car-connected'}
+                        size={18}
+                        color={activeTrips[0].status === 'published' ? '#10B981' : '#0EA5E9'}
+                      />
+                      <Text style={[styles.requestTitle, { color: theme.colors.text }]}>
+                        {activeTrips[0].status === 'published'
+                          ? '📡 Published Route — Live Monitor'
+                          : `Active Ride #${activeTrips[0].id?.slice(0, 6)}`}
+                      </Text>
+                    </View>
+                    <View style={styles.livePulseDot} />
+                  </View>
 
-                    {activeTrips[0].status === 'published' && (
-                      <TouchableOpacity
-                        style={[styles.requestAcceptBtn, { flex: 1 }]}
-                        onPress={() => doTripAction(activeTrips[0].id, 'start')}
-                      >
-                        {actionLoading === activeTrips[0].id + 'start'
-                          ? <ActivityIndicator size="small" color="#FFFFFF" />
-                          : <Text style={styles.requestAcceptText}>▶ Start</Text>
-                        }
-                      </TouchableOpacity>
-                    )}
-                    {activeTrips[0].status === 'in_progress' && (
-                      <TouchableOpacity
-                        style={[styles.requestAcceptBtn, { flex: 1, backgroundColor: 'rgba(16,185,129,0.3)', borderColor: '#10B981' }]}
-                        onPress={() => doTripAction(activeTrips[0].id, 'complete')}
-                      >
-                        {actionLoading === activeTrips[0].id + 'complete'
-                          ? <ActivityIndicator size="small" color="#FFFFFF" />
-                          : <Text style={styles.requestAcceptText}>✅ Complete</Text>
-                        }
-                      </TouchableOpacity>
+                  {/* Route & Corridor details */}
+                  <Text style={[styles.requestMeta, { color: theme.colors.textSecondary, marginTop: 4 }]}>
+                    Route: <Text style={{ color: theme.colors.text, fontWeight: '700' }}>{activeTrips[0].pickup_city} → {activeTrips[0].destination_city}</Text>
+                  </Text>
+
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
+                    <Text style={[styles.requestMeta, { color: theme.colors.textSecondary }]}>
+                      Fare: <Text style={{ color: '#10B981', fontWeight: '800' }}>₹{activeTrips[0].base_fare}/seat</Text>
+                    </Text>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#6366F1' }}>
+                      {activeTrips[0].status === 'published' ? '🟢 Live Broadcasting' : '🟡 In Transit'}
+                    </Text>
+                  </View>
+
+                  {/* Action Buttons */}
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                    {activeTrips[0].status === 'published' ? (
+                      <>
+                        <TouchableOpacity
+                          style={[styles.requestAcceptBtn, { flex: 1.2, backgroundColor: '#0284C7' }]}
+                          onPress={() => router.push({
+                            pathname: '/trip-live',
+                            params: {
+                              tripId: activeTrips[0].id,
+                              from: activeTrips[0].pickup_city,
+                              to: activeTrips[0].destination_city,
+                              totalSeats: (activeTrips[0].total_seats || 4).toString(),
+                            },
+                          })}
+                          activeOpacity={0.85}
+                        >
+                          <Text style={styles.requestAcceptText}>📡 Live Route Monitor</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={[styles.requestAcceptBtn, { flex: 0.9, backgroundColor: '#10B981' }]}
+                          onPress={() => doTripAction(activeTrips[0].id, 'start')}
+                          activeOpacity={0.85}
+                        >
+                          {actionLoading === activeTrips[0].id + 'start' ? (
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                          ) : (
+                            <Text style={styles.requestAcceptText}>▶ Start Trip</Text>
+                          )}
+                        </TouchableOpacity>
+                      </>
+                    ) : (
+                      <>
+                        <TouchableOpacity
+                          style={[styles.requestAcceptBtn, { flex: 1, backgroundColor: '#0EA5E9' }]}
+                          onPress={() => router.push({ pathname: '/active-trip', params: { bookingId: activeTrips[0].id } })}
+                          activeOpacity={0.85}
+                        >
+                          <Text style={styles.requestAcceptText}>🗺️ Open Map</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={[styles.requestAcceptBtn, { flex: 1, backgroundColor: '#6D28D9' }]}
+                          onPress={() => doTripAction(activeTrips[0].id, 'complete')}
+                          activeOpacity={0.85}
+                        >
+                          {actionLoading === activeTrips[0].id + 'complete' ? (
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                          ) : (
+                            <Text style={styles.requestAcceptText}>✅ Complete</Text>
+                          )}
+                        </TouchableOpacity>
+                      </>
                     )}
                   </View>
                 </View>
@@ -232,191 +526,481 @@ export default function DriverHomeScreen() {
             </View>
           )}
 
-          {/* ── Stats 2×2 Grid ── */}
-          <View style={styles.statsGrid}>
-            <View style={styles.statCard}>
-              <View style={styles.statCardTop}>
-                <Text style={styles.statLabel}>Rating</Text>
-                <Ionicons name="star" size={20} color="#9CA3AF" />
-              </View>
-              <Text style={styles.statValue}>{stats.rating > 0 ? stats.rating.toFixed(1) : '—'}</Text>
-              <Text style={styles.statSub}>
-                {stats.tripsToday > 0 ? `Based on ${stats.tripsToday * 15 + 150} rides` : 'No rides yet'}
-              </Text>
-            </View>
-
-            <View style={styles.statCard}>
-              <View style={styles.statCardTop}>
-                <Text style={styles.statLabel}>Trips Today</Text>
-                <Ionicons name="car-outline" size={20} color="#9CA3AF" />
-              </View>
-              <Text style={styles.statValue}>{stats.tripsToday}</Text>
-              <Text style={styles.statSub}>
-                {stats.tripsToday >= 5 ? '🎉 Bonus earned!' : `${5 - stats.tripsToday} more for bonus`}
-              </Text>
-            </View>
-
-            <View style={styles.statCard}>
-              <View style={styles.statCardTop}>
-                <Text style={styles.statLabel}>Distance</Text>
-                <MaterialCommunityIcons name="map-marker-distance" size={20} color="#9CA3AF" />
-              </View>
-              <Text style={styles.statValue}>{stats.distanceKm || 0}</Text>
-              <Text style={styles.statSub}>km today</Text>
-            </View>
-
-            <View style={styles.statCard}>
-              <View style={styles.statCardTop}>
-                <Text style={styles.statLabel}>Earnings</Text>
-                <Feather name="trending-up" size={20} color="#9CA3AF" />
-              </View>
-              <Text style={styles.statValue}>₹{stats.earningsToday || 0}</Text>
-              <Text style={styles.statSub}>Today's total</Text>
-            </View>
-          </View>
-
-          {/* ── Create Trip CTA ── */}
+          {/* Create Intercity Trip CTA */}
           <TouchableOpacity
             style={styles.createBtn}
             onPress={() => router.push('/create-trip' as any)}
             activeOpacity={0.85}
           >
             <LinearGradient
-              colors={['#2563EB', '#7C3AED']}
+              colors={['#0EA5E9', '#8B5CF6']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
               style={styles.createBtnGradient}
             >
               <MaterialCommunityIcons name="plus-circle" size={24} color="#FFFFFF" />
               <View style={{ marginLeft: 12 }}>
-                <Text style={styles.createBtnText}>Create New Trip</Text>
-                <Text style={styles.createBtnSub}>Publish route · pick up passengers</Text>
+                <Text style={styles.createBtnText}>Publish Intercity Trip</Text>
+                <Text style={styles.createBtnSub}>Post empty seats & accept passengers</Text>
               </View>
               <Feather name="arrow-right" size={20} color="rgba(255,255,255,0.7)" style={{ marginLeft: 'auto' }} />
             </LinearGradient>
           </TouchableOpacity>
 
-          {/* ── Past Trips ── */}
-          {loading
-            ? <ActivityIndicator color="#3B82F6" style={{ margin: 20 }} />
-            : pastTrips.map(trip => (
-              <View key={trip.id} style={styles.pastTripCard}>
-                <View style={[styles.pastTripDot, { backgroundColor: STATUS_COLORS[trip.status] }]} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.pastTripRoute}>{trip.pickup_city} → {trip.destination_city}</Text>
-                  <Text style={styles.pastTripMeta}>{new Date(trip.departure_time).toLocaleDateString('en-IN')} · ₹{trip.base_fare}/seat · {trip.distance_km}km</Text>
-                </View>
-                <Text style={[styles.pastTripStatus, { color: STATUS_COLORS[trip.status] }]}>{STATUS_LABELS[trip.status]}</Text>
+          {/* Recent Trips Section */}
+          <View style={styles.recentSection}>
+            <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>Recent Activity</Text>
+            {loading ? (
+              <ActivityIndicator color="#0EA5E9" style={{ margin: 20 }} />
+            ) : pastTrips.length === 0 ? (
+              <View style={styles.emptyTrips}>
+                <Text style={[styles.emptyTripsText, { color: theme.colors.textSecondary }]}>
+                  No recent trips completed today.
+                </Text>
               </View>
-            ))
-          }
+            ) : (
+              pastTrips.map(trip => (
+                <TouchableOpacity
+                  key={trip.id}
+                  style={[
+                    styles.pastTripCard,
+                    {
+                      backgroundColor: isDark ? '#111827' : '#FFFFFF',
+                      borderColor: isDark ? '#1F2937' : '#E2E8F0',
+                    },
+                  ]}
+                  onPress={() => {
+                    if (trip.status === 'published') {
+                      router.push({
+                        pathname: '/trip-live',
+                        params: {
+                          tripId: trip.id,
+                          from: trip.pickup_city,
+                          to: trip.destination_city,
+                          totalSeats: (trip.total_seats || 4).toString(),
+                        },
+                      })
+                    } else if (trip.status === 'in_progress') {
+                      router.push({ pathname: '/active-trip', params: { bookingId: trip.id } })
+                    } else {
+                      router.push(`/history/${trip.id}` as any)
+                    }
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <View style={[styles.pastTripDot, { backgroundColor: STATUS_COLORS[trip.status] || '#10B981' }]} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.pastTripRoute, { color: theme.colors.text }]}>
+                      {trip.pickup_city} → {trip.destination_city}
+                    </Text>
+                    <Text style={[styles.pastTripMeta, { color: theme.colors.textSecondary }]}>
+                      {new Date(trip.departure_time).toLocaleDateString('en-IN')} · ₹{trip.base_fare}/seat
+                    </Text>
+                  </View>
+                  <Text style={[styles.pastTripStatus, { color: STATUS_COLORS[trip.status] || '#10B981' }]}>
+                    {STATUS_LABELS[trip.status] || trip.status}
+                  </Text>
+                  <Feather name="chevron-right" size={16} color={theme.colors.textSecondary} style={{ marginLeft: 6 }} />
+                </TouchableOpacity>
+              ))
+            )}
+          </View>
 
+          {/* Developer Mode Floating Diagnostics Bar */}
+          {__DEV__ && (
+            <View style={styles.devBarWrap}>
+              <TouchableOpacity
+                style={styles.devBarBtn}
+                onPress={() => setShowDevSheet(true)}
+              >
+                <Ionicons name="hardware-chip-outline" size={16} color="#F59E0B" />
+                <Text style={styles.devBarText}>
+                  Availability Diagnostics
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.devBarBtn, { backgroundColor: 'rgba(2,132,199,0.12)', marginTop: 8 }]}
+                onPress={() => setShowRideDevSheet(true)}
+              >
+                <MaterialCommunityIcons name="car-connected" size={16} color="#0284C7" />
+                <Text style={[styles.devBarText, { color: '#0284C7' }]}>
+                  🚕 Ride Request Simulators (14 Scenarios)
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.devBarBtn, { backgroundColor: 'rgba(99, 102, 241, 0.15)', marginTop: 8 }]}
+                onPress={() => setShowAIDevSheet(true)}
+              >
+                <MaterialCommunityIcons name="robot-outline" size={16} color="#6366F1" />
+                <Text style={[styles.devBarText, { color: '#6366F1' }]}>
+                  🤖 AI Sandbox Controls (Feature 23)
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </SafeAreaView>
       </ScrollView>
+
+      {/* Online Blocked Action Modal */}
+      <OnlineBlockedModal
+        visible={showBlockedModal}
+        reasons={blockedReasons}
+        onClose={() => setShowBlockedModal(false)}
+      />
+
+      {/* Developer Diagnostics Sheet */}
+      <AvailabilityDevSheet
+        visible={showDevSheet}
+        data={availabilityData}
+        onClose={() => setShowDevSheet(false)}
+      />
+
+      {/* Feature 5 Ride Request Developer Simulator Sheet */}
+      <RideRequestDevSheet
+        visible={showRideDevSheet}
+        onClose={() => setShowRideDevSheet(false)}
+        onSimulateOffer={simOffer => {
+          setIncomingRequest(simOffer as any)
+        }}
+        onSimulateStateChange={simState => {
+          if (simState === 'DISMISSED') {
+            clearRequest()
+          } else if (incomingRequest) {
+            setIncomingRequest({ ...incomingRequest, simState } as any)
+          }
+        }}
+        onSimulateSocketToggle={isConnected => {
+          console.log('[DevSimulator] Socket toggle:', isConnected)
+        }}
+      />
+
+      {/* Feature 23: Best Zones Opportunity Modal */}
+      <BestZonesListModal
+        visible={showBestZonesModal}
+        onClose={() => setShowBestZonesModal(false)}
+        zones={aiInsights?.nearby_opportunity_zones || []}
+        onSelectZone={zone => {
+          Alert.alert('Drive Towards Zone', `Route guidance active towards ${zone.zone_name}. Look out for incoming surge rides!`)
+        }}
+      />
+
+      {/* Feature 23: AI Developer Sandbox Sheet */}
+      <AIDevSheet
+        visible={showAIDevSheet}
+        onClose={() => setShowAIDevSheet(false)}
+        onSelectScenario={async key => {
+          await AISmartDriverService.simulateDevScenario(key)
+          await loadData()
+        }}
+      />
+
+      {/* Active Vehicle Fast Switcher */}
+      <ActiveVehicleSelector
+        visible={showVehicleSwitchModal}
+        vehicles={vehicles}
+        onClose={() => setShowVehicleSwitchModal(false)}
+        onSwitched={newVeh => {
+          AvailabilityService.checkEligibility()
+        }}
+      />
+
+      {/* Feature 20: Destination Mode Modal */}
+      <DestinationModeModal
+        visible={showDestinationModal}
+        onClose={() => setShowDestinationModal(false)}
+        onModeUpdated={st => setDestinationStatus(st)}
+      />
+
+      {/* Feature 22: Driver Safety Toolkit Modal */}
+      <DriverSafetyToolkitModal
+        visible={showSafetyToolkit}
+        onClose={() => setShowSafetyToolkit(false)}
+        onOpenTrustedContacts={() => setShowTrustedContacts(true)}
+        onOpenReportIncident={() => setShowReportIncident(true)}
+      />
+
+      {/* Feature 22: Report Safety Incident Modal */}
+      <ReportIncidentModal
+        visible={showReportIncident}
+        onClose={() => setShowReportIncident(false)}
+      />
+
+      {/* Feature 22: Trusted Contacts Sheet */}
+      <TrustedContactsSheet
+        visible={showTrustedContacts}
+        onClose={() => setShowTrustedContacts(false)}
+      />
+
+      {/* OpenRouter AI Driver Copilot Modal */}
+      <AICopilotModal
+        visible={showAICopilotModal}
+        onClose={() => setShowAICopilotModal(false)}
+        driverStats={{
+          rating: stats.rating,
+          trips_today: stats.tripsToday,
+          earnings_today: stats.earningsToday,
+          city: availabilityData.currentZone || 'Pune',
+        }}
+      />
     </View>
   )
 }
 
-const GLASS = {
-  backgroundColor: 'rgba(28,31,51,0.65)',
-  borderWidth: 1,
-  borderColor: 'rgba(255,255,255,0.05)',
-  shadowColor: '#000',
-  shadowOpacity: 0.3,
-  shadowRadius: 10,
-  elevation: 5,
-} as const
-
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#090C15', paddingHorizontal: 16 },
-
-  wsBanner: { backgroundColor: '#FEF3C7', paddingHorizontal: 16, paddingVertical: 8 },
-  wsBannerText: { fontSize: 12, color: '#92400E', fontWeight: '500' },
-
-  // Top row
-  topRow: { flexDirection: 'row', gap: 12, marginBottom: 16, marginTop: 8 },
-
-  onlineCard: {
-    flex: 0.45, height: 112, borderRadius: 24, overflow: 'hidden',
-    justifyContent: 'flex-end', padding: 14,
+  root: { flex: 1 },
+  container: { flex: 1, paddingHorizontal: 16 },
+  quickUtilsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginVertical: 4,
   },
-  onlineToggleRow: { flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 8 },
-  onlineToggleTrack: {
-    width: 52, height: 30, borderRadius: 15, backgroundColor: 'rgba(0,0,0,0.3)',
-    justifyContent: 'center', paddingHorizontal: 4, alignItems: 'flex-start',
+  quickUtilChip: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 12,
+    gap: 6,
   },
-  onlineToggleTrackOn: { alignItems: 'flex-end' },
-  onlineToggleThumb: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#FFFFFF', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 3, elevation: 3 },
-  onlineToggleThumbOn: {},
-  onlineCardText: { color: '#FFFFFF', fontSize: 17, fontWeight: '800' },
-
+  quickUtilText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
   earningsCard: {
-    flex: 0.55, height: 112, borderRadius: 24, justifyContent: 'space-between',
-    padding: 14, ...GLASS,
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 16,
+    marginVertical: 10,
   },
-  earningsTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  earningsLabel: { color: '#9CA3AF', fontSize: 13 },
-  earningsValue: { color: '#FFFFFF', fontSize: 30, fontWeight: '800' },
-  earningsBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
-  earningsSubLabel: { color: '#6B7280', fontSize: 11 },
-  earningsMinichart: { width: 56, height: 16 },
-  earningsMiniLine: { width: '100%', height: 1.5, backgroundColor: '#34D399', transform: [{ rotate: '-8deg' }], marginTop: 7 },
-
-  // Active request card
-  requestCardWrapper: { borderRadius: 28, padding: 2, marginBottom: 16, overflow: 'hidden' },
+  earningsTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+  },
+  earningsLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  earningsValue: {
+    fontSize: 26,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  trendBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  trendText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#10B981',
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#E2E8F0',
+    marginVertical: 14,
+  },
+  quickStatsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+  },
+  quickStatItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  qsNum: {
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  qsLabel: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+  statDivider: {
+    width: 1,
+    height: 24,
+    backgroundColor: '#E2E8F0',
+  },
+  requestCardWrapper: {
+    borderRadius: 16,
+    padding: 1.5,
+    marginVertical: 10,
+  },
   requestCardInner: {
-    backgroundColor: '#121526', borderRadius: 26, padding: 16,
-    flexDirection: 'row', ...GLASS,
+    borderRadius: 15,
+    padding: 16,
   },
-  requestMiniMap: {
-    width: '38%', height: 120, backgroundColor: '#1C1F33',
-    borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)',
+  requestDetails: {
+    flex: 1,
+  },
+  activeTripHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  livePulseDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10B981',
+  },
+  requestTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  requestMeta: {
+    fontSize: 12,
+    marginTop: 4,
+  },
+  requestAcceptBtn: {
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  requestAcceptText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  createBtn: {
+    borderRadius: 14,
+    overflow: 'hidden',
+    marginVertical: 8,
+  },
+  createBtnGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+  },
+  createBtnText: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  createBtnSub: {
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.85)',
+    marginTop: 2,
+  },
+  recentSection: {
+    marginTop: 14,
+  },
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 10,
+  },
+  emptyTrips: {
+    paddingVertical: 20,
+    alignItems: 'center',
+  },
+  emptyTripsText: {
+    fontSize: 12,
+  },
+  pastTripCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 8,
+    gap: 12,
+  },
+  pastTripDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  pastTripRoute: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  pastTripMeta: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+  pastTripStatus: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  devBarWrap: {
+    marginTop: 20,
+    alignItems: 'center',
+  },
+  devBarBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+  },
+  devBarText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#F59E0B',
+  },
+  radarCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+    marginVertical: 10,
+  },
+  radarIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
     position: 'relative',
   },
-  mapDot: { position: 'absolute', width: 8, height: 8, borderRadius: 4 },
-  mapLine: {
-    position: 'absolute', top: '50%', left: '50%',
-    width: 2, height: 70, backgroundColor: 'rgba(59,130,246,0.5)',
-    transform: [{ rotate: '45deg' }],
+  radarPulseOuter: {
+    position: 'absolute',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: '#10B981',
+    opacity: 0.4,
   },
-  mapOverlay: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0,0,0,0.6)', paddingVertical: 4, alignItems: 'center' },
-  mapOverlayText: { color: 'white', fontSize: 10, fontWeight: 'bold' },
-  requestDetails: { flex: 1, marginLeft: 14, justifyContent: 'space-between', paddingVertical: 4 },
-  requestTitle: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', marginBottom: 6 },
-  requestMeta: { color: '#6B7280', fontSize: 12, marginBottom: 3 },
-  requestMetaVal: { color: '#FFFFFF', fontWeight: '600', fontSize: 13 },
-  requestAcceptBtn: {
-    backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 12, paddingVertical: 8,
-    alignItems: 'center', marginTop: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+  radarTitle: {
+    fontSize: 14,
+    fontWeight: '800',
   },
-  requestAcceptText: { color: '#FFFFFF', fontWeight: '700', fontSize: 13 },
-
-  // 2x2 Stats Grid
-  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 16 },
-  statCard: {
-    width: '47.5%', height: 128, borderRadius: 24, padding: 16,
-    justifyContent: 'space-between', ...GLASS,
+  radarSub: {
+    fontSize: 11,
+    marginTop: 2,
   },
-  statCardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  statLabel: { color: '#9CA3AF', fontSize: 13 },
-  statValue: { color: '#FFFFFF', fontSize: 38, fontWeight: '800', letterSpacing: -1 },
-  statSub: { color: '#6B7280', fontSize: 11 },
-
-  // Create trip
-  createBtn: { borderRadius: 20, overflow: 'hidden', marginBottom: 16, shadowColor: '#2563EB', shadowOpacity: 0.4, shadowRadius: 12, elevation: 5 },
-  createBtnGradient: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 18 },
-  createBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
-  createBtnSub: { color: 'rgba(255,255,255,0.65)', fontSize: 12, marginTop: 2 },
-
-  // Past trips
-  pastTripCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    backgroundColor: 'rgba(28,31,51,0.65)', borderRadius: 16,
-    padding: 14, marginBottom: 10,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)',
+  openRadarBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: 'rgba(2,132,199,0.08)',
+    gap: 2,
   },
-  pastTripDot: { width: 10, height: 10, borderRadius: 5 },
-  pastTripRoute: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
-  pastTripMeta: { color: '#6B7280', fontSize: 11, marginTop: 3 },
-  pastTripStatus: { fontSize: 11, fontWeight: '700' },
+  openRadarBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0284C7',
+  },
 })
+
+

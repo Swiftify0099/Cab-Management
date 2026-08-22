@@ -1,3 +1,4 @@
+import os
 """
 Auth API endpoints  OTP flow for customers/drivers.
 Includes rate limiting and mock OTP (123456 in dev mode).
@@ -131,8 +132,30 @@ async def send_otp(
         expire_seconds=auth_settings.OTP_EXPIRE_MINUTES * 60,
     )
 
-    # TODO: Production  integrate real SMS gateway here
-    # await sms_gateway.send(phone, f"Your CabBooking OTP is {otp_code}")
+    # Real Dove SMS Gateway Integration (Matched exactly to working PhoneAuth.java template)
+    try:
+        import httpx
+        cleaned = "".join(filter(str.isdigit, phone))[-10:]
+        sms_user = os.getenv("SMS_USERNAME", "Experts")
+        sms_key = os.getenv("SMS_AUTH_KEY", "ba9dcdcdfcXX")
+        sms_sender = os.getenv("SMS_SENDER_ID", "EXTSKL")
+        sms_accusage = os.getenv("SMS_ACCUSAGE", "1")
+        msg = f"Your Verification Code for login is {otp_code}. - Expertskill Technology."
+        encoded_msg = msg.replace(" ", "%20")
+        gateway_url = (
+            "https://mobicomm.dove-sms.com//submitsms.jsp?"
+            + "user=" + sms_user
+            + "&key=" + sms_key
+            + "&mobile=+91" + cleaned
+            + "&message=" + encoded_msg
+            + "&accusage=" + sms_accusage
+            + "&senderid=" + sms_sender
+        )
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(gateway_url)
+            logger.info("Dove SMS gateway sent from backend", status=resp.status_code, response=resp.text)
+    except Exception as sms_err:
+        logger.warning("Dove SMS dispatch error in backend", error=str(sms_err))
 
     logger.info("OTP sent", phone=phone, dev_mode=auth_settings.OTP_DEV_MODE)
 

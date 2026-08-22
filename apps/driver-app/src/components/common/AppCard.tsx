@@ -40,7 +40,7 @@ export const AppCard: React.FC<AppCardProps> = ({
       overflow: 'hidden',
     },
     glassGradient: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       opacity: 0.8,
     }
   });
@@ -57,8 +57,8 @@ export const AppCard: React.FC<AppCardProps> = ({
       >
         <LinearGradient
           colors={[
-            theme.isDark ? 'rgba(30,41,59,0.7)' : 'rgba(255,255,255,0.7)', 
-            theme.isDark ? 'rgba(15,23,42,0.9)' : 'rgba(241,245,249,0.9)'
+            theme.dark ? 'rgba(30,41,59,0.7)' : 'rgba(255,255,255,0.7)', 
+            theme.dark ? 'rgba(15,23,42,0.9)' : 'rgba(241,245,249,0.9)'
           ]}
           style={styles.glassGradient}
         />

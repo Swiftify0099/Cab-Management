@@ -27,14 +27,14 @@ class BaseAppSettings(BaseSettings):
     SECRET_KEY: str = "change-me-in-production-min-32-chars"
 
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://cabooking_user:cabooking_pass@localhost:5432/cabooking"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres.iyndjpsmahgugrcpkvip:fpqSlqh3DiQm68o0@aws-0-ap-south-1.pooler.supabase.com:5432/postgres"
     DB_POOL_SIZE: int = 20
     DB_MAX_OVERFLOW: int = 40
     DB_POOL_TIMEOUT: int = 30
     DB_ECHO: bool = False
 
     # Redis
-    REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_URL: str = "rediss://default:gQAAAAAAApumAAIgcDJhYWMyMzA5NmNkOTI0MGYzOTYzNDY4YTJkMzU1YjBkMw@stunning-squid-170918.upstash.io:6379"
     REDIS_POOL_SIZE: int = 20
 
     # JWT
@@ -87,12 +87,12 @@ class BaseAppSettings(BaseSettings):
         "http://10.0.2.2:8001",
         "http://10.0.2.2:3000",
         # Current Wi-Fi LAN IP (physical Android device) — updated 2026-06-16
-        "http://192.168.43.127:8001",
-        "http://192.168.43.96:3000",
-        "http://192.168.43.96:5173",
-        "http://192.168.43.96:8010",
+        "http://10.243.212.223:8001",
+        "http://10.243.212.223:3000",
+        "http://10.243.212.223:5173",
+        "http://10.243.212.223:8010",
         # Keep old IP as fallback (can be removed when stable)
-        "http://192.168.43.157:8001",
+        "http://10.243.212.223:8001",
     ]
 
     # Rate Limiting

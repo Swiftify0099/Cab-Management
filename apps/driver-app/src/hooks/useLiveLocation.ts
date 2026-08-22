@@ -93,7 +93,7 @@ export function useLiveLocation(
           lng: longitude,
           speed:   Math.max(0, Math.round((speed ?? 0) * 3.6)), // m/s → km/h
           heading: Math.round(((finalHeading % 360) + 360) % 360),
-          accuracy: Math.round(accuracy),
+          accuracy: Math.round(accuracy ?? 5),
           timestamp: loc.timestamp,
         }
 

@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 import { LifeBuoy, Search, Filter, CheckCircle, Clock } from 'lucide-react'
 import { adminApi } from '../../api/client'
 import toast from 'react-hot-toast'
-import dayjs from 'dayjs'
+import { format } from 'date-fns'
 
 interface Ticket {
   id: string
@@ -147,7 +147,7 @@ export default function SupportPage() {
                     </div>
                     <p className="text-sm text-slate-500 dark:text-slate-400 flex items-center gap-2">
                       <Clock className="w-3.5 h-3.5" />
-                      {dayjs(ticket.created_at).format('MMM D, YYYY h:mm A')}
+                      {format(new Date(ticket.created_at), 'MMM d, yyyy h:mm a')}
                       <span className="px-1">•</span>
                       User: <span className="font-mono text-xs bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded">{ticket.user_id.split('-')[0]}</span>
                     </p>

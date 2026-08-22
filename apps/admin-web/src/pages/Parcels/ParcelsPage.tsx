@@ -2,7 +2,7 @@
  * Admin Parcels Page — Manage parcel bookings.
  */
 import { useState, useEffect } from 'react'
-import { Search, Filter, RefreshCw, Package } from 'lucide-react'
+import { Search, Filter, RefreshCw } from 'lucide-react'
 import { adminApi } from '../../api/client'
 
 const STATUS_COLORS: Record<string, string> = {

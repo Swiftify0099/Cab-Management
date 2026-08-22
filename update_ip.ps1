@@ -32,7 +32,7 @@ foreach ($app in $apps) {
         
         $newContent = $content | ForEach-Object {
             if ($_ -match "^EXPO_PUBLIC_API_URL=") {
-                "EXPO_PUBLIC_API_URL=http://$($IpAddress):8001/api/v1"
+                "EXPO_PUBLIC_API_URL=http://$($IpAddress)/api/v1"
             } elseif ($_ -match "^EXPO_PUBLIC_WS_URL=") {
                 "EXPO_PUBLIC_WS_URL=http://$($IpAddress):8010"
             } else {
@@ -49,7 +49,7 @@ foreach ($app in $apps) {
 $appJsonPath = "$root\apps\driver-app\app.json"
 if (Test-Path $appJsonPath) {
     $json = Get-Content $appJsonPath -Raw
-    $json = $json -replace '"apiUrl":\s*"http://[^"]+:8001/api/v1"', """apiUrl"": ""http://$($IpAddress):8001/api/v1"""
+    $json = $json -replace '"apiUrl":\s*"http://[^"]+/api/v1"', """apiUrl"": ""http://$($IpAddress)/api/v1"""
     $json = $json -replace '"wsUrl":\s*"http://[^"]+:8010"',         """wsUrl"":  ""http://$($IpAddress):8010"""
     Set-Content -Path $appJsonPath -Value $json -NoNewline
     Write-Host "  Updated $appJsonPath" -ForegroundColor DarkGreen

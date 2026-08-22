@@ -1,27 +1,123 @@
 {
   "project_info": {
-    "project_number": "514560559715",
-    "firebase_url": "https://cabbookingsystem-d0065-default-rtdb.firebaseio.com",
-    "project_id": "cabbookingsystem-d0065",
-    "storage_bucket": "cabbookingsystem-d0065.appspot.com"
+    "project_number": "769130712470",
+    "project_id": "amc-ticketmanagement",
+    "storage_bucket": "amc-ticketmanagement.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:514560559715:android:0000000000000000cabbookingdriver",
+        "mobilesdk_app_id": "1:769130712470:android:62e1d2cac4a9a7454161b7",
         "android_client_info": {
-          "package_name": "com.cabooking.driver"
+          "package_name": "com.CabBooking.test"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "769130712470-sj68cibbtpbj7q1ro0lm87kgqusnds10.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
-          "current_key": "AIzaSyCZw4DVNyJwP85ZeDG1y_x8DLQ7bF8J0EU"
+          "current_key": "AIzaSyBp-Td8PYLudqOebOEcvp9APT8Za-XQpQY"
         }
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "769130712470-sj68cibbtpbj7q1ro0lm87kgqusnds10.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:769130712470:android:62e1d2cac4a9a7454161b7",
+        "android_client_info": {
+          "package_name": "com.cabooking.driver"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "769130712470-sj68cibbtpbj7q1ro0lm87kgqusnds10.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBp-Td8PYLudqOebOEcvp9APT8Za-XQpQY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "769130712470-sj68cibbtpbj7q1ro0lm87kgqusnds10.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:769130712470:android:a77694d05e821a6a4161b7",
+        "android_client_info": {
+          "package_name": "com.vidyasetu"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "769130712470-sj68cibbtpbj7q1ro0lm87kgqusnds10.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBp-Td8PYLudqOebOEcvp9APT8Za-XQpQY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "769130712470-sj68cibbtpbj7q1ro0lm87kgqusnds10.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:769130712470:android:62e1d2cac4a9a7454161b7",
+        "android_client_info": {
+          "package_name": "com.cab.Saaj"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "769130712470-sj68cibbtpbj7q1ro0lm87kgqusnds10.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBp-Td8PYLudqOebOEcvp9APT8Za-XQpQY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "769130712470-sj68cibbtpbj7q1ro0lm87kgqusnds10.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

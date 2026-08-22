@@ -12,14 +12,15 @@ export default function DriverIndex() {
   useEffect(() => {
     const check = async () => {
       const token = await SecureStore.getItemAsync('access_token')
-      if (token && token !== 'demo_token') {
-        try {
-          await api.post('/driver/claim-driver-role', {})
-        } catch {
+      if (token) {
+        if (token !== 'demo_token') {
+          try {
+            await api.post('/driver/claim-driver-role', {})
+          } catch {}
         }
-        setTimeout(() => router.replace('/(tabs)'), 0)
+        setTimeout(() => router.replace('/(tabs)' as any), 0)
       } else {
-        setTimeout(() => router.replace('/auth/phone'), 0)
+        setTimeout(() => router.replace('/auth/phone' as any), 0)
       }
     }
     check()

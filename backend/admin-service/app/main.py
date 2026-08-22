@@ -20,8 +20,8 @@ app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_credentials=True, 
 from app.api.v1.admin import router as admin_router
 from app.api.v1.themes import router as themes_router
 
-app.include_router(admin_router)
-app.include_router(themes_router)
+app.include_router(admin_router, prefix='/api/v1')
+app.include_router(themes_router, prefix='/api/v1')
 
 @app.get('/health')
 async def health():

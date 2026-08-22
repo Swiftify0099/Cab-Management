@@ -108,10 +108,11 @@ function statusIcon(s: string) {
 interface Props {
   status: PermissionStatus
   onRequestAll: () => Promise<void>
+  onSkip?: () => void
   isChecking: boolean
 }
 
-export function PermissionGate({ status, onRequestAll, isChecking }: Props) {
+export function PermissionGate({ status, onRequestAll, onSkip, isChecking }: Props) {
   // Entrance animation
   const fadeAnim  = useRef(new Animated.Value(0)).current
   const slideAnim = useRef(new Animated.Value(40)).current
@@ -144,7 +145,7 @@ export function PermissionGate({ status, onRequestAll, isChecking }: Props) {
       <StatusBar barStyle="light-content" backgroundColor="#050811" />
       <LinearGradient
         colors={['#050811', '#0A1020', '#060D1E']}
-        style={StyleSheet.absoluteFillObject}
+        style={StyleSheet.absoluteFill}
       />
 
       {/* Ambient glow blob */}
@@ -248,6 +249,27 @@ export function PermissionGate({ status, onRequestAll, isChecking }: Props) {
               </LinearGradient>
             </TouchableOpacity>
           </Animated.View>
+
+          {/* Continue / Skip Button */}
+          {onSkip && (
+            <TouchableOpacity
+              style={{
+                marginTop: 14,
+                paddingVertical: 14,
+                borderRadius: 14,
+                alignItems: 'center',
+                backgroundColor: 'rgba(255,255,255,0.06)',
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.12)',
+              }}
+              onPress={onSkip}
+              activeOpacity={0.8}
+            >
+              <Text style={{ color: '#FFFFFF', fontSize: 15, fontWeight: '700' }}>
+                Continue to Dashboard ›
+              </Text>
+            </TouchableOpacity>
+          )}
 
           <Text style={styles.footNote}>
             You can manage these permissions anytime in your device Settings.

@@ -25,6 +25,7 @@
     },
     "android": {
       "package": "com.cabooking.driver",
+      "versionCode": 1,
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -82,13 +83,15 @@
         {
           "googleMapsApiKey": "AIzaSyCZw4DVNyJwP85ZeDG1y_x8DLQ7bF8J0EU"
         }
-      ]
+      ],
+      "./plugins/withDisabledPngCrunching"
     ],
     "extra": {
-      "apiUrl": "http://192.168.43.157:8001/api/v1",
-      "wsUrl": "http://192.168.43.157:8010",
+      "apiUrl": "https://cab-management-1.onrender.com/api/v1",
+      "wsUrl": "https://cab-management-1.onrender.com",
+      "router": {},
       "eas": {
-        "projectId": "cabooking-driver"
+        "projectId": "31319d2a-c1ac-4759-a2ab-0bce823e6bf2"
       }
     }
   }

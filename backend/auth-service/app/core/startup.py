@@ -7,7 +7,7 @@ import os
 import structlog
 from sqlalchemy import select
 
-from common.database import AsyncSessionLocal
+from common.database import AsyncSessionLocal, create_all_tables
 from common.models.all_models import (
     AdminProfile,
     Theme,
@@ -39,6 +39,7 @@ async def create_upload_dirs() -> None:
 
 
 async def seed_admin_user() -> None:
+    await create_all_tables()
     """Create default super admin if not exists."""
     async with AsyncSessionLocal() as session:
         # Check if admin already exists

@@ -37,13 +37,14 @@ function AppReady() {
 
 // ── Outer component: handles permission gate ───────────────────────────────────
 function AppWithPermissions() {
-  const { status, requestAll } = useStartupPermissions()
+  const { status, requestAll, skipGate } = useStartupPermissions()
 
   if (status.isChecking || !status.allCriticalGranted) {
     return (
       <PermissionGate
         status={status}
         onRequestAll={requestAll}
+        onSkip={skipGate}
         isChecking={status.isChecking}
       />
     )

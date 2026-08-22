@@ -28,7 +28,7 @@ export const AppLoader: React.FC<AppLoaderProps> = ({
 
   const styles = StyleSheet.create({
     fullScreen: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: theme.colors.background,
       alignItems: 'center',
       justifyContent: 'center',

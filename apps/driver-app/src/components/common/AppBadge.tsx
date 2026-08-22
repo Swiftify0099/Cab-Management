@@ -52,9 +52,21 @@ export const AppBadge: React.FC<AppBadgeProps> = ({
     },
   });
 
+  const getTextColor = (): any => {
+    switch (variant) {
+      case 'primary': return 'primary';
+      case 'secondary': return 'secondary';
+      case 'success': return 'success';
+      case 'warning': return 'warning';
+      case 'error': return 'error';
+      case 'info': return 'secondary';
+      default: return 'text';
+    }
+  };
+
   return (
     <View style={[styles.badge, style]}>
-      <AppText variant="caption" weight="bold" color={variant}>
+      <AppText variant="caption" weight="bold" color={getTextColor()}>
         {label}
       </AppText>
     </View>

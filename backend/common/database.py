@@ -28,6 +28,21 @@ class Base(DeclarativeBase):
 def create_engine(database_url: str | None = None) -> AsyncEngine:
     """Create async database engine with production-grade settings."""
     url = database_url or settings.DATABASE_URL
+    if 'db.iyndjpsmahgugrcpkvip.supabase.co' in str(url):
+        url = url.replace('db.iyndjpsmahgugrcpkvip.supabase.co', 'aws-0-ap-south-1.pooler.supabase.com')
+        if 'postgres:' in url and 'postgres.iyndjpsmahgugrcpkvip:' not in url:
+            url = url.replace('postgres:', 'postgres.iyndjpsmahgugrcpkvip:', 1)
+    if not url or 'localhost' in url or '127.0.0.1' in url:
+        url = 'postgresql+asyncpg://postgres.iyndjpsmahgugrcpkvip:fpqSlqh3DiQm68o0@aws-0-ap-south-1.pooler.supabase.com:5432/postgres'
+
+    if not url or 'localhost' in url or '127.0.0.1' in url:
+        url = 'postgresql+asyncpg://postgres.iyndjpsmahgugrcpkvip:fpqSlqh3DiQm68o0@aws-0-ap-south-1.pooler.supabase.com:5432/postgres'
+    if url.startswith('postgres://'):
+        url = url.replace('postgres://', 'postgresql+asyncpg://', 1)
+    elif url.startswith('postgresql://') and not url.startswith('postgresql+asyncpg://'):
+        url = url.replace('postgresql://', 'postgresql+asyncpg://', 1)
+    if '?sslmode=' in url:
+        url = url.split('?sslmode=')[0]
 
     engine_kwargs = {
         "echo": settings.DB_ECHO,

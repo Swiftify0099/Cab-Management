@@ -147,8 +147,6 @@ _matching_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.starts
 for k in list(sys.modules.keys()):
     if k == "app" or k.startswith("app."):
         del sys.modules[k]
-sys.path.remove(_matching_path)
-importlib.invalidate_caches()
 # â”€â”€ 4. Load PAYMENT service router â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _payment_path = os.path.join(_ROOT, "payment-service")
 sys.path.insert(0, _payment_path)
@@ -169,7 +167,6 @@ for k in list(sys.modules.keys()):
     if k == "app" or k.startswith("app."):
         del sys.modules[k]
 sys.path.remove(_payment_path)
-importlib.invalidate_caches()
 
 # â”€â”€ 4.5. Load ADMIN, ANALYTICS, PARCEL services â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _admin_path = os.path.join(_ROOT, "admin-service")
@@ -187,7 +184,6 @@ _admin_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.startswit
 for k in list(sys.modules.keys()):
     if k == "app" or k.startswith("app."): del sys.modules[k]
 sys.path.remove(_admin_path)
-importlib.invalidate_caches()
 
 _analytics_path = os.path.join(_ROOT, "analytics-service")
 sys.path.insert(0, _analytics_path)
@@ -203,7 +199,6 @@ _analytics_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.start
 for k in list(sys.modules.keys()):
     if k == "app" or k.startswith("app."): del sys.modules[k]
 sys.path.remove(_analytics_path)
-importlib.invalidate_caches()
 
 _parcel_path = os.path.join(_ROOT, "parcel-service")
 sys.path.insert(0, _parcel_path)
@@ -219,7 +214,6 @@ _parcel_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.startswi
 for k in list(sys.modules.keys()):
     if k == "app" or k.startswith("app."): del sys.modules[k]
 sys.path.remove(_parcel_path)
-importlib.invalidate_caches()
 
 # Restore auth + matching modules
 sys.path.insert(0, _auth_path)
@@ -230,6 +224,17 @@ sys.modules.update(_payment_mods)
 sys.modules.update(_admin_mods)
 sys.modules.update(_analytics_mods)
 sys.modules.update(_parcel_mods)
+
+# Fix module attribute collisions across merged microservices
+_cfg = sys.modules.get('app.core.config')
+if _cfg:
+    from common.config import settings
+    if not hasattr(_cfg, 'auth_settings'): setattr(_cfg, 'auth_settings', settings)
+    if not hasattr(_cfg, 'ws_settings'): setattr(_cfg, 'ws_settings', settings)
+    if not hasattr(_cfg, 'payment_settings'): setattr(_cfg, 'payment_settings', settings)
+    if not hasattr(_cfg, 'booking_settings'): setattr(_cfg, 'booking_settings', settings)
+    if not hasattr(_cfg, 'matching_settings'): setattr(_cfg, 'matching_settings', settings)
+    if not hasattr(_cfg, 'settings'): setattr(_cfg, 'settings', settings)
 
 
 # â”€â”€ 5. Build FastAPI app â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -630,3 +635,52 @@ except Exception as _sio_init_err:
     import traceback
     traceback.print_exc()
 
+
+    # ── Feature 8 & 9: Realtime Communication & Ride State Socket Events ──
+    @sio.event
+    async def join_ride_room(sid, data):
+        ride_id = data.get('ride_id', '')
+        if ride_id:
+            room = f"ride:{ride_id}"
+            await sio.enter_room(sid, room)
+            print(f"[WS] Client {sid} joined ride room {room}")
+
+    @sio.event
+    async def leave_ride_room(sid, data):
+        ride_id = data.get('ride_id', '')
+        if ride_id:
+            await sio.leave_room(sid, f"ride:{ride_id}")
+
+    @sio.event
+    async def SEND_CHAT_MESSAGE(sid, data):
+        ride_id = data.get('ride_id', '')
+        if ride_id:
+            await sio.emit('communication:message', data, room=f"ride:{ride_id}", skip_sid=sid)
+
+    @sio.event
+    async def CHAT_MESSAGE_READ(sid, data):
+        ride_id = data.get('ride_id', '')
+        if ride_id:
+            await sio.emit('communication:message_read', data, room=f"ride:{ride_id}", skip_sid=sid)
+
+    @sio.event
+    async def SHARE_CUSTOMER_LOCATION(sid, data):
+        ride_id = data.get('ride_id', '')
+        if ride_id:
+            await sio.emit('communication:location_shared', data, room=f"ride:{ride_id}", skip_sid=sid)
+
+    # ── Feature 10: During Ride Realtime Socket.IO Handlers ──
+    @sio.event
+    async def RIDE_LOCATION_UPDATE(sid, data):
+        ride_id = data.get('ride_id', '')
+        if ride_id:
+            room = f"ride:{ride_id}"
+            await sio.emit('ride:location', data, room=room, skip_sid=sid)
+
+    @sio.event
+    async def TRIGGER_RIDE_SOS(sid, data):
+        ride_id = data.get('ride_id', '')
+        if ride_id:
+            room = f"ride:{ride_id}"
+            await sio.emit('ride:sos', data, room=room)
+            await sio.emit('emergency:alert', data, room="safety_monitoring")

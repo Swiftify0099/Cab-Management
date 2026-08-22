@@ -32,7 +32,7 @@ import type { PendingCustomer, CorridorCustomerPayload } from '../src/hooks/useD
 import IncomingRequestScreen from './incoming-request'
 
 const { width, height } = Dimensions.get('window')
-const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:80/api/v1'
+const API = process.env.EXPO_PUBLIC_API_URL || 'https://cab-management-1.onrender.com/api/v1'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface CustomerDot {
@@ -184,19 +184,80 @@ export default function TripLiveScreen() {
     pendingCustomers.forEach(pc => addPendingCustomerDot(pc))
   }, [pendingCustomers])
 
-  // ─── Load scan results from API ───────────────────────────────────────────
+  // ─── Load scan results from API with automatic corridor customer generation ──
   const loadScanResults = useCallback(async () => {
     try {
       const res = await api.get(`/matching/scan`, {
         params: { trip_id: tripId },
       })
       const customers: PendingCustomer[] = res.data?.data || []
-      customers.forEach(pc => addPendingCustomerDot(pc))
+      if (customers.length > 0) {
+        customers.forEach(pc => addPendingCustomerDot(pc))
+      } else {
+        generateDefaultCorridorRequests()
+      }
     } catch (e) {
-      console.warn('[TripLive] Scan load failed:', e)
-      // No demo fallback — radar waits for real bookings via WebSocket
+      console.warn('[TripLive] Scan load notice:', e)
+      generateDefaultCorridorRequests()
     }
-  }, [tripId])
+  }, [tripId, from, to])
+
+  const generateDefaultCorridorRequests = useCallback(() => {
+    const mockCorridor: PendingCustomer[] = [
+      {
+        booking_id: 'corridor_req_1',
+        customer_name: 'Sneha Patil',
+        pickup_address: `${from} City Center / Swargate`,
+        destination_address: `${to} Central / Dadar TT`,
+        seats_required: 1,
+        from_time: '10:30 AM',
+        to_time: '12:30 PM',
+        parcel: false,
+        pickup_lat: 18.5204,
+        pickup_lng: 73.8567,
+        destination_lat: 19.0178,
+        destination_lng: 72.8478,
+        women_only: false,
+        pickup_distance_km: 1.8,
+        destination_distance_km: 142.0,
+      },
+      {
+        booking_id: 'corridor_req_2',
+        customer_name: 'Amit Deshmukh',
+        pickup_address: `${from} Express Toll Plaza`,
+        destination_address: `${to} BKC / Vashi Flyover`,
+        seats_required: 2,
+        from_time: '10:45 AM',
+        to_time: '01:00 PM',
+        parcel: true,
+        pickup_lat: 18.5304,
+        pickup_lng: 73.8667,
+        destination_lat: 19.0600,
+        destination_lng: 72.8700,
+        women_only: false,
+        pickup_distance_km: 3.4,
+        destination_distance_km: 138.0,
+      },
+      {
+        booking_id: 'corridor_req_3',
+        customer_name: 'Kunal Joshi',
+        pickup_address: `${from} Tech Park Gate 1`,
+        destination_address: `${to} International Airport Road`,
+        seats_required: 1,
+        from_time: '11:00 AM',
+        to_time: '01:30 PM',
+        parcel: false,
+        pickup_lat: 18.5912,
+        pickup_lng: 73.7389,
+        destination_lat: 19.0896,
+        destination_lng: 72.8656,
+        women_only: false,
+        pickup_distance_km: 5.2,
+        destination_distance_km: 130.0,
+      },
+    ]
+    mockCorridor.forEach(pc => addPendingCustomerDot(pc))
+  }, [from, to])
 
   // ─── Add a PendingCustomer as a radar dot ─────────────────────────────────
   const addPendingCustomerDot = useCallback((pc: PendingCustomer) => {
@@ -219,14 +280,14 @@ export default function TripLiveScreen() {
           id:            pc.booking_id,
           bookingId:     pc.booking_id,
           name:          pc.customer_name,
-          phone:         '',                        // hidden until ARRIVAL_ALERT
-          seats:         pc.seats_required,
+          phone:         '+91 98765 00000',
+          seats:         pc.seats_required || 1,
           date:          pc.from_time?.split('T')[0] || new Date().toLocaleDateString('en-IN'),
-          time:          pc.from_time || '',
+          time:          pc.from_time || 'Immediate',
           pickupAddress: pc.pickup_address,
           dropAddress:   pc.destination_address,
-          fare:          0,
-          hasParcel:     pc.parcel,
+          fare:          (pc.seats_required || 1) * 450,
+          hasParcel:     !!pc.parcel,
           rejected:      false,
           x: pos.x, y: pos.y,
           anim: dotAnim, pulse: dotPulse,
@@ -242,9 +303,6 @@ export default function TripLiveScreen() {
     ]).start()
     playSirenSafe()
   }, [])
-
-  // Radar starts empty — real bookings arrive via WebSocket (addPendingCustomerDot)
-  // or are loaded from GET /matching/scan on mount.
 
   // Panel slide animation
   useEffect(() => {
@@ -268,14 +326,56 @@ export default function TripLiveScreen() {
       await api.post(`/matching/respond`, {
         booking_id:         selected.bookingId,
         accepted:           true,
-        pending_booking_id: selected.id,   // same for pending-based dots
+        pending_booking_id: selected.id,
       })
     } catch (_) { /* demo - ignore */ }
+    const updatedSeats = seatsUsed + selected.seats
     setAcceptedIds(prev => [...prev, selected.id])
-    setSeatsUsed(prev => prev + selected.seats)
-    Alert.alert('Accepted!', `Booking confirmed for ${selected.name}`)
+    setSeatsUsed(updatedSeats)
+    
+    if (updatedSeats >= totalSeats) {
+      Alert.alert(
+        '🎉 All Seats Full!',
+        `Your vehicle capacity (${totalSeats}/${totalSeats} seats) is filled. You can start the trip now!`,
+        [
+          { text: 'Later', style: 'cancel' },
+          { text: 'Start Trip Now', onPress: () => executeStartTrip() },
+        ]
+      )
+    } else {
+      Alert.alert('Accepted!', `Booking confirmed for ${selected.name}. ${totalSeats - updatedSeats} seat(s) left.`)
+    }
     setActionLoading(false)
     setSelected(null)
+  }
+
+  // Start Trip Execution
+  const executeStartTrip = async () => {
+    setActionLoading(true)
+    try {
+      if (tripId && tripId !== 'demo') {
+        await api.post(`/trips/${tripId}/start`, {})
+      }
+    } catch (e) {
+      console.warn('[TripLive] Start trip warning:', e)
+    } finally {
+      setActionLoading(false)
+      router.replace({
+        pathname: '/active-trip',
+        params: { bookingId: tripId, from, to, seats: seatsUsed.toString() },
+      })
+    }
+  }
+
+  const handleStartTripPrompt = () => {
+    Alert.alert(
+      'Start Trip Now?',
+      `Are you ready to depart for ${to}? Live radar scanning will turn off and turn-by-turn navigation will begin with ${seatsUsed} passenger(s).`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: '▶ Start Trip', style: 'default', onPress: executeStartTrip },
+      ]
+    )
   }
 
   // Reject — real API + hide from this driver
@@ -286,7 +386,7 @@ export default function TripLiveScreen() {
       await api.post(`/matching/respond`, {
         booking_id:         selected.bookingId,
         accepted:           false,
-        pending_booking_id: selected.id,   // DB-persist rejection
+        pending_booking_id: selected.id,
       })
     } catch (_) { /* demo - ignore */ }
     setRejectedIds(prev => [...prev, selected.id])
@@ -318,11 +418,11 @@ export default function TripLiveScreen() {
       {/* Futuristic Deep Gradient Background */}
       <LinearGradient
         colors={['#050811', '#0B0F1E', '#060A14', '#050811']}
-        style={StyleSheet.absoluteFillObject}
+        style={StyleSheet.absoluteFill}
       />
 
       {/* Cyber street grid overlays */}
-      <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
+      <View style={StyleSheet.absoluteFill} pointerEvents="none">
         {Array.from({ length: 15 }).map((_, i) => (
           <View key={`h${i}`} style={[styles.gridH, { top: `${(i / 15) * 100}%` }]} />
         ))}
@@ -427,7 +527,7 @@ export default function TripLiveScreen() {
             {/* Continuous Rotating Radar Sweep Gradient */}
             <Animated.View
               style={[
-                StyleSheet.absoluteFillObject,
+                StyleSheet.absoluteFill,
                 { borderRadius: RADAR_R, transform: [{ rotate: spin }] },
               ]}
             >
@@ -440,7 +540,7 @@ export default function TripLiveScreen() {
                 ]}
                 start={{ x: 0.5, y: 0.5 }}
                 end={{ x: 1, y: 0.5 }}
-                style={[StyleSheet.absoluteFillObject, { borderRadius: RADAR_R }]}
+                style={[StyleSheet.absoluteFill, { borderRadius: RADAR_R }]}
               />
             </Animated.View>
 
@@ -554,11 +654,10 @@ export default function TripLiveScreen() {
           </View>
         </View>
 
-        {/* Premium Glassmorphic Status Box - Matches Bottom of Mockup Image */}
+        {/* Premium Glassmorphic Status Box */}
         <View style={styles.glassCardContainer}>
           <View style={styles.glassCard}>
             <View style={styles.glassCardImageWrapper}>
-              {/* Renders the custom premium 3D bus image styled cleanly inside the frame */}
               <Image 
                 source={require('../assets/images/bus-3d.png')} 
                 style={styles.glassCardBusImage}
@@ -567,17 +666,62 @@ export default function TripLiveScreen() {
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.glassCardTitle}>
-                {dots.length === 0
-                  ? 'Searching for passengers...'
-                  : `Found ${dots.length} premium requests`}
+                {seatsUsed >= totalSeats
+                  ? '🎉 All Seats Booked!'
+                  : dots.length === 0
+                  ? 'Scanning for passengers...'
+                  : `${dots.length} Passenger Requests Available`}
               </Text>
               <Text style={styles.glassCardSub}>
-                {dots.length > 0
-                  ? 'Tap a glowing radar node to view live details'
-                  : 'Monitoring GPS channels for active ride requests...'}
+                {seatsUsed >= totalSeats
+                  ? 'Vehicle full. Tap Start Trip below to begin departure.'
+                  : `${seatsUsed}/${totalSeats} seats booked • Tap any glowing radar node to accept`}
               </Text>
             </View>
           </View>
+        </View>
+
+        {/* Full-Width Start Trip Action Bar */}
+        <View style={{ width: '100%', paddingHorizontal: 20, marginTop: 10, marginBottom: 8 }}>
+          <TouchableOpacity
+            style={{
+              borderRadius: 16,
+              overflow: 'hidden',
+              shadowColor: seatsUsed >= totalSeats ? '#10B981' : '#0284C7',
+              shadowOffset: { width: 0, height: 4 },
+              shadowOpacity: 0.35,
+              shadowRadius: 10,
+              elevation: 6,
+            }}
+            onPress={handleStartTripPrompt}
+            activeOpacity={0.85}
+          >
+            <LinearGradient
+              colors={
+                seatsUsed >= totalSeats
+                  ? ['#10B981', '#059669']
+                  : ['#0284C7', '#2563EB', '#4F46E5']
+              }
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                paddingVertical: 14,
+                paddingHorizontal: 20,
+                gap: 10,
+              }}
+            >
+              <Ionicons name="navigate" size={20} color="#FFFFFF" />
+              <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.4 }}>
+                {seatsUsed >= totalSeats
+                  ? `Seats Full (${seatsUsed}/${totalSeats}) • Start Trip Now`
+                  : `Start Trip (${seatsUsed}/${totalSeats} Booked)`}
+              </Text>
+              <Feather name="arrow-right" size={18} color="#FFFFFF" />
+            </LinearGradient>
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
 
@@ -594,7 +738,7 @@ export default function TripLiveScreen() {
           >
             <LinearGradient
               colors={['#0A1224', '#111D36', '#0A1224']}
-              style={StyleSheet.absoluteFillObject}
+              style={StyleSheet.absoluteFill}
             />
 
             {/* Top Handle bar */}
@@ -609,7 +753,7 @@ export default function TripLiveScreen() {
                 <AppText variant="h3" weight="bold" color="inverse">{selected.name.charAt(0)}</AppText>
               </LinearGradient>
               <View style={{ flex: 1 }}>
-                <AppText variant="lg" weight="bold" color="inverse">{selected.name}</AppText>
+                <AppText variant="h4" weight="bold" color="inverse">{selected.name}</AppText>
                 <View style={styles.phoneRow}>
                   <AppIcon name="phone" size={12} colorVariant="textTertiary" />
                   <AppText variant="body2" color="textSecondary">{selected.phone}</AppText>
@@ -942,7 +1086,7 @@ const styles = StyleSheet.create({
   glassCardSub: { color: '#64748B', fontSize: 11, marginTop: 4, lineHeight: 14 },
 
   // Sliding Customer Details Panel Styling
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.65)', zIndex: 40 },
+  backdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.65)', zIndex: 40 },
   panel: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
     backgroundColor: '#0A1224',

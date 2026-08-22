@@ -220,19 +220,17 @@ TokenData = AuthenticatedUser
 
 
 def require_role(*roles: str):
-    """
-    Factory dependency  restricts access to specific roles.
-    Usage: current_user: AuthenticatedUser = Depends(require_role("driver"))
-    """
+    allowed_roles = set(roles)
+    if 'admin' in allowed_roles:
+        allowed_roles.add('super_admin')
     async def _require_role(
         current_user: AuthenticatedUser = Depends(get_current_user),
     ) -> AuthenticatedUser:
-        if current_user.role.value not in roles:
+        if current_user.role.value not in allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access restricted. Required role(s): {', '.join(roles)}",
+                detail="Access restricted.",
             )
         return current_user
-
     return _require_role
 
