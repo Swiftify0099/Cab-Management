@@ -62,7 +62,7 @@ export const AppInput = memo(function AppInput({
   const { theme } = useTheme()
   const [isFocused, setIsFocused] = useState(false)
   const [secureVisible, setSecureVisible] = useState(false)
-  const borderColor = useSharedValue(theme.colors.inputBorder)
+  const borderColor = useSharedValue<string>(theme.colors.inputBorder)
 
   const handleFocus = useCallback((e: any) => {
     setIsFocused(true)

@@ -287,11 +287,11 @@ export default function AddressPickerScreen() {
   // ── STEP 1: Map picker ──
   return (
     <View style={{ width: SCREEN_W, height: SCREEN_H, backgroundColor: '#E5E5E5' }}>
-      {/* Map — using absoluteFillObject for robust Android rendering */}
+      {/* Map — using absoluteFill for robust Android rendering */}
       <MapView
         ref={mapRef}
         provider={PROVIDER_GOOGLE}
-        style={StyleSheet.absoluteFillObject}
+        style={StyleSheet.absoluteFill}
         region={region}
         onRegionChangeComplete={onRegionChangeComplete}
         showsUserLocation={permGranted}
@@ -308,12 +308,14 @@ export default function AddressPickerScreen() {
 
       {/* Center Pin — absolutely centered using Flexbox */}
       <View
-        style={{
-          ...StyleSheet.absoluteFillObject,
-          alignItems: 'center',
-          justifyContent: 'center',
-          paddingBottom: 40, // Offset so the tip of the pin hits the center
-        }}
+        style={[
+          StyleSheet.absoluteFill,
+          {
+            alignItems: 'center',
+            justifyContent: 'center',
+            paddingBottom: 40, // Offset so the tip of the pin hits the center
+          },
+        ]}
         pointerEvents="none"
       >
         <View style={styles.pinBubble}>
