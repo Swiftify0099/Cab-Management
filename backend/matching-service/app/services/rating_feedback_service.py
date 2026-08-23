@@ -1,13 +1,17 @@
 """
-Authoritative Rating & Feedback Engine for Feature 17.
-Handles two-way ratings, 1-5 star breakdown, structured compliments/complaints,
-rating recalculation, 30-day rolling trend, low-rating alerts, and dispute workflows.
+Authoritative Rating & Feedback Engine — Feature 14.
+Handles two-way ratings:
+- Customer Rates Driver (1-5★, structured compliments, category diagnostics, safety complaint escalation)
+- Driver Rates Customer (1-5★, passenger tags, customer quality score)
+- Rolling 30-day trends, low-rating coaching alerts, and dispute workflows
 """
 import uuid
+from uuid import UUID
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
 from decimal import Decimal
 
+import structlog
 from fastapi import HTTPException
 from sqlalchemy import select, func, and_, desc, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -17,10 +21,13 @@ from common.models.all_models import (
     CustomerDriverRating,
     DriverCustomerRating,
     Driver,
+    CustomerProfile,
     RideRequest,
     RideRequestStatus,
     User,
 )
+
+logger = structlog.get_logger(__name__)
 
 COMPLIMENT_CATALOG = {
     "CLEAN_VEHICLE": "Clean Vehicle",
@@ -34,6 +41,7 @@ COMPLIMENT_CATALOG = {
 
 COMPLAINT_CATALOG = {
     "UNSAFE_DRIVING": "Unsafe Driving",
+    "SAFETY_ISSUE": "Safety Issue / Threat",
     "LATE_PICKUP": "Late Pickup",
     "POOR_COMMUNICATION": "Poor Communication",
     "VEHICLE_ISSUE": "Vehicle Condition Issue",
@@ -55,13 +63,16 @@ class RatingFeedbackService:
         compliments: List[str] = [],
         complaint_tags: List[str] = [],
         feedback: Optional[str] = None,
+        cleanliness_rating: Optional[int] = None,
+        driving_rating: Optional[int] = None,
+        behaviour_rating: Optional[int] = None,
+        vehicle_condition_rating: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Submits authoritative customer rating for the driver on completed ride.
         Enforces integer 1-5 star validation, participant auth, and updates driver rating.
         Atomic PostgreSQL UPSERT eliminates concurrency race conditions.
         """
-        # Validate rating integer scale
         if not isinstance(rating, int) or rating < 1 or rating > 5:
             raise HTTPException(status_code=400, detail="Rating must be an integer between 1 and 5 stars")
 
@@ -94,7 +105,12 @@ class RatingFeedbackService:
             ride_id=ride.id,
             driver_id=ride.assigned_driver_id,
             customer_id=ride.customer_id,
+            vehicle_id=getattr(ride, 'vehicle_id', None),
             rating=rating,
+            cleanliness_rating=cleanliness_rating,
+            driving_rating=driving_rating,
+            behaviour_rating=behaviour_rating,
+            vehicle_condition_rating=vehicle_condition_rating,
             compliments=valid_compliments,
             complaint_tags=valid_complaints,
             feedback=feedback,
@@ -103,6 +119,10 @@ class RatingFeedbackService:
             index_elements=[CustomerDriverRating.ride_id],
             set_={
                 "rating": rating,
+                "cleanliness_rating": cleanliness_rating,
+                "driving_rating": driving_rating,
+                "behaviour_rating": behaviour_rating,
+                "vehicle_condition_rating": vehicle_condition_rating,
                 "compliments": valid_compliments,
                 "complaint_tags": valid_complaints,
                 "feedback": feedback,
@@ -138,6 +158,25 @@ class RatingFeedbackService:
         )
         await self.db.commit()
 
+        # Auto-escalate Safety Complaint if SAFETY_ISSUE selected
+        if "SAFETY_ISSUE" in valid_complaints or (rating == 1 and "UNSAFE_DRIVING" in valid_complaints):
+            try:
+                from common.models.all_models import SafetyIncidentReport
+                incident = SafetyIncidentReport(
+                    id=uuid.uuid4(),
+                    driver_id=ride.assigned_driver_id,
+                    ride_id=ride.id,
+                    incident_category="UNSAFE_DRIVING",
+                    severity="HIGH",
+                    status="REPORTED",
+                    description=f"Negative rating safety concern: {feedback or 'Unsafe driving reported in customer post-trip rating'}",
+                )
+                self.db.add(incident)
+                await self.db.commit()
+                logger.info("Safety incident report created from negative rating", incident_id=str(incident.id))
+            except Exception as e:
+                logger.warning("Could not auto-create safety incident report from rating", error=str(e))
+
         # Publish realtime event (non-blocking with 0.5s timeout)
         try:
             from common.utils.redis_client import get_redis
@@ -169,17 +208,105 @@ class RatingFeedbackService:
             "message": "Thank you! Driver rating submitted successfully.",
         }
 
+    async def rate_customer(
+        self,
+        driver_user_id: str,
+        ride_id: uuid.UUID,
+        rating: int,
+        tags: List[str] = [],
+        feedback: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Submits authoritative driver rating for the customer on completed ride.
+        Enforces integer 1-5 star validation, driver auth, and updates CustomerProfile rating.
+        """
+        if not isinstance(rating, int) or rating < 1 or rating > 5:
+            raise HTTPException(status_code=400, detail="Rating must be an integer between 1 and 5 stars")
+
+        # Load driver
+        d_res = await self.db.execute(select(Driver).where(Driver.user_id == UUID(driver_user_id)))
+        driver = d_res.scalar_one_or_none()
+        if not driver:
+            raise HTTPException(status_code=404, detail="Driver profile not found")
+
+        # Load ride
+        r_res = await self.db.execute(select(RideRequest).where(RideRequest.id == ride_id))
+        ride = r_res.scalar_one_or_none()
+        if not ride:
+            raise HTTPException(status_code=404, detail="Ride request not found")
+
+        if ride.status != RideRequestStatus.COMPLETED:
+            raise HTTPException(status_code=400, detail="Rating is only permitted for COMPLETED rides")
+
+        if ride.assigned_driver_id != driver.id:
+            raise HTTPException(status_code=403, detail="Unauthorized: Driver was not assigned to this ride")
+
+        # Atomic PostgreSQL UPSERT on ride_id unique constraint
+        stmt = pg_insert(DriverCustomerRating).values(
+            id=uuid.uuid4(),
+            ride_id=ride.id,
+            driver_id=driver.id,
+            customer_id=ride.customer_id,
+            rating=rating,
+            tags=tags,
+            feedback=feedback,
+            status="APPROVED",
+        ).on_conflict_do_update(
+            index_elements=[DriverCustomerRating.ride_id],
+            set_={
+                "rating": rating,
+                "tags": tags,
+                "feedback": feedback,
+                "updated_at": func.now(),
+            }
+        )
+        await self.db.execute(stmt)
+        await self.db.flush()
+
+        # Recalculate customer profile rating
+        c_res = await self.db.execute(
+            select(
+                func.avg(DriverCustomerRating.rating),
+                func.count(DriverCustomerRating.id)
+            ).where(
+                and_(
+                    DriverCustomerRating.customer_id == ride.customer_id,
+                    DriverCustomerRating.status == "APPROVED",
+                )
+            )
+        )
+        avg_row = c_res.one()
+        raw_avg = float(avg_row[0]) if avg_row[0] is not None else 5.0
+        total_ratings = int(avg_row[1]) if avg_row[1] is not None else 0
+        new_cust_rating = round(raw_avg, 2)
+
+        await self.db.execute(
+            update(CustomerProfile)
+            .where(CustomerProfile.user_id == ride.customer_id)
+            .values(rating=new_cust_rating, total_ratings=total_ratings)
+        )
+        await self.db.commit()
+
+        return {
+            "success": True,
+            "ride_id": str(ride.id),
+            "customer_id": str(ride.customer_id),
+            "rating": rating,
+            "new_customer_rating": new_cust_rating,
+            "total_ratings": total_ratings,
+            "message": "Customer rating submitted successfully.",
+        }
+
     async def get_driver_ratings_summary(self, driver_user_id: str) -> Dict[str, Any]:
         """
         Calculates driver rating breakdown (5★-1★), rolling 30-day trend, top compliments,
         and low-rating alerts.
         """
-        d_res = await self.db.execute(select(Driver).where(Driver.user_id == uuid.UUID(driver_user_id)))
+        d_res = await self.db.execute(select(Driver).where(Driver.user_id == UUID(driver_user_id)))
         driver = d_res.scalar_one_or_none()
         if not driver:
             raise HTTPException(status_code=404, detail="Driver profile not found")
 
-        # Fetch all approved ratings
         ratings_res = await self.db.execute(
             select(CustomerDriverRating)
             .where(
@@ -222,69 +349,50 @@ class RatingFeedbackService:
                 "improvement_tips": tips,
             }
 
-        # Calculate star breakdown
         counts = {5: 0, 4: 0, 3: 0, 2: 0, 1: 0}
         compliments_count: Dict[str, int] = {}
-        now = datetime.now(timezone.utc)
-        last_30_days_ratings: List[int] = []
-        prior_30_days_ratings: List[int] = []
+        thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+        recent_ratings = []
 
-        sum_scores = 0
         for r in ratings:
-            star = int(r.rating)
-            if star in counts:
-                counts[star] += 1
-            sum_scores += star
+            star = max(1, min(5, int(r.rating)))
+            counts[star] += 1
 
-            # Compliments tally
-            if r.compliments:
-                for comp in r.compliments:
-                    label = COMPLIMENT_CATALOG.get(comp, comp)
-                    compliments_count[label] = compliments_count.get(label, 0) + 1
+            for c in (r.compliments or []):
+                label = COMPLIMENT_CATALOG.get(c, c)
+                compliments_count[label] = compliments_count.get(label, 0) + 1
 
-            # Trend temporal buckets
             if r.created_at:
-                created_utc = r.created_at if r.created_at.tzinfo else r.created_at.replace(tzinfo=timezone.utc)
-                age_days = (now - created_utc).days
-                if age_days <= 30:
-                    last_30_days_ratings.append(star)
-                elif age_days <= 60:
-                    prior_30_days_ratings.append(star)
+                c_at = r.created_at
+                if c_at.tzinfo is None:
+                    c_at = c_at.replace(tzinfo=timezone.utc)
+                if c_at >= thirty_days_ago:
+                    recent_ratings.append(float(r.rating))
 
-        # Mathematical breakdown
-        breakdown = []
-        for star in [5, 4, 3, 2, 1]:
-            c = counts[star]
-            pct = round((c / total_count) * 100) if total_count > 0 else 0
-            breakdown.append({
-                "star": star,
-                "count": c,
-                "percentage": pct,
-            })
+        overall_rating = round(sum(int(r.rating) for r in ratings) / total_count, 2)
 
-        overall_rating = round(sum_scores / total_count, 2)
-        if driver.rating and abs(float(driver.rating) - overall_rating) > 0.05:
-            overall_rating = float(driver.rating)
+        if recent_ratings:
+            recent_avg = sum(recent_ratings) / len(recent_ratings)
+            rating_trend = round(recent_avg - overall_rating, 2)
+            trend_direction = "UP" if rating_trend >= 0 else "DOWN"
+        else:
+            rating_trend = 0.0
+            trend_direction = "STABLE"
 
-        # Rolling 30-day trend
-        rating_trend = 0.0
-        if len(last_30_days_ratings) >= 5 and len(prior_30_days_ratings) >= 5:
-            curr_avg = sum(last_30_days_ratings) / len(last_30_days_ratings)
-            prev_avg = sum(prior_30_days_ratings) / len(prior_30_days_ratings)
-            rating_trend = round(curr_avg - prev_avg, 2)
-        elif len(last_30_days_ratings) >= 3:
-            curr_avg = sum(last_30_days_ratings) / len(last_30_days_ratings)
-            rating_trend = round(curr_avg - overall_rating, 2)
+        breakdown = [
+            {
+                "star": s,
+                "count": counts[s],
+                "percentage": round((counts[s] / total_count) * 100) if total_count > 0 else 0
+            }
+            for s in [5, 4, 3, 2, 1]
+        ]
 
-        trend_direction = "UP" if rating_trend >= 0 else "DOWN"
-
-        # Sorted top compliments
         top_compliments = [
             {"tag": k, "count": v}
             for k, v in sorted(compliments_count.items(), key=lambda x: x[1], reverse=True)
         ]
 
-        # Standing logic
         if overall_rating >= 4.85:
             standing = "EXCELLENT"
             standing_badge = "Top 5% Partner"
@@ -298,7 +406,6 @@ class RatingFeedbackService:
             standing = "NEEDS_ATTENTION"
             standing_badge = "Action Required"
 
-        # Low rating alert
         is_low_alert = overall_rating < 4.70
         alert_msg = None
         improvement_tips = []
@@ -335,7 +442,7 @@ class RatingFeedbackService:
         """
         Returns paginated list of driver rating feedback with strict customer PII anonymization.
         """
-        d_res = await self.db.execute(select(Driver).where(Driver.user_id == uuid.UUID(driver_user_id)))
+        d_res = await self.db.execute(select(Driver).where(Driver.user_id == UUID(driver_user_id)))
         driver = d_res.scalar_one_or_none()
         if not driver:
             raise HTTPException(status_code=404, detail="Driver profile not found")
@@ -358,7 +465,6 @@ class RatingFeedbackService:
 
         history = []
         for r_rating, r_ride in rows:
-            # Redact customer identity into masked reference
             ride_snippet = f"#{str(r_ride.id).split('-')[0].upper()}"
             pickup_short = r_ride.pickup_address.split(",")[0] if r_ride.pickup_address else "Pickup Point"
             dest_short = r_ride.destination_address.split(",")[0] if r_ride.destination_address else "Destination Point"
@@ -388,9 +494,8 @@ class RatingFeedbackService:
     ) -> Dict[str, Any]:
         """
         Allows driver to submit an appeal/dispute against an unfair or abusive rating.
-        Updates status to DISPUTED for admin investigation without allowing deletion.
         """
-        d_res = await self.db.execute(select(Driver).where(Driver.user_id == uuid.UUID(driver_user_id)))
+        d_res = await self.db.execute(select(Driver).where(Driver.user_id == UUID(driver_user_id)))
         driver = d_res.scalar_one_or_none()
         if not driver:
             raise HTTPException(status_code=404, detail="Driver profile not found")
@@ -428,32 +533,18 @@ class RatingFeedbackService:
             "message": "Rating dispute submitted successfully. Our safety & moderation team will review this within 24 hours.",
         }
 
-    async def simulate_ratings_dev_mode(
-        self,
-        driver_user_id: str,
-        scenario: str,
-    ) -> Dict[str, Any]:
+    async def get_customer_ratings_summary(self, customer_user_id: str) -> Dict[str, Any]:
         """
-        Developer sandbox simulator for testing edge cases (5-star boost, low-rating warning, compliment wave).
+        Calculates customer's overall rating and total trips rated by drivers.
         """
-        d_res = await self.db.execute(select(Driver).where(Driver.user_id == uuid.UUID(driver_user_id)))
-        driver = d_res.scalar_one_or_none()
-        if not driver:
-            raise HTTPException(status_code=404, detail="Driver profile not found")
+        c_uuid = UUID(customer_user_id)
+        c_res = await self.db.execute(select(CustomerProfile).where(CustomerProfile.user_id == c_uuid))
+        customer = c_res.scalar_one_or_none()
+        if not customer:
+            raise HTTPException(status_code=404, detail="Customer profile not found")
 
-        if scenario == "LOW_RATING_WARNING":
-            await self.db.execute(update(Driver).where(Driver.id == driver.id).values(rating=4.42))
-        elif scenario == "FIVE_STAR_BOOST":
-            await self.db.execute(update(Driver).where(Driver.id == driver.id).values(rating=4.95))
-        elif scenario == "RESET_DEFAULTS":
-            await self.db.execute(update(Driver).where(Driver.id == driver.id).values(rating=4.88))
-
-        await self.db.commit()
-
-        summary = await self.get_driver_ratings_summary(driver_user_id)
         return {
-            "success": True,
-            "scenario": scenario,
-            "summary": summary,
-            "message": f"Dev simulation '{scenario}' applied successfully.",
+            "overall_rating": float(customer.rating or 5.0),
+            "total_ratings": customer.total_ratings or 0,
+            "standing": "TOP_RIDER" if float(customer.rating or 5.0) >= 4.8 else "STANDARD_RIDER",
         }

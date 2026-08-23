@@ -396,6 +396,10 @@ class AvailabilityServiceClass {
 
   // ─── Developer Simulation Mode ──────────────────────────────────────────
   public devSimulate(action: 'DROP_NETWORK' | 'RESTORE_NETWORK' | 'LOST_GPS' | 'RESTORE_GPS' | 'AUTO_OFFLINE' | 'BLOCK_KYC' | 'RESET') {
+    if (!__DEV__) {
+      console.warn('[AvailabilityService] devSimulate is disabled in production builds.')
+      return
+    }
     this.stateData.isSimulatedDev = true
 
     if (action === 'DROP_NETWORK') {

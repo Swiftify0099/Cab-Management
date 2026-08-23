@@ -46,47 +46,60 @@ class RazorpayService:
 
     async def create_order(
         self,
-        booking_id: str,
-        amount_rupees: Decimal,
-        customer_id: str,
+        booking_id: Optional[str] = None,
+        ride_id: Optional[str] = None,
+        amount_rupees: Decimal = Decimal("0.0"),
+        customer_id: str = "",
         notes: Optional[dict] = None,
+        idempotency_key: Optional[str] = None,
     ) -> dict:
         """
         Create a Razorpay order. Returns order data for frontend SDK.
-        Amount in rupees  converted to paise for Razorpay.
+        Supports both intercity booking_id and on-demand ride_id.
         """
         amount_paise = int(amount_rupees * 100)
+        identifier = ride_id or booking_id or "order"
 
         order_data = self.rp.order.create({
             "amount": amount_paise,
             "currency": "INR",
-            "receipt": f"booking_{booking_id[:12]}",
+            "receipt": f"rec_{str(identifier)[:12]}",
             "notes": {
-                "booking_id": booking_id,
+                "booking_id": booking_id or "",
+                "ride_id": ride_id or "",
                 "customer_id": customer_id,
                 **(notes or {}),
             },
         })
 
-        # Safely parse booking_id (to allow frontend mock IDs like 'req_zbw36oe')
+        # Safely parse booking_id & ride_id
         parsed_booking_id = None
         if booking_id and not booking_id.startswith("wallet_"):
             try:
                 parsed_booking_id = UUID(booking_id)
             except ValueError:
-                pass  # Keep as None for mocked/dummy IDs
+                pass
+
+        parsed_ride_id = None
+        if ride_id:
+            try:
+                parsed_ride_id = UUID(ride_id)
+            except ValueError:
+                pass
 
         # Persist the pending transaction record
         tx = Transaction(
             booking_id=parsed_booking_id,
+            ride_id=parsed_ride_id,
             user_id=UUID(customer_id),
             gateway_order_id=order_data["id"],
             amount=amount_rupees,
             currency="INR",
             status=PaymentStatus.PENDING,
             payment_method=PaymentMethod.RAZORPAY,
-            ledger_type=LedgerType.BOOKING if not booking_id.startswith("wallet_") else LedgerType.WALLET_CREDIT,
-            tx_metadata=notes or {}
+            ledger_type=LedgerType.BOOKING if not (booking_id and booking_id.startswith("wallet_")) else LedgerType.WALLET_CREDIT,
+            tx_metadata=notes or {},
+            idempotency_key=idempotency_key,
         )
         self.db.add(tx)
         await self.db.commit()
@@ -96,6 +109,7 @@ class RazorpayService:
             "Razorpay order created",
             order_id=order_data["id"],
             booking_id=booking_id,
+            ride_id=ride_id,
             amount=str(amount_rupees),
         )
 
@@ -106,6 +120,7 @@ class RazorpayService:
             "key_id": payment_settings.RAZORPAY_KEY_ID,
             "payment_id": str(tx.id),
             "booking_id": booking_id,
+            "ride_id": ride_id,
         }
 
     def verify_signature(
@@ -218,10 +233,33 @@ class RazorpayService:
                 # After customer pays, we must re-emit so driver app gets the paid alert.
                 await self._notify_driver_payment_confirmed(booking)
 
+        if tx.ride_id:
+            from common.models.all_models import RideRequest
+            ride_res = await self.db.execute(select(RideRequest).where(RideRequest.id == tx.ride_id))
+            ride = ride_res.scalar_one_or_none()
+            if ride:
+                ride.payment_status = "paid"
+                ride.payment_method = "razorpay"
+                await self.db.commit()
+
+                # Award reward points to customer
+                await self._award_reward_points(str(tx.user_id), tx.amount)
+
+                # Notify customer
+                await publish_event(
+                    f"customer:{tx.user_id}:events",
+                    {
+                        "event": "PAYMENT_CAPTURED",
+                        "ride_id": str(tx.ride_id),
+                        "amount": str(tx.amount),
+                    },
+                )
+
         logger.info(
             "Payment captured",
             payment_id=razorpay_payment_id,
-            booking_id=str(tx.booking_id),
+            booking_id=str(tx.booking_id) if tx.booking_id else None,
+            ride_id=str(tx.ride_id) if tx.ride_id else None,
             amount=str(tx.amount),
         )
 

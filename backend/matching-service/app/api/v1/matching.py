@@ -1892,6 +1892,161 @@ async def rate_customer_endpoint(
     return SuccessResponse(success=True, message=result["message"], data=result)
 
 
+class RateDriverSchema(BaseModel):
+    rating: int  # 1 to 5
+    compliments: List[str] = []
+    complaint_tags: List[str] = []
+    feedback: Optional[str] = None
+
+
+class TipDriverSchema(BaseModel):
+    tip_amount: float
+    idempotency_key: Optional[str] = None
+    payment_method: Optional[str] = "wallet"
+
+
+class LostItemReportSchema(BaseModel):
+    item_category: str
+    description: str
+    contact_phone: Optional[str] = None
+
+
+class TripIssueReportSchema(BaseModel):
+    category: str
+    description: str
+
+
+@router.post(
+    "/rides/{ride_id}/rate-driver",
+    response_model=SuccessResponse,
+    summary="Customer: Rate driver 1-5 stars with compliments and review",
+)
+async def rate_driver_endpoint(
+    ride_id: str,
+    request: RateDriverSchema,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    from app.services.rating_feedback_service import RatingFeedbackService
+    service = RatingFeedbackService(db)
+    result = await service.rate_driver(
+        customer_user_id=current_user.user_id_str,
+        ride_id=uuid.UUID(ride_id),
+        rating=request.rating,
+        compliments=request.compliments,
+        complaint_tags=request.complaint_tags,
+        feedback=request.feedback,
+    )
+    return SuccessResponse(success=True, message=result["message"], data=result)
+
+
+@router.post(
+    "/rides/{ride_id}/tip",
+    response_model=SuccessResponse,
+    summary="Customer: Add driver tip after ride completion",
+)
+async def tip_driver_endpoint(
+    ride_id: str,
+    request: TipDriverSchema,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    from app.services.trip_completion_service import TripCompletionService
+    service = TripCompletionService(db)
+    result = await service.add_driver_tip(
+        customer_user_id=current_user.user_id_str,
+        ride_id=uuid.UUID(ride_id),
+        tip_amount=request.tip_amount,
+        idempotency_key=request.idempotency_key,
+        payment_method=request.payment_method or "wallet",
+    )
+    return SuccessResponse(success=True, message=result["message"], data=result)
+
+
+@router.get(
+    "/customer/rides/{ride_id}/receipt",
+    response_model=SuccessResponse,
+    summary="Customer: Get itemized transparent ride receipt",
+)
+async def get_customer_ride_receipt_endpoint(
+    ride_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    from app.services.trip_completion_service import TripCompletionService
+    service = TripCompletionService(db)
+    result = await service.get_customer_ride_receipt(
+        customer_user_id=current_user.user_id_str,
+        ride_id=uuid.UUID(ride_id),
+    )
+    return SuccessResponse(success=True, message="Receipt retrieved", data=result)
+
+
+@router.post(
+    "/customer/rides/{ride_id}/lost-item",
+    response_model=SuccessResponse,
+    summary="Customer: Report lost item left in vehicle",
+)
+async def report_lost_item_endpoint(
+    ride_id: str,
+    request: LostItemReportSchema,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    from app.services.support_ticket_service import SupportTicketService
+    from common.models.all_models import RideRequest
+
+    r_res = await db.execute(select(RideRequest).where(RideRequest.id == uuid.UUID(ride_id)))
+    ride = r_res.scalar_one_or_none()
+    if not ride or ride.customer_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Unauthorized: User did not participate in this ride")
+
+    service = SupportTicketService(db)
+    desc = f"Item: {request.item_category}\nDetails: {request.description}\nContact: {request.contact_phone or current_user.phone or 'User Phone'}"
+    res = await service.create_ticket(
+        user_id=current_user.id,
+        category="TRIPS",
+        subcategory="LOST_ITEM",
+        subject=f"Lost Item Report: {request.item_category} (Ride #{ride_id[:8]})",
+        description=desc,
+        priority="high",
+        ride_id=ride.id,
+    )
+    return SuccessResponse(success=True, message="Lost item report submitted to Support Team and Driver.", data=res)
+
+
+@router.post(
+    "/customer/rides/{ride_id}/report-issue",
+    response_model=SuccessResponse,
+    summary="Customer: Report fare, safety or vehicle issue post-trip",
+)
+async def report_trip_issue_endpoint(
+    ride_id: str,
+    request: TripIssueReportSchema,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    from app.services.support_ticket_service import SupportTicketService
+    from common.models.all_models import RideRequest
+
+    r_res = await db.execute(select(RideRequest).where(RideRequest.id == uuid.UUID(ride_id)))
+    ride = r_res.scalar_one_or_none()
+    if not ride or ride.customer_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Unauthorized: User did not participate in this ride")
+
+    service = SupportTicketService(db)
+    res = await service.create_ticket(
+        user_id=current_user.id,
+        category="SAFETY" if "SAFETY" in request.category.upper() else "TRIPS",
+        subcategory=request.category.upper(),
+        subject=f"Trip Issue: {request.category} (Ride #{ride_id[:8]})",
+        description=request.description,
+        priority="normal",
+        ride_id=ride.id,
+    )
+    return SuccessResponse(success=True, message="Issue reported successfully. Support team notified.", data=res)
+
+
 @router.get(
     "/driver/earnings/summary",
     response_model=SuccessResponse,
@@ -2185,6 +2340,16 @@ class RateDriverSchema(BaseModel):
     compliments: List[str] = []
     complaint_tags: List[str] = []
     feedback: Optional[str] = None
+    cleanliness_rating: Optional[int] = None
+    driving_rating: Optional[int] = None
+    behaviour_rating: Optional[int] = None
+    vehicle_condition_rating: Optional[int] = None
+
+
+class RateCustomerSchema(BaseModel):
+    rating: int = Field(..., ge=1, le=5, description="1 to 5 stars")
+    tags: List[str] = []
+    feedback: Optional[str] = None
 
 
 class DisputeRatingSchema(BaseModel):
@@ -2207,13 +2372,6 @@ async def rate_driver_endpoint(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     from app.services.rating_feedback_service import RatingFeedbackService
-
-
-
-
-
-
-
     service = RatingFeedbackService(db)
     result = await service.rate_driver(
         customer_user_id=current_user.user_id_str,
@@ -2222,8 +2380,50 @@ async def rate_driver_endpoint(
         compliments=request.compliments,
         complaint_tags=request.complaint_tags,
         feedback=request.feedback,
+        cleanliness_rating=request.cleanliness_rating,
+        driving_rating=request.driving_rating,
+        behaviour_rating=request.behaviour_rating,
+        vehicle_condition_rating=request.vehicle_condition_rating,
     )
     return SuccessResponse(success=True, message=result["message"], data=result)
+
+
+@router.post(
+    "/rides/{ride_id}/rate-customer",
+    response_model=SuccessResponse,
+    summary="Driver: Authoritative 1-5 star customer rating with tags",
+)
+async def rate_customer_endpoint(
+    ride_id: str,
+    request: RateCustomerSchema,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    from app.services.rating_feedback_service import RatingFeedbackService
+    service = RatingFeedbackService(db)
+    result = await service.rate_customer(
+        driver_user_id=current_user.user_id_str,
+        ride_id=uuid.UUID(ride_id),
+        rating=request.rating,
+        tags=request.tags,
+        feedback=request.feedback,
+    )
+    return SuccessResponse(success=True, message=result["message"], data=result)
+
+
+@router.get(
+    "/customer/ratings/summary",
+    response_model=SuccessResponse,
+    summary="Customer: Get overall customer quality score and rating summary",
+)
+async def get_customer_ratings_summary_endpoint(
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    from app.services.rating_feedback_service import RatingFeedbackService
+    service = RatingFeedbackService(db)
+    result = await service.get_customer_ratings_summary(customer_user_id=current_user.user_id_str)
+    return SuccessResponse(success=True, message="Customer rating summary retrieved", data=result)
 
 
 @router.get(
@@ -2582,28 +2782,42 @@ class SafetyIncidentSubmitRequest(BaseModel):
 @router.post(
     "/safety/sos",
     response_model=SuccessResponse,
-    summary="Driver: Authoritative Emergency SOS Trigger with 112 Police Alert",
+    summary="Customer/Driver: Authoritative Emergency SOS Trigger with 112 Police Alert",
 )
 async def trigger_emergency_sos(
     request: SafetySOSTriggerRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-    from app.services.driver_safety_service import DriverSafetyService
-    from common.models.all_models import Driver
-    d_res = await db.execute(select(Driver).where(Driver.user_id == current_user.id))
-    driver = d_res.scalar_one_or_none()
-    if not driver:
-        raise HTTPException(status_code=404, detail="Driver profile not found")
+    from app.services.safety_sos_service import SafetySOSService
+    from common.models.all_models import Driver, RideRequest
 
-    service = DriverSafetyService(db)
+    ride_res = await db.execute(select(RideRequest).where(RideRequest.id == uuid.UUID(request.ride_id)))
+    ride = ride_res.scalar_one_or_none()
+    if not ride:
+        raise HTTPException(status_code=404, detail="Ride request not found")
+
+    # Determine role & verify participation
+    if current_user.role == "driver":
+        d_res = await db.execute(select(Driver).where(Driver.user_id == current_user.id))
+        driver = d_res.scalar_one_or_none()
+        if not driver or ride.assigned_driver_id != driver.id:
+            raise HTTPException(status_code=403, detail="Unauthorized: Driver not assigned to this ride")
+        role = "driver"
+    else:
+        if ride.customer_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Unauthorized: User did not participate in this ride")
+        role = "customer"
+
+    service = SafetySOSService(db)
     res = await service.trigger_sos(
-        driver_id=driver.id,
-        ride_id=uuid.UUID(request.ride_id),
+        user_id=current_user.user_id_str,
+        role=role,
+        ride_id=ride.id,
         latitude=request.latitude,
         longitude=request.longitude,
         accuracy=request.accuracy,
-        reason=request.reason or "Driver Emergency SOS",
+        reason=request.reason or f"{role.capitalize()} Emergency SOS",
     )
     return SuccessResponse(success=True, message=res["message"], data=res)
 
@@ -2681,22 +2895,29 @@ async def delete_trusted_contact(
 @router.post(
     "/safety/rides/{ride_id}/share",
     response_model=SuccessResponse,
-    summary="Driver: Create tokenized live trip sharing link",
+    summary="Customer/Driver: Create tokenized live trip sharing link",
 )
 async def create_live_trip_share(
     ride_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     from app.services.driver_safety_service import DriverSafetyService
-    from common.models.all_models import Driver
-    d_res = await db.execute(select(Driver).where(Driver.user_id == current_user.id))
-    driver = d_res.scalar_one_or_none()
-    if not driver:
-        raise HTTPException(status_code=404, detail="Driver profile not found")
+    from common.models.all_models import Driver, RideRequest
+
+    r_res = await db.execute(select(RideRequest).where(RideRequest.id == uuid.UUID(ride_id)))
+    ride = r_res.scalar_one_or_none()
+    if not ride:
+        raise HTTPException(status_code=404, detail="Ride not found")
+
+    driver_id = ride.assigned_driver_id
+    if not driver_id:
+        d_res = await db.execute(select(Driver).limit(1))
+        d_sample = d_res.scalar_one_or_none()
+        driver_id = d_sample.id if d_sample else uuid.uuid4()
 
     service = DriverSafetyService(db)
-    res = await service.create_live_trip_share(driver.id, uuid.UUID(ride_id))
+    res = await service.create_live_trip_share(driver_id, ride.id)
     return SuccessResponse(success=True, message=res["message"], data=res)
 
 

@@ -25,12 +25,15 @@ export default function PropertySearchScreen() {
 
   const handleSearch = () => {
     if (!city) return;
-    setIsSearching(true);
-    // TODO: Connect to backend hotel-service /api/v1/properties/search
-    setTimeout(() => {
-      setIsSearching(false);
-      // We will show search results here in the next iteration
-    }, 1000);
+    router.push({
+      pathname: '/hotel/results' as any,
+      params: {
+        city: city.trim(),
+        property_type: type || 'hotel',
+        check_in: '2026-08-25',
+        check_out: '2026-08-27',
+      },
+    });
   };
 
   return (

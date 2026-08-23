@@ -27,6 +27,9 @@ from common.models.all_models import (
     DriverBankAccount,
     DriverDocument,
     KYCStatus,
+    MediaAsset,
+    MediaOwnerType,
+    MediaType,
     User,
     Vehicle,
 )
@@ -310,9 +313,13 @@ async def save_or_update_kyc_document(
     issue_date: Optional[date] = None,
     expires_at: Optional[date] = None,
     metadata_json: Optional[dict] = None,
+    cloudinary_public_id: Optional[str] = None,
+    media_asset_id: Optional[uuid.UUID] = None,
+    vehicle_id: Optional[uuid.UUID] = None,
 ) -> DriverDocument:
     """
     Saves new document or updates existing one, incrementing version and resetting rejection reasons.
+    Links MediaAsset metadata and Cloudinary public ID.
     """
     result = await db.execute(
         select(DriverDocument).where(
@@ -325,6 +332,12 @@ async def save_or_update_kyc_document(
     if doc:
         doc.version += 1
         doc.file_path = file_path
+        if cloudinary_public_id:
+            doc.cloudinary_public_id = cloudinary_public_id
+        if media_asset_id:
+            doc.media_asset_id = media_asset_id
+        if vehicle_id:
+            doc.vehicle_id = vehicle_id
         if document_number:
             doc.document_number = document_number
         if issue_date:
@@ -336,17 +349,22 @@ async def save_or_update_kyc_document(
         doc.is_verified = False
         doc.rejection_reason = None
         doc.status = "under_review"
+        doc.is_current = True
     else:
         doc = DriverDocument(
             driver_id=driver.id,
             doc_type=doc_type,
             file_path=file_path,
+            cloudinary_public_id=cloudinary_public_id,
+            media_asset_id=media_asset_id,
+            vehicle_id=vehicle_id,
             document_number=document_number,
             issue_date=issue_date,
             expires_at=expires_at,
             version=1,
             status="under_review",
             is_verified=False,
+            is_current=True,
             metadata_json=metadata_json or {},
         )
         db.add(doc)

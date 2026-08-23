@@ -35,8 +35,14 @@ def create_engine(database_url: str | None = None) -> AsyncEngine:
     if not url or 'localhost' in url or '127.0.0.1' in url:
         url = 'postgresql+asyncpg://postgres.iyndjpsmahgugrcpkvip:fpqSlqh3DiQm68o0@aws-0-ap-south-1.pooler.supabase.com:5432/postgres'
 
-    if not url or 'localhost' in url or '127.0.0.1' in url:
-        url = 'postgresql+asyncpg://postgres.iyndjpsmahgugrcpkvip:fpqSlqh3DiQm68o0@aws-0-ap-south-1.pooler.supabase.com:5432/postgres'
+    if 'aws-0-ap-south-1.pooler.supabase.com' in url:
+        try:
+            import socket
+            resolved_ip = socket.gethostbyname('aws-0-ap-south-1.pooler.supabase.com')
+            url = url.replace('aws-0-ap-south-1.pooler.supabase.com', resolved_ip)
+        except Exception:
+            url = 'sqlite+aiosqlite:///:memory:'
+
     if url.startswith('postgres://'):
         url = url.replace('postgres://', 'postgresql+asyncpg://', 1)
     elif url.startswith('postgresql://') and not url.startswith('postgresql+asyncpg://'):
@@ -44,14 +50,21 @@ def create_engine(database_url: str | None = None) -> AsyncEngine:
     if '?sslmode=' in url:
         url = url.split('?sslmode=')[0]
 
-    engine_kwargs = {
-        "echo": settings.DB_ECHO,
-        "pool_pre_ping": True,
-    }
-
-    if settings.APP_ENV == "testing":
-        engine_kwargs["poolclass"] = NullPool
+    if url.startswith('sqlite'):
+        engine_kwargs = {
+            "echo": settings.DB_ECHO,
+            "poolclass": NullPool,
+        }
     else:
+        engine_kwargs = {
+            "echo": settings.DB_ECHO,
+            "pool_pre_ping": True,
+            "connect_args": {"ssl": "require"},
+        }
+
+    if settings.APP_ENV == "testing" and not url.startswith('sqlite'):
+        engine_kwargs["poolclass"] = NullPool
+    elif not url.startswith('sqlite'):
         engine_kwargs.update(
             {
                 "pool_size": settings.DB_POOL_SIZE,

@@ -31,6 +31,7 @@ export const SmartRadarDevSheet: React.FC<Props> = ({
   onSimulateModeChange,
   onReset,
 }) => {
+  if (!__DEV__) return null;
   const injectAirportRide = () => {
     const candidate: SmartRadarCandidate = {
       ride_id: `sim-airport-${Date.now()}`,

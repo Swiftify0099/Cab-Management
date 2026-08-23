@@ -1,282 +1,413 @@
 """
-Parcel Service API  Phase 7.
+Parcel Logistics API — Feature 15.
+Endpoints for:
+- Quote estimation
+- Parcel order creation
+- Customer tracking & history
+- Driver delivery request acceptance
+- Pickup OTP handover & verification
+- Delivery OTP verification & Proof of Delivery (POD)
+- Cancellation
 """
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form
+from typing import Optional, List
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.database import get_db
 from common.middleware.auth import get_current_user, get_current_active_driver, AuthenticatedUser
 from common.schemas.base import SuccessResponse
-from common.utils.storage import save_upload, ALLOWED_IMAGE_TYPES, get_file_url
 from app.services.parcel_service import ParcelService
 
 router = APIRouter()
 
 
-#  Schemas 
+# ── Schemas ──────────────────────────────────────────────────────────
 
-class CreateParcelRequest(BaseModel):
-    trip_id: str
+class ParcelQuoteRequest(BaseModel):
+    sender_lat: float
+    sender_lng: float
+    receiver_lat: float
+    receiver_lng: float
+    weight_kg: float = Field(..., gt=0, le=3000)
+    length_cm: Optional[float] = None
+    width_cm: Optional[float] = None
+    height_cm: Optional[float] = None
+    package_count: int = Field(default=1, ge=1, le=50)
+    vehicle_category: str = "BIKE"
+    delivery_priority: str = "STANDARD"
+    is_fragile: bool = False
+    is_valuable: bool = False
+    declared_value: Optional[float] = None
+    insurance_opt_in: bool = False
+    promo_code: Optional[str] = None
+
+
+class CreateParcelOrderRequest(BaseModel):
     sender_name: str
     sender_phone: str
+    sender_address: str
+    sender_lat: float
+    sender_lng: float
+    pickup_instructions: Optional[str] = None
+
     receiver_name: str
     receiver_phone: str
     receiver_address: str
-    weight_kg: float = Field(..., gt=0, le=500)
-    description: str
-    fragile: bool = False
-    urgent: bool = False
+    receiver_lat: float
+    receiver_lng: float
+    delivery_instructions: Optional[str] = None
+
+    parcel_category: str = "GENERAL_BOX"
+    description: Optional[str] = None
+    package_count: int = Field(default=1, ge=1, le=50)
+    weight_kg: float = Field(..., gt=0, le=3000)
+    length_cm: Optional[float] = None
+    width_cm: Optional[float] = None
+    height_cm: Optional[float] = None
+
+    is_fragile: bool = False
+    is_valuable: bool = False
     declared_value: Optional[float] = None
+    insurance_opt_in: bool = False
+
+    vehicle_category: str = "BIKE"
+    delivery_priority: str = "STANDARD"
+    payment_method: str = "WALLET"
+    promo_code: Optional[str] = None
 
 
-class UpdateParcelStatusRequest(BaseModel):
-    parcel_id: str
-    status: str  # pickup_done | in_transit | delivered | failed
-    delivery_otp: Optional[str] = None
+class PickupVerifyRequest(BaseModel):
+    pickup_otp: str
+    photo_url: Optional[str] = None
+    notes: Optional[str] = None
 
 
-class FareEstimateRequest(BaseModel):
-    weight_kg: float
-    distance_km: float
-    fragile: bool = False
-    urgent: bool = False
+class DeliveryVerifyRequest(BaseModel):
+    delivery_otp: str
+    receiver_name: Optional[str] = None
+    signature_url: Optional[str] = None
+    delivery_photo_url: Optional[str] = None
+    delivered_lat: Optional[float] = None
+    delivered_lng: Optional[float] = None
 
 
-#  Routes 
+class ArriveLocationRequest(BaseModel):
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
+class CancelParcelRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+# ── Routes ───────────────────────────────────────────────────────────
 
 @router.post(
-    "/parcels",
+    "/quote",
     response_model=SuccessResponse,
-    summary="Customer: Book a parcel on a shared trip",
+    summary="Calculate authoritative parcel quote breakdown",
 )
-async def book_parcel(
-    request: CreateParcelRequest,
+async def calculate_quote(
+    request: ParcelQuoteRequest,
     db: AsyncSession = Depends(get_db),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     service = ParcelService(db)
-    try:
-        result = await service.create_parcel(
-            customer_id=current_user.user_id_str,
-            trip_id=request.trip_id,
-            sender_name=request.sender_name,
-            sender_phone=request.sender_phone,
-            receiver_name=request.receiver_name,
-            receiver_phone=request.receiver_phone,
-            receiver_address=request.receiver_address,
-            weight_kg=request.weight_kg,
-            description=request.description,
-            fragile=request.fragile,
-            urgent=request.urgent,
-            declared_value=request.declared_value,
-        )
-        return SuccessResponse(success=True, message="Parcel booked", data=result)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.post(
-    "/parcels/fare-estimate",
-    response_model=SuccessResponse,
-    summary="Estimate parcel fare before booking",
-)
-async def estimate_fare(
-    request: FareEstimateRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: AuthenticatedUser = Depends(get_current_user),
-):
-    service = ParcelService(db)
-    fare = service.calculate_fare(
+    quote = service.calculate_quote(
+        sender_lat=request.sender_lat,
+        sender_lng=request.sender_lng,
+        receiver_lat=request.receiver_lat,
+        receiver_lng=request.receiver_lng,
         weight_kg=request.weight_kg,
-        distance_km=request.distance_km,
-        fragile=request.fragile,
-        urgent=request.urgent,
+        length_cm=request.length_cm,
+        width_cm=request.width_cm,
+        height_cm=request.height_cm,
+        package_count=request.package_count,
+        vehicle_category=request.vehicle_category,
+        delivery_priority=request.delivery_priority,
+        is_fragile=request.is_fragile,
+        is_valuable=request.is_valuable,
+        declared_value=Decimal(str(request.declared_value)) if request.declared_value else None,
+        insurance_opt_in=request.insurance_opt_in,
+        promo_code=request.promo_code,
     )
-    return SuccessResponse(
-        success=True,
-        message="Fare estimated",
-        data={"fare": float(fare), "breakdown": {
-            "weight_kg": request.weight_kg,
-            "distance_km": request.distance_km,
-            "fragile_surcharge": "20%" if request.fragile else "0%",
-            "urgent_surcharge": "30%" if request.urgent else "0%",
-        }},
-    )
+    return SuccessResponse(success=True, message="Quote calculated", data=quote)
 
 
-@router.get(
-    "/parcels/my",
+@router.post(
+    "/",
     response_model=SuccessResponse,
-    summary="Customer: Get my parcel history",
+    summary="Create a new parcel logistics order",
 )
-async def my_parcels(
-    page: int = 1,
+async def create_parcel(
+    request: CreateParcelOrderRequest,
     db: AsyncSession = Depends(get_db),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     service = ParcelService(db)
-    parcels = await service.get_customer_parcels(current_user.user_id_str, page=page)
-    return SuccessResponse(success=True, message="OK", data=parcels)
+    result = await service.create_parcel(
+        booking_owner_id=current_user.user_id_str,
+        sender_name=request.sender_name,
+        sender_phone=request.sender_phone,
+        sender_address=request.sender_address,
+        sender_lat=request.sender_lat,
+        sender_lng=request.sender_lng,
+        pickup_instructions=request.pickup_instructions,
+        receiver_name=request.receiver_name,
+        receiver_phone=request.receiver_phone,
+        receiver_address=request.receiver_address,
+        receiver_lat=request.receiver_lat,
+        receiver_lng=request.receiver_lng,
+        delivery_instructions=request.delivery_instructions,
+        parcel_category=request.parcel_category,
+        description=request.description,
+        package_count=request.package_count,
+        weight_kg=request.weight_kg,
+        length_cm=request.length_cm,
+        width_cm=request.width_cm,
+        height_cm=request.height_cm,
+        is_fragile=request.is_fragile,
+        is_valuable=request.is_valuable,
+        declared_value=request.declared_value,
+        insurance_opt_in=request.insurance_opt_in,
+        vehicle_category=request.vehicle_category,
+        delivery_priority=request.delivery_priority,
+        payment_method=request.payment_method,
+        promo_code=request.promo_code,
+    )
+    return SuccessResponse(success=True, message="Parcel order created", data=result)
 
 
 @router.get(
-    "/parcels/track/{tracking_number}",
+    "/my",
     response_model=SuccessResponse,
-    summary="Public: Track a parcel by tracking number",
+    summary="Get customer parcel shipments history",
 )
-async def track_parcel(
-    tracking_number: str,
+async def get_my_parcels(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     service = ParcelService(db)
-    try:
-        result = await service.track_parcel(tracking_number.upper())
-        return SuccessResponse(success=True, message="OK", data=result)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    parcels = await service.get_customer_parcels(
+        customer_id=current_user.user_id_str,
+        limit=limit,
+        offset=offset,
+    )
+    return SuccessResponse(success=True, message="Parcels retrieved", data=parcels)
 
-
-class ParcelRespondRequest(BaseModel):
-    parcel_id: str
-    action: str  # accept | decline
-
-
-# ============================================================
-# DRIVER ROUTES
-# ============================================================
 
 @router.get(
-    "/parcels/driver-requests",
+    "/driver/requests",
     response_model=SuccessResponse,
-    summary="Driver: Get pending parcel requests",
+    summary="Driver: Get available parcel delivery requests",
 )
 async def get_driver_requests(
     db: AsyncSession = Depends(get_db),
-    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     service = ParcelService(db)
-    requests = await service.get_driver_requests(current_user.user_id_str)
-    return SuccessResponse(success=True, message="OK", data=requests)
-
-
-@router.post(
-    "/parcels/respond",
-    response_model=SuccessResponse,
-    summary="Driver: Accept or decline a parcel request",
-)
-async def respond_to_parcel(
-    request: ParcelRespondRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: AuthenticatedUser = Depends(get_current_active_driver),
-):
-    service = ParcelService(db)
-    try:
-        result = await service.respond_to_request(
-            parcel_id=request.parcel_id,
-            driver_id=current_user.user_id_str,
-            action=request.action,
-        )
-        return SuccessResponse(success=True, message=f"Parcel {request.action}ed", data=result)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.post(
-    "/parcels/status",
-    response_model=SuccessResponse,
-    summary="Driver: Update parcel status (pickup/transit/delivered)",
-)
-async def update_parcel_status(
-    request: UpdateParcelStatusRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: AuthenticatedUser = Depends(get_current_active_driver),
-):
-    service = ParcelService(db)
-    try:
-        result = await service.update_status(
-            parcel_id=request.parcel_id,
-            new_status=request.status,
-            driver_id=current_user.user_id_str,
-            delivery_otp=request.delivery_otp,
-        )
-        return SuccessResponse(success=True, message=f"Parcel status  {request.status}", data=result)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    requests = await service.get_driver_available_requests(current_user.user_id_str)
+    return SuccessResponse(success=True, message="Delivery requests retrieved", data=requests)
 
 
 @router.get(
-    "/parcels/{parcel_id}",
+    "/{parcel_id}",
     response_model=SuccessResponse,
-    summary="Get parcel detail",
+    summary="Get parcel shipment tracking details",
 )
 async def get_parcel(
     parcel_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-    from sqlalchemy import select
-    from uuid import UUID
-    from common.models.all_models import Parcel
-    result = await db.execute(select(Parcel).where(Parcel.id == UUID(parcel_id)))
-    parcel = result.scalar_one_or_none()
-    if not parcel:
-        raise HTTPException(status_code=404, detail="Parcel not found")
-    return SuccessResponse(success=True, message="OK", data={
-        "id": str(parcel.id),
-        "tracking_number": parcel.tracking_number,
-        "status": parcel.status.value,
-        "fare": float(parcel.fare),
-        "weight_kg": parcel.weight_kg,
-        "sender_name": parcel.sender_name,
-        "receiver_name": parcel.receiver_name,
-        "receiver_address": parcel.receiver_address,
-        "is_fragile": parcel.is_fragile,
-        "is_urgent": parcel.is_urgent,
-        "delivery_otp": parcel.delivery_otp if str(parcel.customer_id) == current_user.user_id_str else None,
-        "parcel_photo": get_file_url(parcel.parcel_photo) if getattr(parcel, 'parcel_photo', None) else None,
-    })
+    service = ParcelService(db)
+    data = await service.get_parcel_details(parcel_id)
+    return SuccessResponse(success=True, message="Parcel details retrieved", data=data)
 
 
 @router.post(
-    "/parcels/{parcel_id}/photo",
+    "/{parcel_id}/accept",
     response_model=SuccessResponse,
-    summary="Upload a photo for a parcel",
+    summary="Driver: Accept a parcel delivery request",
 )
-async def upload_parcel_photo(
+async def accept_parcel(
     parcel_id: str,
-    file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-    from sqlalchemy import select
+    service = ParcelService(db)
+    result = await service.driver_accept_parcel(parcel_id, current_user.user_id_str)
+    return SuccessResponse(success=True, message="Parcel accepted", data=result)
+
+
+@router.post(
+    "/{parcel_id}/arrive-pickup",
+    response_model=SuccessResponse,
+    summary="Driver: Mark arrival at sender pickup",
+)
+async def arrive_pickup(
+    parcel_id: str,
+    body: Optional[ArriveLocationRequest] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    service = ParcelService(db)
+    lat = body.lat if body else None
+    lng = body.lng if body else None
+    result = await service.driver_arrive_pickup(parcel_id, current_user.user_id_str, lat=lat, lng=lng)
+    return SuccessResponse(success=True, message="Arrived at pickup", data=result)
+
+
+@router.post(
+    "/{parcel_id}/verify-pickup",
+    response_model=SuccessResponse,
+    summary="Driver: Submit Sender Pickup OTP & start transit",
+)
+async def verify_pickup(
+    parcel_id: str,
+    body: PickupVerifyRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    service = ParcelService(db)
+    result = await service.verify_pickup_otp_and_handover(
+        parcel_id=parcel_id,
+        driver_user_id=current_user.user_id_str,
+        pickup_otp=body.pickup_otp,
+        photo_url=body.photo_url,
+        notes=body.notes,
+    )
+    return SuccessResponse(success=True, message="Pickup verified. In transit.", data=result)
+
+
+@router.post(
+    "/{parcel_id}/arrive-drop",
+    response_model=SuccessResponse,
+    summary="Driver: Mark arrival at receiver drop destination",
+)
+async def arrive_drop(
+    parcel_id: str,
+    body: Optional[ArriveLocationRequest] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    service = ParcelService(db)
+    lat = body.lat if body else None
+    lng = body.lng if body else None
+    result = await service.driver_arrive_destination(parcel_id, current_user.user_id_str, lat=lat, lng=lng)
+    return SuccessResponse(success=True, message="Arrived at destination", data=result)
+
+
+@router.post(
+    "/{parcel_id}/verify-delivery",
+    response_model=SuccessResponse,
+    summary="Driver: Submit Receiver Delivery OTP & complete POD",
+)
+async def verify_delivery(
+    parcel_id: str,
+    body: DeliveryVerifyRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    service = ParcelService(db)
+    result = await service.verify_delivery_otp_and_complete(
+        parcel_id=parcel_id,
+        driver_user_id=current_user.user_id_str,
+        delivery_otp=body.delivery_otp,
+        receiver_name=body.receiver_name,
+        signature_url=body.signature_url,
+        delivery_photo_url=body.delivery_photo_url,
+        delivered_lat=body.delivered_lat,
+        delivered_lng=body.delivered_lng,
+    )
+    return SuccessResponse(success=True, message="Delivery verified & completed", data=result)
+
+
+@router.post(
+    "/{parcel_id}/cancel",
+    response_model=SuccessResponse,
+    summary="Cancel parcel order",
+)
+async def cancel_parcel(
+    parcel_id: str,
+    body: Optional[CancelParcelRequest] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    service = ParcelService(db)
+    reason = body.reason if body else None
+    result = await service.cancel_parcel(
+        parcel_id=parcel_id,
+        user_id=current_user.user_id_str,
+        user_role=current_user.role or "CUSTOMER",
+        reason=reason,
+    )
+    return SuccessResponse(success=True, message="Parcel cancelled", data=result)
+
+
+# ── Driver App Backward Compatibility Aliases ────────────────────────
+
+@router.get("/driver/my-parcels", response_model=SuccessResponse)
+@router.get("/driver-my-parcels", response_model=SuccessResponse)
+async def get_driver_my_parcels(
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    from common.models.all_models import Driver, Parcel, ParcelStatus
+    from sqlalchemy import select, or_
     from uuid import UUID
-    from common.models.all_models import Parcel
-    
-    result = await db.execute(select(Parcel).where(Parcel.id == UUID(parcel_id)))
-    parcel = result.scalar_one_or_none()
-    if not parcel:
-        raise HTTPException(status_code=404, detail="Parcel not found")
-        
-    if str(parcel.customer_id) != current_user.user_id_str:
-        raise HTTPException(status_code=403, detail="Not authorized")
 
-    relative_path = await save_upload(
-        file=file,
-        category="parcels",
-        allowed_types=ALLOWED_IMAGE_TYPES,
-        max_size=5 * 1024 * 1024,
+    d_res = await db.execute(select(Driver).where(Driver.user_id == UUID(current_user.user_id_str)))
+    driver = d_res.scalar_one_or_none()
+    if not driver:
+        return SuccessResponse(success=True, message="No parcels", data=[])
+
+    p_res = await db.execute(
+        select(Parcel)
+        .where(
+            Parcel.driver_id == driver.id,
+            Parcel.status.in_([
+                ParcelStatus.DRIVER_ASSIGNED,
+                ParcelStatus.AT_PICKUP,
+                ParcelStatus.IN_TRANSIT,
+                ParcelStatus.AT_DESTINATION,
+            ])
+        )
     )
+    parcels = p_res.scalars().all()
+    data = [
+        {
+            "id": str(p.id),
+            "tracking_number": p.tracking_number,
+            "status": p.status.value,
+            "sender_name": p.sender_name,
+            "sender_phone": p.sender_phone,
+            "sender_address": p.sender_address,
+            "receiver_name": p.receiver_name,
+            "receiver_phone": p.receiver_phone,
+            "receiver_address": p.receiver_address,
+            "weight_kg": p.weight_kg,
+            "fare": float(p.fare),
+            "driver_earning": float(p.driver_earning),
+            "is_fragile": p.is_fragile,
+            "pickup_otp": p.pickup_otp,
+            "delivery_otp": p.delivery_otp,
+        }
+        for p in parcels
+    ]
+    return SuccessResponse(success=True, message="My assigned parcels", data=data)
 
-    # Note: Ensure parcel model has 'parcel_photo' column. Assuming it does or will be added dynamically in DB.
-    # Currently assuming setting an attribute if missing. 
-    setattr(parcel, 'parcel_photo', relative_path)
-    await db.commit()
 
-    return SuccessResponse(
-        success=True,
-        message="Photo uploaded successfully",
-        data={"photo_url": get_file_url(relative_path)},
-    )
+@router.get("/driver-requests", response_model=SuccessResponse)
+async def get_driver_requests_alias(
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    service = ParcelService(db)
+    requests = await service.get_driver_available_requests(current_user.user_id_str)
+    return SuccessResponse(success=True, message="Delivery requests retrieved", data=requests)
 

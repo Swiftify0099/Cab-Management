@@ -1,4 +1,4 @@
-﻿"""
+"""
 CabBooking â€” Combined Local Dev Gateway  (port 8001 / 80)
 Loads auth + booking + matching routers into one FastAPI app.
 
@@ -89,9 +89,10 @@ sys.path.insert(0, os.path.join(_ROOT, "common"))
 sys.path.insert(0, _ROOT)
 
 try:
-    from app.api.v1 import auth_router, admin_auth_router, profile_router, driver_router
+    from app.api.v1 import auth_router, admin_auth_router, profile_router, driver_router, family_router, emergency_router, customer_settings_router, customer_home_router, services_router, customer_security_router, smart_router, orchestration_router
+    from app.api.v1.riders import router as riders_router
     _auth_ok = True
-    print("[AUTH]    [OK] auth / profile / driver")
+    print("[AUTH]    [OK] auth / profile / driver / riders / security / smart / orchestration")
 except Exception as _e:
     _auth_ok = False
     print(f"[AUTH]    [ERR] {_e}")
@@ -110,9 +111,11 @@ sys.path.insert(0, _booking_path)
 try:
     from app.api.v1 import booking_router, fare_router, trip_router
     from app.api.v1.subscriptions import router as subscription_router
+    from app.api.v1.activity import router as activity_router
+    from app.api.v1.support_hub import router as support_hub_router
     from app.services.pending_match_bridge import run_reverse_match as _PRMB
     _booking_ok = True
-    print("[BOOKING] [OK] trips / bookings / fare / subscriptions")
+    print("[BOOKING] [OK] trips / bookings / fare / subscriptions / activity / support")
 except Exception as _e:
     _booking_ok = False
     print(f"[BOOKING] [ERR] {_e}")
@@ -147,10 +150,10 @@ _matching_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.starts
 for k in list(sys.modules.keys()):
     if k == "app" or k.startswith("app."):
         del sys.modules[k]
-# â”€â”€ 4. Load PAYMENT service router â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+# ── 4. Load PAYMENT service router ───────────────────────────────────────────
 _payment_path = os.path.join(_ROOT, "payment-service")
 sys.path.insert(0, _payment_path)
-# Load the payment-service .env so Razorpay keys are visible
 import dotenv as _dotenv
 _dotenv.load_dotenv(os.path.join(_payment_path, ".env"), override=False)
 
@@ -168,7 +171,7 @@ for k in list(sys.modules.keys()):
         del sys.modules[k]
 sys.path.remove(_payment_path)
 
-# â”€â”€ 4.5. Load ADMIN, ANALYTICS, PARCEL services â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── 4.5. Load ADMIN, ANALYTICS, PARCEL, HOTEL services ──────────────────────
 _admin_path = os.path.join(_ROOT, "admin-service")
 sys.path.insert(0, _admin_path)
 try:
@@ -182,7 +185,8 @@ except Exception as _e:
 
 _admin_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.startswith("app.")}
 for k in list(sys.modules.keys()):
-    if k == "app" or k.startswith("app."): del sys.modules[k]
+    if k == "app" or k.startswith("app."):
+        del sys.modules[k]
 sys.path.remove(_admin_path)
 
 _analytics_path = os.path.join(_ROOT, "analytics-service")
@@ -197,7 +201,8 @@ except Exception as _e:
 
 _analytics_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.startswith("app.")}
 for k in list(sys.modules.keys()):
-    if k == "app" or k.startswith("app."): del sys.modules[k]
+    if k == "app" or k.startswith("app."):
+        del sys.modules[k]
 sys.path.remove(_analytics_path)
 
 _parcel_path = os.path.join(_ROOT, "parcel-service")
@@ -212,10 +217,123 @@ except Exception as _e:
 
 _parcel_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.startswith("app.")}
 for k in list(sys.modules.keys()):
-    if k == "app" or k.startswith("app."): del sys.modules[k]
+    if k == "app" or k.startswith("app."):
+        del sys.modules[k]
 sys.path.remove(_parcel_path)
 
-# Restore auth + matching modules
+_hotel_path = os.path.join(_ROOT, "hotel-service")
+sys.path.insert(0, _hotel_path)
+try:
+    from app.api.v1.hotels import router as hotel_router
+    _hotel_ok = True
+    print("[HOTEL]    [OK] hotels")
+except Exception as _e:
+    _hotel_ok = False
+    print(f"[HOTEL]    [ERR] {_e}")
+
+_hotel_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.startswith("app.")}
+for k in list(sys.modules.keys()):
+    if k == "app" or k.startswith("app."):
+        del sys.modules[k]
+sys.path.remove(_hotel_path)
+
+_transport_path = os.path.join(_ROOT, "transport-service")
+sys.path.insert(0, _transport_path)
+try:
+    from app.api.v1.transport import router as transport_router
+    _transport_ok = True
+    print("[TRANSPORT] [OK] transport")
+except Exception as _e:
+    _transport_ok = False
+    print(f"[TRANSPORT] [ERR] {_e}")
+
+_transport_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.startswith("app.")}
+for k in list(sys.modules.keys()):
+    if k == "app" or k.startswith("app."):
+        del sys.modules[k]
+sys.path.remove(_transport_path)
+
+_airport_path = os.path.join(_ROOT, "airport-service")
+sys.path.insert(0, _airport_path)
+try:
+    from app.api.v1.airport import router as airport_router, flight_router as flight_router
+    _airport_ok = True
+    print("[AIRPORT]   [OK] airport + flight")
+except Exception as _e:
+    _airport_ok = False
+    print(f"[AIRPORT]   [ERR] {_e}")
+
+_airport_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.startswith("app.")}
+for k in list(sys.modules.keys()):
+    if k == "app" or k.startswith("app."):
+        del sys.modules[k]
+sys.path.remove(_airport_path)
+
+_rental_path = os.path.join(_ROOT, "rental-service")
+sys.path.insert(0, _rental_path)
+try:
+    from app.api.v1.rental import router as rental_router
+    _rental_ok = True
+    print("[RENTAL]    [OK] rental")
+except Exception as _e:
+    _rental_ok = False
+    print(f"[RENTAL]    [ERR] {_e}")
+
+_rental_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.startswith("app.")}
+for k in list(sys.modules.keys()):
+    if k == "app" or k.startswith("app."):
+        del sys.modules[k]
+sys.path.remove(_rental_path)
+
+_outstation_path = os.path.join(_ROOT, "outstation-service")
+sys.path.insert(0, _outstation_path)
+try:
+    from app.api.v1.outstation import router as outstation_router
+    _outstation_ok = True
+    print("[OUTSTATION] [OK] outstation")
+except Exception as _e:
+    _outstation_ok = False
+    print(f"[OUTSTATION] [ERR] {_e}")
+
+_outstation_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.startswith("app.")}
+for k in list(sys.modules.keys()):
+    if k == "app" or k.startswith("app."):
+        del sys.modules[k]
+sys.path.remove(_outstation_path)
+
+_corporate_path = os.path.join(_ROOT, "corporate-service")
+sys.path.insert(0, _corporate_path)
+try:
+    from app.api.v1.corporate import router as corporate_router
+    _corporate_ok = True
+    print("[CORPORATE] [OK] corporate")
+except Exception as _e:
+    _corporate_ok = False
+    print(f"[CORPORATE] [ERR] {_e}")
+
+_corporate_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.startswith("app.")}
+for k in list(sys.modules.keys()):
+    if k == "app" or k.startswith("app."):
+        del sys.modules[k]
+sys.path.remove(_corporate_path)
+
+_notification_path = os.path.join(_ROOT, "notification-service")
+sys.path.insert(0, _notification_path)
+try:
+    from app.api.v1.notifications import router as notification_router
+    _notification_ok = True
+    print("[NOTIF]     [OK] notifications")
+except Exception as _e:
+    _notification_ok = False
+    print(f"[NOTIF]     [ERR] {_e}")
+
+_notification_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.startswith("app.")}
+for k in list(sys.modules.keys()):
+    if k == "app" or k.startswith("app."):
+        del sys.modules[k]
+sys.path.remove(_notification_path)
+
+# Restore all sub-service modules
 sys.path.insert(0, _auth_path)
 sys.modules.update(_auth_mods)
 sys.modules.update(_booking_mods)
@@ -224,6 +342,13 @@ sys.modules.update(_payment_mods)
 sys.modules.update(_admin_mods)
 sys.modules.update(_analytics_mods)
 sys.modules.update(_parcel_mods)
+sys.modules.update(_hotel_mods)
+sys.modules.update(_transport_mods)
+sys.modules.update(_airport_mods)
+sys.modules.update(_rental_mods)
+sys.modules.update(_outstation_mods)
+sys.modules.update(_corporate_mods)
+sys.modules.update(_notification_mods)
 
 # Fix module attribute collisions across merged microservices
 _cfg = sys.modules.get('app.core.config')
@@ -237,15 +362,15 @@ if _cfg:
     if not hasattr(_cfg, 'settings'): setattr(_cfg, 'settings', settings)
 
 
-# â”€â”€ 5. Build FastAPI app â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── 5. Build FastAPI app ──────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("\n[LOCAL-GATEWAY] Running on port 8001 â€” auth + booking + matching + payment\n")
+    print("\n[LOCAL-GATEWAY] Running on port 8001 — auth + booking + matching + payment + transport\n")
     yield
 
 
 app = FastAPI(
-    title="CabBooking â€” Local Gateway",
+    title="CabBooking — Local Gateway",
     version="1.0.0",
     lifespan=lifespan,
     docs_url="/docs",
@@ -264,11 +389,22 @@ if _auth_ok:
     app.include_router(admin_auth_router, prefix="/api/v1/admin/auth", tags=["Admin Auth"])
     app.include_router(profile_router,    prefix="/api/v1/profile",    tags=["Profile"])
     app.include_router(driver_router,     prefix="/api/v1/driver",     tags=["Driver"])
+    app.include_router(family_router,     prefix="/api/v1/family",     tags=["Family"])
+    app.include_router(riders_router,     prefix="/api/v1/customer/riders", tags=["Saved Riders & Participants"])
+    app.include_router(emergency_router,  prefix="/api/v1/customer/emergency-contacts", tags=["Emergency Contacts"])
+    app.include_router(customer_settings_router, prefix="/api/v1/customer", tags=["Customer Settings"])
+    app.include_router(customer_home_router, prefix="/api/v1/customer/home", tags=["Customer Home"])
+    app.include_router(services_router, prefix="/api/v1/services", tags=["Services"])
+    app.include_router(customer_security_router, prefix="/api/v1/customer/security", tags=["Customer Security & Trust"])
+    app.include_router(smart_router, prefix="/api/v1/smart", tags=["Smart Features & Intelligence Layer"])
+    app.include_router(orchestration_router, prefix="/api/v1/orchestration", tags=["Cross-Service Orchestration"])
 
 if _booking_ok:
     app.include_router(trip_router,          prefix="/api/v1/trips",         tags=["Trips"])
     app.include_router(booking_router,       prefix="/api/v1/bookings",      tags=["Bookings"])
     app.include_router(fare_router,          prefix="/api/v1/bookings/fare", tags=["Fare"])
+    app.include_router(activity_router,      prefix="/api/v1/customer/activity", tags=["Unified Activity Hub"])
+    app.include_router(support_hub_router,   prefix="/api/v1/support",       tags=["Unified Support & Help Hub"])
     app.include_router(subscription_router)
 
 if _matching_ok:
@@ -287,18 +423,59 @@ if _analytics_ok:
 if _parcel_ok:
     app.include_router(parcel_router, prefix="/api/v1/parcels", tags=["Parcels"])
 
+if _hotel_ok:
+    app.include_router(hotel_router, prefix="/api/v1/hotels", tags=["Hotels"])
+    app.include_router(hotel_router, prefix="/api/v1/properties", tags=["Properties"])
+
+if _transport_ok:
+    app.include_router(transport_router, prefix="/api/v1/transport", tags=["Transport"])
+    app.include_router(transport_router, prefix="/api/v1/goods-transport", tags=["Goods Transport"])
+
+if _airport_ok:
+    app.include_router(airport_router, prefix="/api/v1/airport", tags=["Airport"])
+    app.include_router(flight_router, prefix="/api/v1/flight", tags=["Flight Tracker"])
+
+if _rental_ok:
+    app.include_router(rental_router, prefix="/api/v1/rental", tags=["Rental"])
+
+if _outstation_ok:
+    app.include_router(outstation_router, prefix="/api/v1/outstation", tags=["Outstation"])
+
+if _corporate_ok:
+    app.include_router(corporate_router, prefix="/api/v1/corporate", tags=["Corporate"])
+
+if _notification_ok:
+    app.include_router(notification_router, prefix="/api/v1/notifications", tags=["Notification Center"])
+
+# ── Common Job Contract — Master Core Architecture ────────────────────────────
+try:
+    from common.api import router as common_jobs_router, register_default_adapters
+    register_default_adapters()
+    app.include_router(common_jobs_router, prefix="/api/v1", tags=["Driver Jobs — Common Contract"])
+    _common_jobs_ok = True
+    print("[JOBS]     [OK] Common Job Contract (Ride + Parcel + Transport + Airport + Rental + Outstation adapters)")
+except Exception as _e:
+    _common_jobs_ok = False
+    print(f"[JOBS]     [ERR] {_e}")
+
 
 @app.get("/health")
 async def health():
     return {
-        "status":   "healthy",
-        "auth":     _auth_ok,
-        "booking":  _booking_ok,
-        "matching": _matching_ok,
-        "payment":  _payment_ok,
-        "admin":    _admin_ok,
-        "analytics": _analytics_ok,
-        "parcel":   _parcel_ok,
+        "status":      "healthy",
+        "auth":        _auth_ok,
+        "booking":     _booking_ok,
+        "matching":    _matching_ok,
+        "payment":     _payment_ok,
+        "admin":       _admin_ok,
+        "analytics":   _analytics_ok,
+        "parcel":      _parcel_ok,
+        "hotel":       _hotel_ok,
+        "transport":   _transport_ok,
+        "rental":      _rental_ok,
+        "outstation":  _outstation_ok,
+        "corporate":   _corporate_ok,
+        "common_jobs": _common_jobs_ok,
     }
 
 @app.post("/payment-success")
@@ -684,3 +861,25 @@ except Exception as _sio_init_err:
             room = f"ride:{ride_id}"
             await sio.emit('ride:sos', data, room=room)
             await sio.emit('emergency:alert', data, room="safety_monitoring")
+
+    # ── Feature 15: Parcel Realtime Tracking & Socket Handlers ──
+    @sio.event
+    async def join_parcel_room(sid, data):
+        parcel_id = data.get('parcel_id', '')
+        if parcel_id:
+            room = f"parcel:{parcel_id}"
+            await sio.enter_room(sid, room)
+            print(f"[WS] Client {sid} joined parcel room {room}")
+
+    @sio.event
+    async def leave_parcel_room(sid, data):
+        parcel_id = data.get('parcel_id', '')
+        if parcel_id:
+            await sio.leave_room(sid, f"parcel:{parcel_id}")
+
+    @sio.event
+    async def PARCEL_LOCATION_UPDATE(sid, data):
+        parcel_id = data.get('parcel_id', '')
+        if parcel_id:
+            room = f"parcel:{parcel_id}"
+            await sio.emit('parcel:location', data, room=room, skip_sid=sid)

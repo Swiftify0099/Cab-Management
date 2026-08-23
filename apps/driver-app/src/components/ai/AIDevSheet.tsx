@@ -22,6 +22,7 @@ export const AIDevSheet: React.FC<AIDevSheetProps> = ({
   onClose,
   onSelectScenario,
 }) => {
+  if (!__DEV__) return null;
   const { theme, isDark } = useTheme();
 
   const scenarios = [

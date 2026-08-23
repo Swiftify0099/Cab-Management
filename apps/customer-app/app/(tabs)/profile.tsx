@@ -1,63 +1,59 @@
 /**
- * Customer App — My Account / Profile Settings
- * Refactored: All hardcoded colors → theme tokens.
- * Components: AppText, AppAvatar, AppDivider.
- * Business logic: UNCHANGED. API calls: UNCHANGED. Image upload: UNCHANGED.
+ * Customer App — Master Profile & Account Hub
+ * Feature 1: Customer Core Account.
  */
 import React, { useState, useEffect, useCallback } from 'react'
 import {
-  View, TouchableOpacity, StyleSheet, ScrollView,
-  StatusBar, RefreshControl, Alert, ActivityIndicator,
+  View,
+  TouchableOpacity,
+  StyleSheet,
+  ScrollView,
+  StatusBar,
+  RefreshControl,
+  Alert,
+  ActivityIndicator,
+  Modal,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { Feather, Ionicons } from '@expo/vector-icons'
+import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import * as ImagePicker from 'expo-image-picker'
+import { router, useFocusEffect } from 'expo-router'
 import { useAuthStore } from '../../src/store/auth.store'
 import { profileApi } from '../../src/api/client'
-import { router } from 'expo-router'
 import { useTheme } from '../../src/contexts/ThemeContext'
+import { useTranslation, SUPPORTED_LANGUAGES, LanguageCode } from '../../src/i18n'
+import DevModeModal from '../../src/components/dev/DevModeModal'
 import {
-  AppText, AppAvatar, AppDivider,
+  AppText,
+  AppAvatar,
+  AppDivider,
+  AppBadge,
+  AppSwitch,
 } from '../../src/components/ui'
 
 interface UserProfile {
-  full_name?: string; phone?: string; email?: string
-  gender?: string; dob?: string; profile_photo_url?: string; is_verified?: boolean
+  full_name?: string
+  phone?: string
+  email?: string
+  gender?: string
+  dob?: string
+  profile_photo_url?: string
+  is_verified?: boolean
+  reward_points?: number
 }
 
-const MENU_SECTIONS = [
-  {
-    title: 'Travel',
-    items: [
-      { icon: 'map-pin',     label: 'Saved Addresses',  route: '/profile/addresses', color: '#059669' },
-      { icon: 'calendar',    label: 'My Trips',          route: '/(tabs)/trips',      color: '#2563EB' },
-      { icon: 'package',     label: 'My Parcels',        route: '/(tabs)/parcels',    color: '#7C3AED' },
-    ],
-  },
-  {
-    title: 'Payments',
-    items: [
-      { icon: 'credit-card', label: 'Wallet & Payments', route: '/(tabs)/wallet',    color: '#F59E0B' },
-      { icon: 'gift',        label: 'Referrals & Rewards',route: null,               color: '#EC4899' },
-    ],
-  },
-  {
-    title: 'Account',
-    items: [
-      { icon: 'help-circle', label: 'Help & Support',    route: null,                color: '#0891B2' },
-      { icon: 'settings',    label: 'Settings',          route: '/settings',         color: '#64748B' },
-      { icon: 'shield',      label: 'Privacy & Safety',  route: null,                color: '#6366F1' },
-    ],
-  },
-]
-
 export default function ProfileTab() {
-  const { theme, isDark } = useTheme()
-  const { user, logout }= useAuthStore()
-  const [profile,    setProfile]    = useState<UserProfile | null>(null)
-  const [loading,    setLoading]    = useState(true)
+  const { theme, isDark, toggleTheme } = useTheme()
+  const { user, logout } = useAuthStore()
+  const { t, language, setLanguage } = useTranslation()
+
+  const [profile, setProfile] = useState<UserProfile | null>(null)
+  const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [langModalVisible, setLangModalVisible] = useState(false)
+  const [devModalVisible, setDevModalVisible] = useState(false)
 
   const loadProfile = useCallback(async () => {
     try {
@@ -66,52 +62,62 @@ export default function ProfileTab() {
     } catch {
       setProfile({ phone: user?.phone })
     } finally {
-      setLoading(false); setRefreshing(false)
+      setLoading(false)
+      setRefreshing(false)
     }
   }, [user])
 
-  useEffect(() => { loadProfile() }, [loadProfile])
-
-  const onRefresh = () => { setRefreshing(true); loadProfile() }
+  useFocusEffect(
+    useCallback(() => {
+      loadProfile()
+    }, [loadProfile])
+  )
 
   const handleLogout = async () => {
-    Alert.alert('Log Out', 'Are you sure you want to log out?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Log Out', style: 'destructive',
-        onPress: async () => { await logout(); router.replace('/auth/phone') },
-      },
-    ])
-  }
-
-  const handleMenuPress = (route: string | null) => {
-    if (!route) { Alert.alert('Coming Soon', 'This feature will be available soon.'); return }
-    router.push(route as any)
+    Alert.alert(
+      t('danger.logout', 'Log Out'),
+      t('danger.logout_confirm', 'Are you sure you want to log out?'),
+      [
+        { text: t('common.cancel', 'Cancel'), style: 'cancel' },
+        {
+          text: t('danger.logout', 'Log Out'),
+          style: 'destructive',
+          onPress: async () => {
+            await logout()
+            router.replace('/auth/phone')
+          },
+        },
+      ]
+    )
   }
 
   const handleImagePick = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true, aspect: [1, 1], quality: 0.7,
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
       })
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        setLoading(true)
-        const asset    = result.assets[0]
+        setUploading(true)
+        const asset = result.assets[0]
         const formData = new FormData() as any
         const filename = asset.uri.split('/').pop() || 'avatar.jpg'
-        const type     = asset.type || 'image/jpeg'
-        formData.append('file', { uri: asset.uri, name: filename, type })
+        const type = asset.type || 'image/jpeg'
+        formData.append('photo', { uri: asset.uri, name: filename, type })
         await profileApi.uploadPhoto(formData)
         await loadProfile()
       }
     } catch (e: any) {
       Alert.alert('Upload Failed', e?.response?.data?.detail || 'Could not upload photo')
-      setLoading(false)
+    } finally {
+      setUploading(false)
     }
   }
 
-  const displayName = profile?.full_name || user?.phone || 'User'
+  const displayName = profile?.full_name || user?.phone || 'Customer'
+  const currentLangObj = SUPPORTED_LANGUAGES.find((l) => l.code === language) || SUPPORTED_LANGUAGES[0]
 
   return (
     <View style={[styles.root, { backgroundColor: theme.colors.backgroundAlt }]}>
@@ -122,151 +128,424 @@ export default function ProfileTab() {
         <ScrollView
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingBottom: 100 }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary} />}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => {
+                setRefreshing(true)
+                loadProfile()
+              }}
+              tintColor={theme.colors.primary}
+            />
+          }
         >
-          {/* Profile Header */}
+          {/* Top Profile Card */}
           <View style={styles.profileHeader}>
-            {/* Avatar */}
-            <TouchableOpacity style={styles.avatarWrapper} onPress={handleImagePick} activeOpacity={0.8}>
-              <AppAvatar name={displayName} imageUri={profile?.profile_photo_url} size={88} />
-              {profile?.is_verified && (
-                <View style={[styles.verifiedBadge, { backgroundColor: theme.colors.success }]}>
-                  <Ionicons name="checkmark" size={10} color={theme.colors.white} />
-                </View>
-              )}
+            <TouchableOpacity style={styles.avatarWrapper} onPress={handleImagePick} activeOpacity={0.85}>
+              <AppAvatar name={displayName} imageUri={profile?.profile_photo_url} size={92} />
+              <View style={[styles.verifiedBadge, { backgroundColor: theme.colors.success }]}>
+                <Ionicons name="checkmark" size={12} color="#fff" />
+              </View>
               <View style={[styles.avatarEditIcon, { backgroundColor: theme.colors.primary, borderColor: theme.colors.background }]}>
-                <Feather name="camera" size={14} color={theme.colors.white} />
+                {uploading ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Feather name="camera" size={14} color="#fff" />
+                )}
               </View>
             </TouchableOpacity>
 
-            {loading
-              ? <ActivityIndicator color={theme.colors.white} style={{ marginTop: 16 }} />
-              : (
-                <>
-                  <AppText variant="h3" bold color="white" center style={{ marginBottom: 4 }}>{displayName}</AppText>
-                  <AppText variant="bodyS" color="white" center style={{ opacity: 0.65, marginBottom: 10 }}>
-                    {profile?.phone || user?.phone}
-                  </AppText>
-                  {profile?.gender && (
-                    <View style={[styles.profileBadge, { backgroundColor: 'rgba(255,255,255,0.15)' }]}>
-                      <AppText variant="small" semibold color="white">
-                        {profile.gender.charAt(0).toUpperCase() + profile.gender.slice(1)}
-                      </AppText>
-                    </View>
-                  )}
-                </>
-              )
-            }
+            {loading ? (
+              <ActivityIndicator color={theme.colors.white} style={{ marginTop: 14 }} />
+            ) : (
+              <>
+                <AppText variant="h2" bold color="white" center style={{ marginBottom: 4 }}>
+                  {displayName}
+                </AppText>
+                <AppText variant="bodyS" color="white" center style={{ opacity: 0.75, marginBottom: 12 }}>
+                  {profile?.phone || user?.phone}
+                </AppText>
+              </>
+            )}
 
             <TouchableOpacity
-              style={[styles.editBtn, {
-                backgroundColor: 'rgba(255,255,255,0.1)',
-                borderColor:     `${theme.colors.primary}66`,
-              }]}
-              onPress={() => router.push('/auth/profile-setup' as any)}
+              style={[
+                styles.editBtn,
+                {
+                  backgroundColor: 'rgba(255,255,255,0.12)',
+                  borderColor: 'rgba(255,255,255,0.2)',
+                },
+              ]}
+              onPress={() => router.push('/profile/edit' as any)}
             >
-              <Feather name="edit-2" size={14} color={theme.colors.primary} />
-              <AppText variant="small" semibold color="brand" style={{ marginLeft: 6 }}>Edit Profile</AppText>
+              <Feather name="edit-2" size={14} color="#fff" />
+              <AppText variant="small" semibold color="white" style={{ marginLeft: 6 }}>
+                {t('profile.edit_profile', 'Edit Profile')}
+              </AppText>
             </TouchableOpacity>
           </View>
 
-          {/* Stats Row */}
-          <View style={[styles.statsRow, {
-            backgroundColor: theme.colors.surface,
-            shadowColor: isDark ? '#000' : '#000',
-          }]}>
-            {[
-              { value: '4.9', label: 'Rating' },
-              { value: '12',  label: 'Trips'  },
-              { value: '3',   label: 'Parcels'},
-            ].map((stat, idx, arr) => (
-              <React.Fragment key={stat.label}>
-                <View style={styles.statItem}>
-                  <AppText variant="h3" bold>{stat.value}</AppText>
-                  <AppText variant="small" color="secondary" style={{ marginTop: 2 }}>{stat.label}</AppText>
-                </View>
-                {idx < arr.length - 1 && (
-                  <View style={[styles.statDivider, { backgroundColor: theme.colors.border }]} />
-                )}
-              </React.Fragment>
-            ))}
+          {/* Quick Action Grid */}
+          <View style={styles.quickGrid}>
+            <TouchableOpacity
+              style={[styles.quickCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
+              onPress={() => router.push('/profile/addresses' as any)}
+              activeOpacity={0.75}
+            >
+              <View style={[styles.quickIcon, { backgroundColor: `${theme.colors.success}20` }]}>
+                <Feather name="map-pin" size={20} color={theme.colors.success} />
+              </View>
+              <AppText variant="bodyS" bold style={{ marginTop: 8 }}>
+                {t('quick.saved_places', 'Saved Places')}
+              </AppText>
+              <AppText variant="small" color="muted">Home, Work, Custom</AppText>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.quickCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
+              onPress={() => router.push('/profile/family' as any)}
+              activeOpacity={0.75}
+            >
+              <View style={[styles.quickIcon, { backgroundColor: `${theme.colors.accent}20` }]}>
+                <Ionicons name="people" size={22} color={theme.colors.accent} />
+              </View>
+              <AppText variant="bodyS" bold style={{ marginTop: 8 }}>
+                {t('quick.family', 'Family & Shared')}
+              </AppText>
+              <AppText variant="small" color="muted">Manage & Book for Others</AppText>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.quickCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
+              onPress={() => router.push('/profile/emergency' as any)}
+              activeOpacity={0.75}
+            >
+              <View style={[styles.quickIcon, { backgroundColor: `${theme.colors.primary}20` }]}>
+                <Ionicons name="shield-checkmark" size={22} color={theme.colors.primary} />
+              </View>
+              <AppText variant="bodyS" bold style={{ marginTop: 8 }}>
+                {t('quick.safety', 'Safety & Emergency')}
+              </AppText>
+              <AppText variant="small" color="muted">Trusted Contacts & SOS</AppText>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.quickCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
+              onPress={() => router.push('/(tabs)/wallet' as any)}
+              activeOpacity={0.75}
+            >
+              <View style={[styles.quickIcon, { backgroundColor: `${theme.colors.warning}20` }]}>
+                <Ionicons name="wallet" size={22} color={theme.colors.warning} />
+              </View>
+              <AppText variant="bodyS" bold style={{ marginTop: 8 }}>
+                {t('quick.wallet', 'Wallet & Pay')}
+              </AppText>
+              <AppText variant="small" color="muted">Balances & Methods</AppText>
+            </TouchableOpacity>
           </View>
 
-          {/* Menu Sections */}
-          {MENU_SECTIONS.map(section => (
-            <View key={section.title} style={styles.section}>
-              <AppText variant="label" color="muted" style={styles.sectionTitle}>
-                {section.title.toUpperCase()}
-              </AppText>
-              <View style={[styles.sectionCard, {
-                backgroundColor: theme.colors.surface,
-                shadowColor: isDark ? '#000' : '#000',
-              }]}>
-                {section.items.map((item, idx) => (
-                  <React.Fragment key={item.label}>
-                    <TouchableOpacity
-                      style={styles.menuItem}
-                      onPress={() => handleMenuPress(item.route)}
-                      activeOpacity={0.7}
-                    >
-                      <View style={[styles.menuIconCircle, { backgroundColor: item.color + '22' }]}>
-                        <Feather name={item.icon as any} size={18} color={item.color} />
-                      </View>
-                      <AppText variant="body" semibold style={{ flex: 1 }}>{item.label}</AppText>
-                      <Feather name="chevron-right" size={18} color={theme.colors.textMuted} />
-                    </TouchableOpacity>
-                    {idx < section.items.length - 1 && (
-                      <AppDivider marginLeft={70} />
-                    )}
-                  </React.Fragment>
-                ))}
+          {/* Account Settings Menu */}
+          <View style={styles.menuSection}>
+            <AppText variant="label" color="muted" style={styles.sectionHeader}>
+              ACCOUNT & PREFERENCES
+            </AppText>
+
+            <View style={[styles.menuCard, { backgroundColor: theme.colors.surface }]}>
+              {/* Personal Information */}
+              <TouchableOpacity
+                style={styles.menuRow}
+                onPress={() => router.push('/profile/edit' as any)}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.menuIconCircle, { backgroundColor: `${theme.colors.primary}18` }]}>
+                  <Feather name="user" size={18} color={theme.colors.primary} />
+                </View>
+                <AppText variant="body" semibold style={{ flex: 1 }}>
+                  {t('profile.personal_info', 'Personal Information')}
+                </AppText>
+                <Feather name="chevron-right" size={18} color={theme.colors.textMuted} />
+              </TouchableOpacity>
+              <AppDivider marginLeft={64} />
+
+              {/* Security Center & Trust Hub */}
+              <TouchableOpacity
+                style={styles.menuRow}
+                onPress={() => router.push('/security' as any)}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.menuIconCircle, { backgroundColor: `${theme.colors.success}18` }]}>
+                  <Ionicons name="shield-checkmark" size={18} color={theme.colors.success} />
+                </View>
+                <AppText variant="body" bold style={{ flex: 1 }}>
+                  Security Center
+                </AppText>
+                <AppBadge label="Protected" variant="success" size="sm" style={{ marginRight: 8 }} />
+                <Feather name="chevron-right" size={18} color={theme.colors.textMuted} />
+              </TouchableOpacity>
+              <AppDivider marginLeft={64} />
+
+              {/* Privacy & Driver Firewall */}
+              <TouchableOpacity
+                style={styles.menuRow}
+                onPress={() => router.push('/profile/privacy' as any)}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.menuIconCircle, { backgroundColor: `${theme.colors.accent}18` }]}>
+                  <Feather name="lock" size={18} color={theme.colors.accent} />
+                </View>
+                <AppText variant="body" semibold style={{ flex: 1 }}>
+                  {t('settings.privacy', 'Privacy & Data Protection')}
+                </AppText>
+                <Feather name="chevron-right" size={18} color={theme.colors.textMuted} />
+              </TouchableOpacity>
+              <AppDivider marginLeft={64} />
+
+              {/* Notification Preferences */}
+              <TouchableOpacity
+                style={styles.menuRow}
+                onPress={() => router.push('/profile/notifications' as any)}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.menuIconCircle, { backgroundColor: `${theme.colors.warning}18` }]}>
+                  <Feather name="bell" size={18} color={theme.colors.warning} />
+                </View>
+                <AppText variant="body" semibold style={{ flex: 1 }}>
+                  {t('settings.notifications', 'Notification Preferences')}
+                </AppText>
+                <Feather name="chevron-right" size={18} color={theme.colors.textMuted} />
+              </TouchableOpacity>
+              <AppDivider marginLeft={64} />
+
+              {/* Active Sessions & Devices */}
+              <TouchableOpacity
+                style={styles.menuRow}
+                onPress={() => router.push('/security/devices' as any)}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.menuIconCircle, { backgroundColor: `${theme.colors.primary}18` }]}>
+                  <Feather name="smartphone" size={18} color={theme.colors.primary} />
+                </View>
+                <AppText variant="body" semibold style={{ flex: 1 }}>
+                  {t('settings.sessions', 'Devices & Active Sessions')}
+                </AppText>
+                <Feather name="chevron-right" size={18} color={theme.colors.textMuted} />
+              </TouchableOpacity>
+              <AppDivider marginLeft={64} />
+
+              {/* Language Selector */}
+              <TouchableOpacity
+                style={styles.menuRow}
+                onPress={() => setLangModalVisible(true)}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.menuIconCircle, { backgroundColor: `${theme.colors.primary}18` }]}>
+                  <Feather name="globe" size={18} color={theme.colors.primary} />
+                </View>
+                <AppText variant="body" semibold style={{ flex: 1 }}>
+                  {t('settings.language', 'Language')}
+                </AppText>
+                <AppText variant="bodyS" color="secondary" style={{ marginRight: 8 }}>
+                  {currentLangObj.native}
+                </AppText>
+                <Feather name="chevron-right" size={18} color={theme.colors.textMuted} />
+              </TouchableOpacity>
+              <AppDivider marginLeft={64} />
+
+              {/* Dark Mode Toggle */}
+              <View style={styles.menuRow}>
+                <View style={[styles.menuIconCircle, { backgroundColor: `${theme.colors.accent}18` }]}>
+                  <Feather name="moon" size={18} color={theme.colors.accent} />
+                </View>
+                <AppText variant="body" semibold style={{ flex: 1 }}>
+                  {t('settings.dark_mode', 'Dark Mode')}
+                </AppText>
+                <AppSwitch value={isDark} onValueChange={toggleTheme} />
               </View>
             </View>
-          ))}
+          </View>
 
-          {/* Log Out */}
-          <TouchableOpacity
-            style={[styles.logoutBtn, {
-              backgroundColor: theme.colors.errorBg,
-              borderColor:     '#FECACA',
-            }]}
-            onPress={handleLogout}
-            activeOpacity={0.85}
-          >
-            <Feather name="log-out" size={18} color={theme.colors.error} />
-            <AppText variant="body" bold style={{ color: theme.colors.error, marginLeft: 10 }}>Log Out</AppText>
-          </TouchableOpacity>
+          {/* Developer Control Panel Trigger */}
+          <View style={{ marginHorizontal: 16, marginBottom: 16 }}>
+            <TouchableOpacity
+              style={[styles.devTriggerBtn, { backgroundColor: `${theme.colors.warning}15`, borderColor: `${theme.colors.warning}35` }]}
+              onPress={() => setDevModalVisible(true)}
+            >
+              <Ionicons name="construct" size={18} color={theme.colors.warning} />
+              <AppText variant="bodyS" bold style={{ color: theme.colors.warning, marginLeft: 8 }}>
+                Developer Simulation Panel (__DEV__)
+              </AppText>
+            </TouchableOpacity>
+          </View>
 
-          <AppText variant="small" color="muted" center style={{ marginBottom: 8 }}>
-            Intercity Mobility v1.0.0
+          {/* Danger Zone */}
+          <View style={styles.menuSection}>
+            <AppText variant="label" color="muted" style={styles.sectionHeader}>
+              {t('danger.title', 'DANGER ZONE').toUpperCase()}
+            </AppText>
+
+            <View style={[styles.menuCard, { backgroundColor: theme.colors.surface }]}>
+              {/* Delete Account */}
+              <TouchableOpacity
+                style={styles.menuRow}
+                onPress={() => router.push('/profile/delete-account' as any)}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.menuIconCircle, { backgroundColor: theme.colors.errorBg }]}>
+                  <Feather name="trash-2" size={18} color={theme.colors.error} />
+                </View>
+                <AppText variant="body" semibold style={{ flex: 1, color: theme.colors.error }}>
+                  {t('danger.delete_account', 'Delete Account')}
+                </AppText>
+                <Feather name="chevron-right" size={18} color={theme.colors.error} />
+              </TouchableOpacity>
+              <AppDivider marginLeft={64} />
+
+              {/* Log Out */}
+              <TouchableOpacity
+                style={styles.menuRow}
+                onPress={handleLogout}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.menuIconCircle, { backgroundColor: theme.colors.errorBg }]}>
+                  <Feather name="log-out" size={18} color={theme.colors.error} />
+                </View>
+                <AppText variant="body" bold style={{ flex: 1, color: theme.colors.error }}>
+                  {t('danger.logout', 'Log Out')}
+                </AppText>
+                <Feather name="chevron-right" size={18} color={theme.colors.error} />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <AppText variant="small" color="muted" center style={{ marginTop: 8, marginBottom: 20 }}>
+            CabBooking Mobility v2.0 • Customer Core
           </AppText>
         </ScrollView>
       </SafeAreaView>
+
+      {/* Language Selection Modal */}
+      <Modal visible={langModalVisible} transparent animationType="fade" onRequestClose={() => setLangModalVisible(false)}>
+        <View style={styles.langModalOverlay}>
+          <View style={[styles.langModalBox, { backgroundColor: theme.colors.surface }]}>
+            <AppText variant="h3" bold style={{ marginBottom: 16 }}>
+              {t('settings.language', 'Select Language')}
+            </AppText>
+            {SUPPORTED_LANGUAGES.map((lang) => (
+              <TouchableOpacity
+                key={lang.code}
+                style={[
+                  styles.langOption,
+                  {
+                    backgroundColor: language === lang.code ? `${theme.colors.primary}18` : theme.colors.backgroundAlt,
+                    borderColor: language === lang.code ? theme.colors.primary : theme.colors.border,
+                  },
+                ]}
+                onPress={() => {
+                  setLanguage(lang.code)
+                  setLangModalVisible(false)
+                }}
+              >
+                <View>
+                  <AppText variant="body" bold>{lang.native}</AppText>
+                  <AppText variant="small" color="muted">{lang.label}</AppText>
+                </View>
+                {language === lang.code && <Feather name="check" size={20} color={theme.colors.primary} />}
+              </TouchableOpacity>
+            ))}
+
+            <TouchableOpacity style={styles.langCloseBtn} onPress={() => setLangModalVisible(false)}>
+              <AppText variant="body" semibold color="secondary">Cancel</AppText>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Developer Mode Modal */}
+      <DevModeModal visible={devModalVisible} onClose={() => setDevModalVisible(false)} />
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  root:          { flex: 1 },
-  headerBg:      { position: 'absolute', top: 0, left: 0, right: 0, height: 280 },
-  safeArea:      { flex: 1 },
-
-  profileHeader: { alignItems: 'center', paddingTop: 24, paddingBottom: 32, paddingHorizontal: 20 },
-  avatarWrapper: { position: 'relative', marginBottom: 16 },
-  verifiedBadge: { position: 'absolute', bottom: 2, right: 2, width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' },
-  avatarEditIcon:{ position: 'absolute', bottom: 0, right: 0, width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', borderWidth: 2 },
-  profileBadge:  { borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4, marginBottom: 16 },
-  editBtn:       { flexDirection: 'row', alignItems: 'center', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1 },
-
-  statsRow:      { flexDirection: 'row', marginHorizontal: 16, borderRadius: 20, padding: 20, shadowOpacity: 0.06, shadowRadius: 12, elevation: 4, marginTop: -20, marginBottom: 24 },
-  statItem:      { flex: 1, alignItems: 'center' },
-  statDivider:   { width: 1, marginVertical: 4 },
-
-  section:       { marginHorizontal: 16, marginBottom: 20 },
-  sectionTitle:  { letterSpacing: 0.5, marginBottom: 8, paddingHorizontal: 4 },
-  sectionCard:   { borderRadius: 20, shadowOpacity: 0.04, shadowRadius: 8, elevation: 2, overflow: 'hidden' },
-  menuItem:      { flexDirection: 'row', alignItems: 'center', padding: 16, gap: 14 },
-  menuIconCircle:{ width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-
-  logoutBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginHorizontal: 16, borderRadius: 16, padding: 16, borderWidth: 1, marginBottom: 16 },
+  root: { flex: 1 },
+  headerBg: { position: 'absolute', top: 0, left: 0, right: 0, height: 320 },
+  safeArea: { flex: 1 },
+  profileHeader: { alignItems: 'center', paddingTop: 20, paddingBottom: 24, paddingHorizontal: 20 },
+  avatarWrapper: { position: 'relative', marginBottom: 14 },
+  verifiedBadge: {
+    position: 'absolute',
+    bottom: 2,
+    right: 2,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  avatarEditIcon: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+  },
+  editBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderWidth: 1,
+  },
+  quickGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginHorizontal: 16,
+    marginBottom: 20,
+  },
+  quickCard: {
+    width: '48.5%',
+    borderRadius: 18,
+    padding: 14,
+    borderWidth: 1,
+  },
+  quickIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  menuSection: { marginHorizontal: 16, marginBottom: 20 },
+  sectionHeader: { letterSpacing: 0.5, marginBottom: 8, paddingHorizontal: 4 },
+  menuCard: { borderRadius: 20, overflow: 'hidden' },
+  menuRow: { flexDirection: 'row', alignItems: 'center', padding: 16, gap: 14 },
+  menuIconCircle: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  devTriggerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  langModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: 24 },
+  langModalBox: { width: '100%', borderRadius: 24, padding: 20 },
+  langOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginBottom: 10,
+  },
+  langCloseBtn: { alignItems: 'center', paddingVertical: 12, marginTop: 6 },
 })

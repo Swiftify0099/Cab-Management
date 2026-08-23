@@ -58,10 +58,17 @@ class BaseAppSettings(BaseSettings):
     # Google Maps
     GOOGLE_MAPS_API_KEY: str = ""
 
-    # Storage
-    STORAGE_BACKEND: str = "local"
+    # Storage & Media
+    STORAGE_BACKEND: str = "cloudinary"  # "cloudinary" or "local"
     LOCAL_UPLOAD_DIR: str = "./uploads"
     LOCAL_UPLOAD_URL: str = "http://localhost:8000/uploads"
+
+    # Cloudinary Master Storage Architecture
+    CLOUDINARY_CLOUD_NAME: str = "ujzdli0u"
+    CLOUDINARY_API_KEY: str = "542816883619873"
+    CLOUDINARY_API_SECRET: str = "eKeNA-FnOQUpT6qTokWPiDT3UAI"
+    CLOUDINARY_FOLDER_PREFIX: str = "cabapp"
+    CLOUDINARY_SECURE_DELIVERY: bool = True
 
     # Platform Fees
     PLATFORM_FEE_PER_SEAT: int = 10

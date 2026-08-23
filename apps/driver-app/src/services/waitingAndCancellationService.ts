@@ -25,26 +25,10 @@ class WaitingAndCancellationServiceClass {
       if (res.data?.data) {
         return res.data.data
       }
+      throw new Error('No waiting status data available.')
     } catch (err: any) {
-      console.warn('[WaitingService] getWaitingStatus error:', err.message)
-    }
-
-    // Default simulation fallback
-    return {
-      ride_id: rideId,
-      is_arrived: true,
-      pickup_arrived_at: new Date().toISOString(),
-      elapsed_seconds: 120,
-      free_waiting_seconds_total: 180,
-      free_waiting_remaining_seconds: 60,
-      is_free_waiting: true,
-      paid_waiting_seconds: 0,
-      is_paid_waiting: false,
-      waiting_rate_per_min: 2.0,
-      waiting_charge: 0.0,
-      distance_to_pickup_meters: 25.0,
-      contact_attempts: 1,
-      is_no_show_eligible: false,
+      const detail = err.response?.data?.detail || err.message
+      throw new Error(detail || 'Could not fetch waiting status.')
     }
   }
 

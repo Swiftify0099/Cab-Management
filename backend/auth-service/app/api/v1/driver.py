@@ -34,9 +34,13 @@ from common.models.all_models import (
     DocumentType,
     DriverDocument,
     Driver,
+    MediaAsset,
+    MediaOwnerType,
+    MediaType,
     Vehicle,
 )
 from common.schemas.response import APIResponse, MessageResponse
+from common.utils.cloudinary_service import CloudinaryService
 from common.utils.storage import (
     ALLOWED_DOCUMENT_TYPES,
     delete_upload,
@@ -132,7 +136,7 @@ async def update_driver(
 @router.post(
     "/me/photo",
     response_model=APIResponse[dict],
-    summary="Upload driver profile photo",
+    summary="Upload driver profile photo to Cloudinary",
 )
 async def upload_driver_photo(
     photo: UploadFile = File(...),
@@ -146,16 +150,75 @@ async def upload_driver_photo(
     if not profile:
         raise HTTPException(status_code=404, detail="Driver profile not found")
 
-    if profile.profile_photo:
-        await delete_upload(profile.profile_photo)
+    old_photo = profile.profile_photo
 
-    path = await save_upload(file=photo, category="drivers", max_size=5 * 1024 * 1024)
-    profile.profile_photo = path
+    # Upload to Cloudinary with face detection
+    upload_res = await CloudinaryService.upload_driver_profile_photo(
+        driver_id=str(profile.id),
+        file=photo,
+    )
+    photo_url = upload_res.get("secure_url") or upload_res.get("url")
+    public_id = upload_res.get("public_id")
+
+    # Record MediaAsset metadata in PostgreSQL
+    media_asset = MediaAsset(
+        owner_type=MediaOwnerType.DRIVER,
+        owner_id=profile.id,
+        media_type=MediaType.PROFILE_PHOTO,
+        cloudinary_public_id=public_id,
+        resource_type=upload_res.get("resource_type", "image"),
+        format=upload_res.get("format", "jpg"),
+        mime_type=photo.content_type or "image/jpeg",
+        file_size_bytes=upload_res.get("bytes", 0),
+        version=upload_res.get("version", 1),
+        secure_url=photo_url,
+        thumbnail_url=photo_url,
+        status="ACTIVE",
+        is_private=False,
+    )
+    db.add(media_asset)
+
+    profile.profile_photo = photo_url
     await db.commit()
 
+    if old_photo and old_photo != photo_url:
+        await delete_upload(old_photo)
+
     return APIResponse(
-        message="Profile photo updated",
-        data={"photo_url": get_file_url(path)},
+        message="Driver profile photo updated successfully",
+        data={
+            "photo_url": photo_url,
+            "public_id": public_id,
+            "version": upload_res.get("version", 1),
+        },
+    )
+
+
+@router.delete(
+    "/me/photo",
+    response_model=APIResponse[dict],
+    summary="Remove driver profile photo",
+)
+async def delete_driver_photo(
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Driver).where(Driver.user_id == current_user.id)
+    )
+    profile = result.scalar_one_or_none()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Driver profile not found")
+
+    old_photo = profile.profile_photo
+    if old_photo:
+        await delete_upload(old_photo)
+        profile.profile_photo = None
+        await db.commit()
+
+    return APIResponse(
+        message="Driver profile photo removed successfully",
+        data={"photo_url": None},
     )
 
 

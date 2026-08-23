@@ -63,6 +63,10 @@ export const DriverSettingsService = {
    * Developer Mode sandbox simulator
    */
   async simulateDevScenario(scenarioKey: string): Promise<any> {
+    if (!__DEV__) {
+      console.warn('[DriverSettingsService] simulateDevScenario is disabled in production builds.');
+      return null;
+    }
     try {
       const res = await api.post('/matching/settings/dev-simulate', { scenario_key: scenarioKey });
       return res.data;

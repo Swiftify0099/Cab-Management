@@ -137,6 +137,7 @@ export const driverApi = {
     api.post('/driver/me/photo', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     }),
+  deletePhoto: () => api.delete('/driver/me/photo'),
   setupProfile: (data: any) => api.post('/driver/setup', data),
   setupVehicle: (data: any) => api.post('/driver/me/vehicle', data),
   uploadDocument: (docType: string, formData: FormData) =>
@@ -155,6 +156,7 @@ export const driverApi = {
 export const kycApi = {
   getDashboard: () => api.get('/driver/kyc/dashboard').catch(() => api.get('/driver/verification/status')),
   getDocumentDetails: (docType: string) => api.get(`/driver/kyc/documents/${docType}`),
+  getDocumentAccessUrl: (docType: string) => api.get(`/driver/kyc/documents/${docType}/access`),
   uploadDocument: (docType: string, formData: FormData) =>
     api.post(`/driver/kyc/documents/${docType}`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -247,4 +249,21 @@ export const aiApi = {
     api.post('/driver/ai/chat', { prompt, context }).catch(() => api.post('/matching/ai/chat', { prompt, context })),
   getDriverInsights: (lat?: number, lng?: number) =>
     api.get('/matching/ai/driver-insights', { params: { lat, lng } }),
+}
+
+// ── Common Job Contract API (Master Core Architecture) ────────────────────
+export const commonJobApi = {
+  getActiveJob: () =>
+    api.get('/driver/jobs/active'),
+  getJobById: (jobId: string, jobType?: string) =>
+    api.get(`/driver/jobs/${jobId}`, { params: jobType ? { job_type: jobType } : {} }),
+  sendCommand: (jobId: string, command: string, params?: any, jobType?: string) =>
+    api.post(`/driver/jobs/${jobId}/command${jobType ? `?job_type=${jobType}` : ''}`, {
+      command,
+      params: params || null,
+    }),
+  getHistory: (limit: number = 20, jobType?: string) =>
+    api.get('/driver/jobs/history/list', {
+      params: { limit, ...(jobType ? { job_type: jobType } : {}) },
+    }),
 }

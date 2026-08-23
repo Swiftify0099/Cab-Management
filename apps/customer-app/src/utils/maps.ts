@@ -74,14 +74,17 @@ async function _googleGeocode(query: string): Promise<{ lat: number; lon: number
  * Get route polyline using OpenRouteService.
  * Falls back to a straight line between two points if ORS fails.
  */
+const ORS_DEFAULT_KEY = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjRlYjFhNDY4Y2ExZDQ0NmU4OWQ0Yjk3ZWI5ZGEzN2FjIiwiaCI6Im11cm11cjY0In0='
+
 export const getRoutePolyline = async (
   start: { lat: number; lon: number },
   end: { lat: number; lon: number },
-  apiKey: string
+  apiKey?: string
 ): Promise<Array<{ latitude: number; longitude: number }> | null> => {
+  const key = apiKey || ORS_DEFAULT_KEY
   try {
     const res = await axios.get(
-      `https://api.openrouteservice.org/v2/directions/driving-car?api_key=${apiKey}&start=${start.lon},${start.lat}&end=${end.lon},${end.lat}`,
+      `https://api.openrouteservice.org/v2/directions/driving-car?api_key=${key}&start=${start.lon},${start.lat}&end=${end.lon},${end.lat}`,
       { timeout: 10000 }
     )
     const coordinates = res.data?.features?.[0]?.geometry?.coordinates

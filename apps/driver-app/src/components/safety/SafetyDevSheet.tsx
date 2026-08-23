@@ -57,6 +57,7 @@ export const SafetyDevSheet: React.FC<Props> = ({
   onOpenReportIncident,
   onReset,
 }) => {
+  if (!__DEV__) return null;
   const injectSampleNextRide = () => {
     const candidate: BackToBackCandidate = {
       ride_id: `sim-b2b-${Date.now()}`,

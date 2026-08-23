@@ -126,6 +126,10 @@ export const NotificationService = {
    * Developer Mode sandbox simulator
    */
   async simulateDevScenario(scenarioKey: string): Promise<any> {
+    if (!__DEV__) {
+      console.warn('[NotificationService] simulateDevScenario is disabled in production builds.');
+      return null;
+    }
     try {
       const res = await api.post('/matching/notifications/dev-simulate', { scenario_key: scenarioKey });
       return res.data;

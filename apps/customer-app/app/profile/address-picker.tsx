@@ -1,293 +1,422 @@
 /**
- * Address Picker — Customer App
- * Swiggy-style map-based location picker for saved addresses.
- * 
- * Fixed:
- * - Map gray screen → uses Dimensions for explicit pixel height
- * - Location permission requested before map renders
- * - Reverse geocodes center pin on map drag
+ * Customer App — Interactive Map Address Picker
+ * Route: /profile/address-picker
+ * Feature 2: Customer Address & Location Management.
  */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import {
-  View, Text, StyleSheet, TouchableOpacity, TextInput,
-  ActivityIndicator, Alert, KeyboardAvoidingView, Platform,
-  Dimensions, FlatList, Keyboard
-} from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Feather, Ionicons } from '@expo/vector-icons';
-import { router, useLocalSearchParams } from 'expo-router';
-import MapView, { PROVIDER_GOOGLE, Region } from 'react-native-maps';
-import * as Location from 'expo-location';
-import { profileApi } from '../../src/api/client';
+  View,
+  StyleSheet,
+  TouchableOpacity,
+  TextInput,
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Dimensions,
+  FlatList,
+  ScrollView,
+  Keyboard,
+  StatusBar,
+} from 'react-native'
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
+import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
+import { router, useLocalSearchParams } from 'expo-router'
+import MapView, { PROVIDER_GOOGLE, Region } from 'react-native-maps'
+import * as Location from 'expo-location'
+import AsyncStorage from '@react-native-async-storage/async-storage'
+import { profileApi } from '../../src/api/client'
+import { useTheme } from '../../src/contexts/ThemeContext'
+import { useTranslation } from '../../src/i18n'
+import {
+  AppText,
+  AppButton,
+  AppDivider,
+  AppBadge,
+} from '../../src/components/ui'
 
-const GOOGLE_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || '';
-const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
+const GOOGLE_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || ''
+const RECENT_SEARCHES_KEY = '@customer_recent_searches'
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window')
+
+const CATEGORIES = [
+  { key: 'home',    label: 'Home',    icon: 'home',       colorKey: '#059669' },
+  { key: 'work',    label: 'Work',    icon: 'briefcase',  colorKey: '#2563EB' },
+  { key: 'partner', label: 'Partner', icon: 'heart',      colorKey: '#EC4899' },
+  { key: 'gym',     label: 'Gym',     icon: 'activity',   colorKey: '#F59E0B' },
+  { key: 'other',   label: 'Other',   icon: 'map-pin',    colorKey: '#6366F1' },
+]
 
 export default function AddressPickerScreen() {
-  const params = useLocalSearchParams<{ id?: string; lat?: string; lon?: string; label?: string; address?: string; targetType?: string; mode?: string }>();
+  const params = useLocalSearchParams<{
+    id?: string
+    lat?: string
+    lon?: string
+    label?: string
+    address?: string
+    targetType?: string
+    mode?: string
+  }>()
 
-  const mapRef = useRef<MapView>(null);
+  const { theme, isDark } = useTheme()
+  const { t } = useTranslation()
+  const insets = useSafeAreaInsets()
+
+  const mapRef = useRef<MapView>(null)
   const [region, setRegion] = useState<Region>({
-    latitude:      params.lat ? parseFloat(params.lat) : 19.0760,
-    longitude:     params.lon ? parseFloat(params.lon) : 72.8777,
-    latitudeDelta:  0.01,
-    longitudeDelta: 0.01,
-  });
+    latitude: params.lat ? parseFloat(params.lat) : 18.5204,
+    longitude: params.lon ? parseFloat(params.lon) : 73.8567,
+    latitudeDelta: 0.008,
+    longitudeDelta: 0.008,
+  })
 
-  const [mapReady, setMapReady]         = useState(false);
-  const [loadingAddress, setLoadingAddress] = useState(false);
-  const [permGranted, setPermGranted]   = useState(false);
-  const [saving, setSaving]             = useState(false);
+  const [mapReady, setMapReady] = useState(false)
+  const [loadingAddress, setLoadingAddress] = useState(false)
+  const [permGranted, setPermGranted] = useState(false)
+  const [saving, setSaving] = useState(false)
 
-  // Form state
-  const [step, setStep]           = useState<'map' | 'details'>('map');
-  const [addressText, setAddressText] = useState(params.address || '');
-  const [label, setLabel]         = useState(params.targetType || params.label || 'home');
-  const [customLabel, setCustomLabel] = useState('');
+  // Step state
+  const [step, setStep] = useState<'map' | 'details'>('map')
+  const [addressText, setAddressText] = useState(params.address || '')
+  const [flatBuilding, setFlatBuilding] = useState('')
+  const [label, setLabel] = useState(params.label || 'home')
+  const [customLabel, setCustomLabel] = useState('')
+  const [isDefault, setIsDefault] = useState(false)
 
-  // Search state
-  const [searchQuery, setSearchQuery] = useState('');
-  const [predictions, setPredictions] = useState<any[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  
-  const insets = useSafeAreaInsets();
+  // Search & Recent History
+  const [searchQuery, setSearchQuery] = useState('')
+  const [predictions, setPredictions] = useState<any[]>([])
+  const [recentSearches, setRecentSearches] = useState<string[]>([])
+  const [isSearching, setIsSearching] = useState(false)
 
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // ── Request location permission and move map to user's position ──
+  // Load Recent Searches
   useEffect(() => {
-    (async () => {
+    AsyncStorage.getItem(RECENT_SEARCHES_KEY).then((data) => {
+      if (data) {
+        try {
+          setRecentSearches(JSON.parse(data))
+        } catch {}
+      }
+    })
+  }, [])
+
+  const saveRecentSearch = async (query: string) => {
+    if (!query.trim()) return
+    const updated = [query.trim(), ...recentSearches.filter((s) => s.toLowerCase() !== query.trim().toLowerCase())].slice(0, 5)
+    setRecentSearches(updated)
+    try {
+      await AsyncStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated))
+    } catch {}
+  }
+
+  const clearRecentSearches = async () => {
+    setRecentSearches([])
+    try {
+      await AsyncStorage.removeItem(RECENT_SEARCHES_KEY)
+    } catch {}
+  }
+
+  // Request Location
+  useEffect(() => {
+    ;(async () => {
       try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
+        const { status } = await Location.requestForegroundPermissionsAsync()
         if (status === 'granted') {
-          setPermGranted(true);
-          // If no coords provided, center on user location
+          setPermGranted(true)
           if (!params.lat && !params.lon) {
-            const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+            const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
             const newRegion: Region = {
-              latitude:      loc.coords.latitude,
-              longitude:     loc.coords.longitude,
-              latitudeDelta:  0.01,
-              longitudeDelta: 0.01,
-            };
-            setRegion(newRegion);
-            // Also reverse geocode immediately
-            fetchAddressFromCoords(loc.coords.latitude, loc.coords.longitude);
+              latitude: loc.coords.latitude,
+              longitude: loc.coords.longitude,
+              latitudeDelta: 0.008,
+              longitudeDelta: 0.008,
+            }
+            setRegion(newRegion)
+            fetchAddressFromCoords(loc.coords.latitude, loc.coords.longitude)
           }
-        } else {
-          console.warn('[AddressPicker] Location permission denied');
         }
       } catch (e) {
-        console.warn('[AddressPicker] Location error:', e);
+        console.warn('Location error', e)
       }
-    })();
-  }, []);
+    })()
+  }, [])
+
+  const handleRecenter = async () => {
+    try {
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High })
+      const newRegion = {
+        latitude: loc.coords.latitude,
+        longitude: loc.coords.longitude,
+        latitudeDelta: 0.008,
+        longitudeDelta: 0.008,
+      }
+      setRegion(newRegion)
+      mapRef.current?.animateToRegion(newRegion, 600)
+      fetchAddressFromCoords(loc.coords.latitude, loc.coords.longitude)
+    } catch {
+      Alert.alert('Location Error', 'Could not fetch current GPS location.')
+    }
+  }
 
   const fetchAddressFromCoords = async (lat: number, lng: number) => {
-    setLoadingAddress(true);
+    setLoadingAddress(true)
     try {
       if (GOOGLE_API_KEY) {
-        // Use Google Geocoding API
         const res = await fetch(
           `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_API_KEY}`
-        );
-        const data = await res.json();
+        )
+        const data = await res.json()
         if (data.results?.length > 0) {
-          setAddressText(data.results[0].formatted_address);
-          return;
+          setAddressText(data.results[0].formatted_address)
+          return
         }
       }
-      // Fallback: expo-location reverse geocode
-      const places = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
+      const places = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng })
       if (places.length > 0) {
-        const p = places[0];
-        const parts = [p.name, p.street, p.district, p.city, p.region, p.country].filter(Boolean);
-        setAddressText(parts.join(', '));
+        const p = places[0]
+        const parts = [p.name, p.street, p.district, p.city, p.region, p.country].filter(Boolean)
+        setAddressText(parts.join(', '))
       }
-    } catch (e) {
-      console.warn('[AddressPicker] Reverse geocode failed:', e);
+    } catch {
+      // Fallback
     } finally {
-      setLoadingAddress(false);
+      setLoadingAddress(false)
     }
-  };
+  }
 
   const onRegionChangeComplete = (newRegion: Region) => {
-    setRegion(newRegion);
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    setRegion(newRegion)
+    if (timeoutRef.current) clearTimeout(timeoutRef.current)
     timeoutRef.current = setTimeout(() => {
-      fetchAddressFromCoords(newRegion.latitude, newRegion.longitude);
-    }, 800);
-  };
+      fetchAddressFromCoords(newRegion.latitude, newRegion.longitude)
+    }, 700)
+  }
+
+  const handleSearchChange = (text: string) => {
+    setSearchQuery(text)
+    if (!text.trim()) {
+      setPredictions([])
+      return
+    }
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current)
+    searchTimeoutRef.current = setTimeout(async () => {
+      if (!GOOGLE_API_KEY) return
+      try {
+        const res = await fetch(
+          `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(
+            text
+          )}&key=${GOOGLE_API_KEY}&components=country:in`
+        )
+        const data = await res.json()
+        if (data.status === 'OK') {
+          setPredictions(data.predictions)
+        }
+      } catch (e) {
+        console.warn('Autocomplete error', e)
+      }
+    }, 400)
+  }
+
+  const handleSelectPrediction = async (placeId: string, description: string) => {
+    Keyboard.dismiss()
+    setSearchQuery('')
+    setPredictions([])
+    setIsSearching(true)
+    saveRecentSearch(description)
+    try {
+      if (GOOGLE_API_KEY) {
+        const res = await fetch(
+          `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&key=${GOOGLE_API_KEY}`
+        )
+        const data = await res.json()
+        if (data.status === 'OK' && data.result?.geometry?.location) {
+          const { lat, lng } = data.result.geometry.location
+          const newRegion = { latitude: lat, longitude: lng, latitudeDelta: 0.008, longitudeDelta: 0.008 }
+          setRegion(newRegion)
+          mapRef.current?.animateToRegion(newRegion, 800)
+          setAddressText(data.result.formatted_address || description)
+          return
+        }
+      }
+      setAddressText(description)
+    } catch {
+      setAddressText(description)
+    } finally {
+      setIsSearching(false)
+    }
+  }
 
   const handleSave = async () => {
-    const finalLabel = ['home', 'work', 'drop', 'other'].includes(label)
-      ? label
-      : customLabel.trim() || 'other';
+    const finalLabel = label === 'other' ? customLabel.trim() || 'Other' : label
+    const fullCombined = flatBuilding.trim()
+      ? `${flatBuilding.trim()}, ${addressText}`
+      : addressText
 
     if (!addressText.trim()) {
-      Alert.alert('Missing Address', 'Please move the pin to a location first.');
-      return;
+      Alert.alert('Missing Location', 'Please select a location on the map first.')
+      return
     }
 
-    setSaving(true);
+    setSaving(true)
     try {
       const payload = {
         label: finalLabel,
-        address_type: label === 'drop' ? 'drop' : 'general',
-        address: addressText,
+        address_type: label,
+        address: fullCombined,
         latitude: region.latitude,
         longitude: region.longitude,
-      };
+        is_default: isDefault,
+      }
 
       if (params.id) {
-        await profileApi.updateAddress(params.id, payload);
+        await profileApi.updateAddress(params.id, payload)
       } else {
-        await profileApi.addAddress(payload);
+        await profileApi.addAddress(payload)
       }
-      router.back();
+      router.back()
     } catch (e: any) {
-      Alert.alert('Error', e?.response?.data?.detail || 'Failed to save address.');
+      Alert.alert(t('common.error', 'Error'), e?.response?.data?.detail || 'Failed to save address.')
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
-
-  };
-
-  const handleSearchChange = (text: string) => {
-    setSearchQuery(text);
-    if (!text.trim()) {
-      setPredictions([]);
-      return;
-    }
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-    searchTimeoutRef.current = setTimeout(async () => {
-      if (!GOOGLE_API_KEY) return;
-      try {
-        const res = await fetch(`https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(text)}&key=${GOOGLE_API_KEY}&components=country:in`);
-        const data = await res.json();
-        if (data.status === 'OK') {
-          setPredictions(data.predictions);
-        }
-      } catch (e) {
-        console.warn('Autocomplete error', e);
-      }
-    }, 500);
-  };
-
-  const handleSelectPrediction = async (placeId: string) => {
-    Keyboard.dismiss();
-    setSearchQuery('');
-    setPredictions([]);
-    setIsSearching(true);
-    try {
-      const res = await fetch(`https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&key=${GOOGLE_API_KEY}`);
-      const data = await res.json();
-      if (data.status === 'OK' && data.result?.geometry?.location) {
-        const { lat, lng } = data.result.geometry.location;
-        const newRegion = { latitude: lat, longitude: lng, latitudeDelta: 0.01, longitudeDelta: 0.01 };
-        setRegion(newRegion);
-        if (mapRef.current) {
-          mapRef.current.animateToRegion(newRegion, 1000);
-        }
-        setAddressText(data.result.formatted_address || data.result.name);
-      }
-    } catch (e) {
-      console.warn('Place details error', e);
-    } finally {
-      setIsSearching(false);
-    }
-  };
-
-  // ── STEP 2: Label + Address Details ──
-  if (step === 'details') {
-    return (
-      <SafeAreaView style={styles.detailsRoot}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => setStep('map')} style={styles.backBtn}>
-              <Feather name="arrow-left" size={24} color="#0F172A" />
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>{params.id ? 'Edit Address' : 'Save Address'}</Text>
-          </View>
-
-          {/* Selected address preview */}
-          <View style={styles.addressPreview}>
-            <View style={styles.addressPreviewIcon}>
-              <Ionicons name="location" size={20} color="#2563EB" />
-            </View>
-            <Text style={styles.addressPreviewText} numberOfLines={2}>
-              {addressText || 'No address selected'}
-            </Text>
-            <TouchableOpacity onPress={() => setStep('map')} style={styles.changeBtn}>
-              <Text style={styles.changeBtnText}>Change</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.formContainer}>
-            <Text style={styles.fieldLabel}>Save As</Text>
-            <View style={styles.chipRow}>
-              {[
-                { key: 'home',  icon: 'home'      },
-                { key: 'work',  icon: 'briefcase' },
-                { key: 'drop',  icon: 'map-pin'   },
-                { key: 'other', icon: 'map-pin'   },
-              ].map(type => (
-                <TouchableOpacity
-                  key={type.key}
-                  style={[styles.chip, label === type.key && styles.chipActive]}
-                  onPress={() => setLabel(type.key)}
-                >
-                  <Feather
-                    name={type.icon as any}
-                    size={14}
-                    color={label === type.key ? '#2563EB' : '#64748B'}
-                  />
-                  <Text style={[styles.chipText, label === type.key && { color: '#2563EB' }]}>
-                    {type.key.charAt(0).toUpperCase() + type.key.slice(1)}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {label === 'other' && (
-              <TextInput
-                style={styles.input}
-                placeholder="e.g., Gym, College, Parent's House"
-                placeholderTextColor="#94A3B8"
-                value={customLabel}
-                onChangeText={setCustomLabel}
-              />
-            )}
-
-            <Text style={[styles.fieldLabel, { marginTop: 16 }]}>Add More Details (Optional)</Text>
-            <TextInput
-              style={[styles.input, { height: 90, textAlignVertical: 'top' }]}
-              multiline
-              placeholder="Flat no., building name, landmark..."
-              placeholderTextColor="#94A3B8"
-              value={addressText}
-              onChangeText={setAddressText}
-            />
-          </View>
-
-          <View style={styles.footer}>
-            <TouchableOpacity style={styles.saveBtn} onPress={handleSave} disabled={saving}>
-              {saving
-                ? <ActivityIndicator color="#fff" />
-                : <Text style={styles.saveBtnText}>Save Address</Text>
-              }
-            </TouchableOpacity>
-          </View>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    );
   }
 
-  // ── STEP 1: Map picker ──
+  // ── STEP 2: Category & Flat Details ──
+  if (step === 'details') {
+    return (
+      <SafeAreaView style={[styles.detailsRoot, { backgroundColor: theme.colors.backgroundAlt }]} edges={['top']}>
+        <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+          <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
+            <TouchableOpacity onPress={() => setStep('map')} style={styles.backBtn}>
+              <Feather name="arrow-left" size={24} color={theme.colors.textPrimary} />
+            </TouchableOpacity>
+            <AppText variant="h3" bold style={styles.headerTitle}>
+              {params.id ? 'Edit Place Details' : 'Save Place Details'}
+            </AppText>
+            <View style={{ width: 40 }} />
+          </View>
+
+          <FlatList
+            data={[1]}
+            keyExtractor={() => 'form'}
+            contentContainerStyle={{ padding: 20, paddingBottom: 40 }}
+            renderItem={() => (
+              <View>
+                {/* Location Preview Card */}
+                <View style={[styles.addressPreview, { backgroundColor: `${theme.colors.primary}12`, borderColor: `${theme.colors.primary}30` }]}>
+                  <View style={[styles.addressPreviewIcon, { backgroundColor: `${theme.colors.primary}20` }]}>
+                    <Ionicons name="location" size={22} color={theme.colors.primary} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <AppText variant="label" color="secondary">SELECTED PINPOINT</AppText>
+                    <AppText variant="body" bold style={{ marginTop: 2 }}>{addressText}</AppText>
+                  </View>
+                  <TouchableOpacity onPress={() => setStep('map')} style={styles.changeBtn}>
+                    <AppText variant="small" bold color="brand">Change</AppText>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Category Preset Selection */}
+                <AppText variant="label" color="secondary" style={styles.fieldLabel}>
+                  {t('address.save_as', 'Save Place As')}
+                </AppText>
+                <View style={styles.chipRow}>
+                  {CATEGORIES.map((cat) => (
+                    <TouchableOpacity
+                      key={cat.key}
+                      style={[
+                        styles.chip,
+                        {
+                          backgroundColor: label === cat.key ? `${cat.colorKey}20` : theme.colors.surface,
+                          borderColor: label === cat.key ? cat.colorKey : theme.colors.border,
+                        },
+                      ]}
+                      onPress={() => setLabel(cat.key)}
+                    >
+                      <Feather
+                        name={cat.icon as any}
+                        size={16}
+                        color={label === cat.key ? cat.colorKey : theme.colors.textSecondary}
+                      />
+                      <AppText
+                        variant="small"
+                        semibold
+                        style={{ color: label === cat.key ? cat.colorKey : theme.colors.textSecondary }}
+                      >
+                        {cat.label}
+                      </AppText>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {label === 'other' && (
+                  <TextInput
+                    style={[
+                      styles.input,
+                      {
+                        backgroundColor: theme.colors.surface,
+                        borderColor: theme.colors.border,
+                        color: theme.colors.textPrimary,
+                        marginBottom: 16,
+                      },
+                    ]}
+                    placeholder="e.g. Grandma's House, Doctor Clinic"
+                    placeholderTextColor={theme.colors.placeholder}
+                    value={customLabel}
+                    onChangeText={setCustomLabel}
+                  />
+                )}
+
+                {/* Flat / Building Details */}
+                <AppText variant="label" color="secondary" style={styles.fieldLabel}>
+                  {t('address.flat_building', 'House / Flat / Building Name & Landmark')} (Optional)
+                </AppText>
+                <TextInput
+                  style={[
+                    styles.input,
+                    {
+                      backgroundColor: theme.colors.surface,
+                      borderColor: theme.colors.border,
+                      color: theme.colors.textPrimary,
+                      height: 80,
+                      textAlignVertical: 'top',
+                    },
+                  ]}
+                  placeholder="e.g. Flat 402, Building A, Near City Mall"
+                  placeholderTextColor={theme.colors.placeholder}
+                  value={flatBuilding}
+                  onChangeText={setFlatBuilding}
+                  multiline
+                />
+
+                {/* Submit */}
+                <View style={{ marginTop: 28 }}>
+                  <AppButton
+                    onPress={handleSave}
+                    loading={saving}
+                    variant="primary"
+                  >
+                    Save Address & Pinpoint
+                  </AppButton>
+                </View>
+              </View>
+            )}
+          />
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    )
+  }
+
+  // ── STEP 1: Map Picker ──
   return (
     <View style={{ width: SCREEN_W, height: SCREEN_H, backgroundColor: '#E5E5E5' }}>
-      {/* Map — using absoluteFill for robust Android rendering */}
+      <StatusBar barStyle="dark-content" />
+
+      {/* Interactive Google Map */}
       <MapView
         ref={mapRef}
         provider={PROVIDER_GOOGLE}
@@ -296,76 +425,82 @@ export default function AddressPickerScreen() {
         onRegionChangeComplete={onRegionChangeComplete}
         showsUserLocation={permGranted}
         showsMyLocationButton={false}
-        onMapReady={() => {
-          setMapReady(true);
-          console.log('[AddressPicker] Map loaded ✅');
-        }}
+        onMapReady={() => setMapReady(true)}
         zoomEnabled
         scrollEnabled
         pitchEnabled={false}
         rotateEnabled={false}
       />
 
-      {/* Center Pin — absolutely centered using Flexbox */}
+      {/* Center Pin Indicator */}
       <View
         style={[
           StyleSheet.absoluteFill,
           {
             alignItems: 'center',
             justifyContent: 'center',
-            paddingBottom: 40, // Offset so the tip of the pin hits the center
+            paddingBottom: 44,
           },
         ]}
         pointerEvents="none"
       >
         <View style={styles.pinBubble}>
-          <Text style={styles.pinText}>📍 Move to pick location</Text>
+          <AppText variant="small" bold color="white">
+            📍 Drag map to pinpoint
+          </AppText>
         </View>
-        <Ionicons name="location" size={48} color="#EF4444" />
+        <Ionicons name="location" size={46} color={theme.colors.error} />
         <View style={styles.pinShadow} />
       </View>
 
-      {/* Header bar / Search */}
-      <View style={[styles.mapHeaderWrap, { paddingTop: insets.top + 10 }]}>
+      {/* Search Header Bar */}
+      <View style={[styles.mapHeaderWrap, { paddingTop: insets.top + 8 }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <TouchableOpacity style={styles.mapBackBtn} onPress={() => router.back()}>
-            <Feather name="arrow-left" size={22} color="#0F172A" />
+          <TouchableOpacity
+            style={[styles.mapBackBtn, { backgroundColor: theme.colors.surface }]}
+            onPress={() => router.back()}
+          >
+            <Feather name="arrow-left" size={22} color={theme.colors.textPrimary} />
           </TouchableOpacity>
-          <View style={styles.mapSearchBox}>
-            <Feather name="search" size={18} color="#64748B" />
+          <View style={[styles.mapSearchBox, { backgroundColor: theme.colors.surface }]}>
+            <Feather name="search" size={18} color={theme.colors.textMuted} />
             <TextInput
-              style={styles.mapSearchInput}
-              placeholder="Search a location..."
+              style={[styles.mapSearchInput, { color: theme.colors.textPrimary }]}
+              placeholder={t('address.search_placeholder', 'Search location, area...')}
               value={searchQuery}
               onChangeText={handleSearchChange}
-              placeholderTextColor="#94A3B8"
-              autoFocus={false}
+              placeholderTextColor={theme.colors.placeholder}
             />
-            {isSearching && <ActivityIndicator size="small" color="#2563EB" />}
+            {isSearching && <ActivityIndicator size="small" color={theme.colors.primary} />}
             {searchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => { setSearchQuery(''); setPredictions([]); }}>
-                <Feather name="x-circle" size={18} color="#94A3B8" />
+              <TouchableOpacity onPress={() => { setSearchQuery(''); setPredictions([]) }}>
+                <Feather name="x-circle" size={18} color={theme.colors.textMuted} />
               </TouchableOpacity>
             )}
           </View>
         </View>
 
+        {/* Predictions Dropdown */}
         {predictions.length > 0 && (
-          <View style={styles.predictionsContainer}>
+          <View style={[styles.predictionsContainer, { backgroundColor: theme.colors.surface }]}>
             <FlatList
               data={predictions}
               keyExtractor={(item) => item.place_id}
               keyboardShouldPersistTaps="handled"
               renderItem={({ item }) => (
                 <TouchableOpacity
-                  style={styles.predictionItem}
-                  onPress={() => handleSelectPrediction(item.place_id)}
+                  style={[styles.predictionItem, { borderBottomColor: theme.colors.border }]}
+                  onPress={() => handleSelectPrediction(item.place_id, item.description)}
                 >
-                  <Feather name="map-pin" size={16} color="#64748B" style={{ marginTop: 2 }} />
+                  <Feather name="map-pin" size={16} color={theme.colors.primary} style={{ marginTop: 2 }} />
                   <View style={{ marginLeft: 10, flex: 1 }}>
-                    <Text style={styles.predMainText}>{item.structured_formatting?.main_text || item.description}</Text>
+                    <AppText variant="body" semibold>
+                      {item.structured_formatting?.main_text || item.description}
+                    </AppText>
                     {item.structured_formatting?.secondary_text && (
-                      <Text style={styles.predSubText}>{item.structured_formatting.secondary_text}</Text>
+                      <AppText variant="small" color="muted">
+                        {item.structured_formatting.secondary_text}
+                      </AppText>
                     )}
                   </View>
                 </TouchableOpacity>
@@ -373,156 +508,232 @@ export default function AddressPickerScreen() {
             />
           </View>
         )}
+
+        {/* Recent Searches Strip */}
+        {searchQuery.length === 0 && recentSearches.length > 0 && (
+          <View style={[styles.recentBox, { backgroundColor: theme.colors.surface }]}>
+            <View style={styles.recentHeader}>
+              <AppText variant="label" color="secondary">{t('address.recent_searches', 'RECENT SEARCHES')}</AppText>
+              <TouchableOpacity onPress={clearRecentSearches}>
+                <AppText variant="caption" semibold color="brand">{t('address.clear_history', 'Clear')}</AppText>
+              </TouchableOpacity>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+              {recentSearches.map((s, idx) => (
+                <TouchableOpacity
+                  key={idx}
+                  style={[styles.recentChip, { backgroundColor: theme.colors.backgroundAlt, borderColor: theme.colors.border }]}
+                  onPress={() => {
+                    setAddressText(s)
+                    setSearchQuery('')
+                  }}
+                >
+                  <Feather name="clock" size={12} color={theme.colors.textMuted} />
+                  <AppText variant="small" numberOfLines={1} style={{ maxWidth: 140 }}>
+                    {s}
+                  </AppText>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        )}
       </View>
 
-      {/* Bottom address card */}
-      <View style={styles.mapFooter}>
+      {/* Recenter FAB */}
+      <TouchableOpacity
+        style={[styles.recenterFab, { backgroundColor: theme.colors.surface, bottom: 150 }]}
+        onPress={handleRecenter}
+        activeOpacity={0.85}
+      >
+        <MaterialCommunityIcons name="crosshairs-gps" size={24} color={theme.colors.primary} />
+      </TouchableOpacity>
+
+      {/* Bottom Selected Location Card */}
+      <View style={[styles.mapFooter, { backgroundColor: theme.colors.surface }]}>
         <View style={styles.addressBox}>
-          <View style={styles.addressBoxIcon}>
-            <Feather name="map-pin" size={20} color="#2563EB" />
+          <View style={[styles.addressBoxIcon, { backgroundColor: `${theme.colors.primary}18` }]}>
+            <Feather name="map-pin" size={22} color={theme.colors.primary} />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.addressBoxLabel}>Selected Location</Text>
+            <AppText variant="label" color="muted">SELECTED LOCATION</AppText>
             {loadingAddress ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
-                <ActivityIndicator size="small" color="#2563EB" />
-                <Text style={{ color: '#94A3B8', fontSize: 13 }}>Finding address...</Text>
+                <ActivityIndicator size="small" color={theme.colors.primary} />
+                <AppText variant="small" color="muted">Pinpointing exact address...</AppText>
               </View>
             ) : (
-              <Text style={styles.addressBoxText} numberOfLines={2}>
-                {addressText || 'Move the pin to select a location'}
-              </Text>
+              <AppText variant="body" bold numberOfLines={2} style={{ marginTop: 2 }}>
+                {addressText || 'Move map to select location'}
+              </AppText>
             )}
           </View>
         </View>
 
-        <TouchableOpacity
-          style={[styles.confirmLocationBtn, (!addressText && !loadingAddress) && { opacity: 0.5 }]}
+        <AppButton
           onPress={() => {
             if (!addressText) {
-              Alert.alert('No location selected', 'Please drag the map to select a location first.');
-              return;
+              Alert.alert('No location', 'Please drag the map to pick a location first.')
+              return
             }
             if (params.mode === 'pick') {
-              router.navigate({ 
-                pathname: '/book/cab', 
-                params: { [params.targetType === 'pickup' ? 'pickup' : 'destination']: addressText } 
-              });
-              return;
+              router.navigate({
+                pathname: '/book/cab',
+                params: { [params.targetType === 'pickup' ? 'pickup' : 'destination']: addressText },
+              } as any)
+              return
             }
-            setStep('details');
+            setStep('details')
           }}
+          variant="primary"
         >
-          <Text style={styles.confirmLocationText}>Confirm Location →</Text>
-        </TouchableOpacity>
+          {t('address.confirm_location', 'Confirm Location →')}
+        </AppButton>
       </View>
     </View>
-  );
+  )
 }
 
 const styles = StyleSheet.create({
-  // ── Map step ──
-  mapHeaderWrap: {
-    position: 'absolute', top: 0, left: 0, right: 0,
-    paddingHorizontal: 16, zIndex: 10,
-  },
-  mapBackBtn: {
-    width: 46, height: 46, borderRadius: 23, backgroundColor: '#FFF',
-    alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 6, elevation: 5, marginRight: 10,
-  },
-  mapSearchBox: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: '#FFF', borderRadius: 14, paddingHorizontal: 14, height: 46,
-    shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 6, elevation: 4,
-  },
-  mapSearchInput: { flex: 1, fontSize: 14, color: '#0F172A', fontWeight: '500', height: '100%' },
-  predictionsContainer: {
-    backgroundColor: '#FFF', borderRadius: 12, marginTop: 10,
-    maxHeight: 250, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 6, elevation: 5,
-    overflow: 'hidden'
-  },
-  predictionItem: {
-    flexDirection: 'row', padding: 14, borderBottomWidth: 1, borderBottomColor: '#F1F5F9',
-  },
-  predMainText: { fontSize: 14, fontWeight: '600', color: '#0F172A' },
-  predSubText: { fontSize: 12, color: '#64748B', marginTop: 2 },
-
-  pinBubble: {
-    backgroundColor: '#1E293B', paddingHorizontal: 12, paddingVertical: 6,
-    borderRadius: 8, marginBottom: 4,
-  },
-  pinText: { color: '#FFF', fontSize: 12, fontWeight: '600' },
-  pinShadow: { width: 12, height: 4, backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: 2, marginTop: -4 },
-
-  mapFooter: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-    backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24,
-    padding: 20, paddingBottom: 32,
-    shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 12, elevation: 12,
-  },
-  addressBox: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 16, gap: 12 },
-  addressBoxIcon: {
-    width: 40, height: 40, borderRadius: 20, backgroundColor: '#EFF6FF',
-    alignItems: 'center', justifyContent: 'center', marginTop: 2,
-  },
-  addressBoxLabel: { fontSize: 12, color: '#94A3B8', fontWeight: '600', marginBottom: 4 },
-  addressBoxText: { fontSize: 14, color: '#0F172A', fontWeight: '500', lineHeight: 20 },
-  confirmLocationBtn: {
-    backgroundColor: '#2563EB', borderRadius: 16, paddingVertical: 16, alignItems: 'center',
-    shadowColor: '#2563EB', shadowOpacity: 0.3, shadowRadius: 8, elevation: 4,
-  },
-  confirmLocationText: { color: '#FFF', fontSize: 16, fontWeight: '700' },
-
-  // ── Details step ──
-  detailsRoot: { flex: 1, backgroundColor: '#F8FAFC' },
+  detailsRoot: { flex: 1 },
   header: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 16, paddingVertical: 14,
-    backgroundColor: '#FFF', borderBottomWidth: 1, borderBottomColor: '#F1F5F9',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 18, fontWeight: '700', color: '#0F172A', marginLeft: 8 },
-
+  headerTitle: { flex: 1, textAlign: 'center' },
   addressPreview: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    margin: 16, padding: 14,
-    backgroundColor: '#EFF6FF', borderRadius: 14,
-    borderWidth: 1, borderColor: '#BFDBFE',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+    marginBottom: 20,
   },
-  addressPreviewIcon: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: '#2563EB22', alignItems: 'center', justifyContent: 'center',
-  },
-  addressPreviewText: { flex: 1, fontSize: 13, color: '#1E3A8A', fontWeight: '500' },
+  addressPreviewIcon: { width: 40, height: 40, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   changeBtn: { paddingHorizontal: 10, paddingVertical: 6 },
-  changeBtnText: { color: '#2563EB', fontSize: 13, fontWeight: '700' },
-
-  formContainer: { paddingHorizontal: 20, paddingTop: 4 },
-  fieldLabel: {
-    fontSize: 12, fontWeight: '700', color: '#64748B',
-    textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10,
-  },
-  chipRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
+  fieldLabel: { marginBottom: 8, letterSpacing: 0.5 },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
   chip: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 16, paddingVertical: 10,
-    borderRadius: 20, borderWidth: 1.5, borderColor: '#E2E8F0', backgroundColor: '#FFF',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 14,
+    borderWidth: 1,
   },
-  chipActive: { borderColor: '#2563EB', backgroundColor: '#EFF6FF' },
-  chipText: { fontSize: 14, fontWeight: '600', color: '#64748B' },
   input: {
-    backgroundColor: '#FFF', borderWidth: 1.5, borderColor: '#E2E8F0',
-    borderRadius: 14, padding: 14, fontSize: 14, color: '#0F172A', marginBottom: 4,
+    height: 52,
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    fontSize: 15,
   },
-
-  footer: {
-    padding: 20, paddingBottom: 36,
-    backgroundColor: '#FFF', borderTopWidth: 1, borderTopColor: '#F1F5F9', marginTop: 'auto',
+  mapHeaderWrap: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 16,
+    zIndex: 10,
   },
-  saveBtn: {
-    backgroundColor: '#2563EB', borderRadius: 16, paddingVertical: 16, alignItems: 'center',
-    shadowColor: '#2563EB', shadowOpacity: 0.3, shadowRadius: 8, elevation: 4,
+  mapBackBtn: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 4,
+    marginRight: 10,
   },
-  saveBtnText: { color: '#FFF', fontSize: 16, fontWeight: '700' },
-});
+  mapSearchBox: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    height: 46,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  mapSearchInput: { flex: 1, fontSize: 14, fontWeight: '500', height: '100%' },
+  predictionsContainer: {
+    borderRadius: 16,
+    marginTop: 8,
+    maxHeight: 240,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 5,
+    overflow: 'hidden',
+  },
+  predictionItem: { flexDirection: 'row', padding: 14, borderBottomWidth: StyleSheet.hairlineWidth },
+  recentBox: {
+    borderRadius: 14,
+    marginTop: 8,
+    padding: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  recentHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  recentChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  pinBubble: {
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginBottom: 4,
+  },
+  pinShadow: { width: 12, height: 4, backgroundColor: 'rgba(0,0,0,0.25)', borderRadius: 2, marginTop: -4 },
+  recenterFab: {
+    position: 'absolute',
+    right: 16,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 6,
+    zIndex: 5,
+  },
+  mapFooter: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 34,
+    shadowColor: '#000',
+    shadowOpacity: 0.14,
+    shadowRadius: 12,
+    elevation: 12,
+  },
+  addressBox: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 16, gap: 12 },
+  addressBoxIcon: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+})

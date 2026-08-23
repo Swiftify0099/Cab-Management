@@ -256,7 +256,14 @@ class DriverSafetyService:
         )
         session = res.scalar_one_or_none()
         now = datetime.now(timezone.utc)
-        if not session or session.status != "ACTIVE" or session.expires_at < now:
+        if not session or session.status != "ACTIVE":
+            raise HTTPException(status_code=404, detail="Trip sharing link has expired or is invalid")
+
+        exp = session.expires_at
+        if exp and exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+
+        if exp and exp < now:
             raise HTTPException(status_code=404, detail="Trip sharing link has expired or is invalid")
 
         r_res = await self.db.execute(select(RideRequest).where(RideRequest.id == session.ride_id))

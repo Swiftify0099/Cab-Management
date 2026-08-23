@@ -97,6 +97,32 @@ export default function SettingsScreen() {
           </View>
         </View>
 
+        {/* Security & Access Hub */}
+        <AppText variant="bodyS" semibold color="secondary" style={styles.subSectionTitle}>Security & Access</AppText>
+        <View style={[styles.card, { backgroundColor: theme.colors.surface }]}>
+          <TouchableOpacity style={styles.row} onPress={() => router.push('/security' as any)}>
+            <View style={styles.rowLeft}>
+              <Feather name="shield" size={20} color={theme.colors.success} style={styles.icon} />
+              <View>
+                <AppText variant="body" bold>Security Center</AppText>
+                <AppText variant="small" color="muted">Shield status, device trust & activity</AppText>
+              </View>
+            </View>
+            <Feather name="chevron-right" size={20} color={theme.colors.textMuted} />
+          </TouchableOpacity>
+          <AppDivider />
+          <TouchableOpacity style={styles.row} onPress={() => router.push('/security/devices' as any)}>
+            <View style={styles.rowLeft}>
+              <Feather name="smartphone" size={20} color={theme.colors.primary} style={styles.icon} />
+              <View>
+                <AppText variant="body" bold>Trusted Devices & Sessions</AppText>
+                <AppText variant="small" color="muted">View hardware & sign out remote sessions</AppText>
+              </View>
+            </View>
+            <Feather name="chevron-right" size={20} color={theme.colors.textMuted} />
+          </TouchableOpacity>
+        </View>
+
         <AppText variant="bodyS" semibold color="secondary" style={styles.subSectionTitle}>Language Selection</AppText>
         <View style={[styles.card, { backgroundColor: theme.colors.surface }]}>
           <TouchableOpacity style={styles.row}>

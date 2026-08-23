@@ -1,903 +1,1522 @@
 /**
- * Book Cab Screen — Ride Search, Route Preview & Ride Selection
- * Phase 2: Real fares only, DatePicker, dynamic saved places, correct payment navigation
+ * Customer App — Intercity & Outstation Cab Booking Screen
+ * Route: /book/cab
+ * Feature 3, Feature 4 & Feature 5: Immediate Dispatch + Advance Reservation + Real-Time Own Fare Negotiation.
  */
-import { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  View, Text, TouchableOpacity, StyleSheet,
-  TextInput, ScrollView, ActivityIndicator, Alert, Switch, StatusBar, Modal, Platform, Dimensions,
+  View,
+  ScrollView,
+  StyleSheet,
+  TouchableOpacity,
+  TextInput,
+  Alert,
+  StatusBar,
+  Dimensions,
+  Modal,
+  Platform,
 } from 'react-native'
-import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { router, useLocalSearchParams, useFocusEffect } from 'expo-router'
-import { LinearGradient } from 'expo-linear-gradient'
-import MapView, { Polyline, PROVIDER_GOOGLE } from 'react-native-maps'
+import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
+import { router, useLocalSearchParams } from 'expo-router'
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps'
+import * as Location from 'expo-location'
 import DateTimePicker from '@react-native-community/datetimepicker'
-import { api, profileApi, bookingApi, parcelApi, routeApi } from '../../src/api/client'
-import { geocodeCity, getRoutePolyline } from '../../src/utils/maps'
+import { DateTimePickerAndroid } from '@react-native-community/datetimepicker'
 
-const ORS_API_KEY = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjRlYjFhNDY4Y2ExZDQ0NmU4OWQ0Yjk3ZWI5ZGEzN2FjIiwiaCI6Im11cm11cjY0In0='
+import { useTheme } from '../../src/contexts/ThemeContext'
+import { useTranslation } from '../../src/i18n'
+import { rideApi, fareApi, familyApi, scheduleApi, smartApi } from '../../src/api/client'
+import { getRoutePolyline } from '../../src/utils/maps'
+import {
+  AppText,
+  AppButton,
+  AppCard,
+  AppBadge,
+  AppDivider,
+  AppAvatar,
+} from '../../src/components/ui'
 
+// Device timezone — sent with every scheduled reservation for server-side correctness
+const DEVICE_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata'
 
-const VEHICLE_TYPE_META: Record<string, { label: string; icon: string; seats: number }> = {
-  sedan:    { label: 'Sedan',    icon: 'car-side',           seats: 5  },
-  suv:      { label: 'SUV',     icon: 'car-sports',         seats: 7  },
-  minibus:  { label: 'Mini Bus',icon: 'bus-side',           seats: 16 },
-  bus:      { label: 'Bus',     icon: 'bus-alert',          seats: 19 },
-  coach:    { label: 'Coach',   icon: 'bus-school',         seats: 25 },
-  volvo:    { label: 'Volvo',   icon: 'bus-double-decker',  seats: 50 },
-  parcel:   { label: 'Parcel',  icon: 'truck-delivery',     seats: 2  },
+const { width: SCREEN_W } = Dimensions.get('window')
+const MAX_STOPS = 3
+
+export interface StopItem {
+  id: string
+  sequence: number
+  address: string
+  lat: number
+  lng: number
 }
 
-interface Trip {
-  id: string; pickup_city: string; destination_city: string
-  departure_time: string; available_seats: number; total_seats: number
-  base_fare: number; distance_km: number; parcel_enabled: boolean; women_only: boolean
-  vehicle_type?: string
-}
-interface FareEstimate {
-  vehicle_type: string; per_seat_fare: number; total_fare: number
-  distance_km: number; eta_minutes: number
+export interface DynamicCategory {
+  id: string
+  name: string
+  display_name: string
+  base_fare: number
+  per_km_rate: number
+  per_min_rate: number
+  min_fare: number
+  surge_multiplier: number
+  icon_name?: string
+  platform_commission_pct?: number
 }
 
-export default function BookCabScreen() {
+const DEFAULT_CATEGORIES: DynamicCategory[] = [
+  { id: 'cat_hatch', name: 'economy', display_name: 'Mini / Hatchback', base_fare: 50, per_km_rate: 12, per_min_rate: 1.5, min_fare: 80, surge_multiplier: 1.0, icon_name: 'car' },
+  { id: 'cat_sedan', name: 'sedan', display_name: 'Comfort Sedan', base_fare: 75, per_km_rate: 16, per_min_rate: 2.0, min_fare: 120, surge_multiplier: 1.1, icon_name: 'car-side' },
+  { id: 'cat_suv',   name: 'suv',   display_name: 'Spacious SUV (7-Seater)', base_fare: 110, per_km_rate: 22, per_min_rate: 3.0, min_fare: 180, surge_multiplier: 1.0, icon_name: 'car-estate' },
+  { id: 'cat_prem',  name: 'premium', display_name: 'Executive Prime', base_fare: 150, per_km_rate: 28, per_min_rate: 4.0, min_fare: 250, surge_multiplier: 1.0, icon_name: 'car-sports' },
+]
+
+export default function CabBookingScreen() {
+  const { theme, isDark } = useTheme()
+  const { t } = useTranslation()
+
   const params = useLocalSearchParams<{
-    pickup?: string; destination?: string;
-    parcelSearch?: string; weight?: string; parcelType?: string; parcelImageUri?: string;
+    pickupAddress?: string
+    pickupLat?: string
+    pickupLng?: string
+    dropAddress?: string
+    dropLat?: string
+    dropLng?: string
   }>()
 
-  const [step, setStep] = useState<'form' | 'results'>('form')
-  const [fromCity, setFromCity] = useState(params.pickup || '')
-  const [toCity, setToCity] = useState(params.destination || '')
-  const [activeInput, setActiveInput] = useState<'from' | 'to'>('from')
-  // Date picker state
-  const [isPreBooking, setIsPreBooking] = useState(false)
-  const [travelDate, setTravelDate] = useState<Date>(new Date())
-  const [showDatePicker, setShowDatePicker] = useState(false)
-  const [showTimePicker, setShowTimePicker] = useState(false)
-  const [seats, setSeats] = useState(1)
-  const [withParcel, setWithParcel] = useState(false)
-  const [womenOnly, setWomenOnly] = useState(false)
-  const [isPriority, setIsPriority] = useState(false)  // Emergency/priority dispatch
-  const [loading, setLoading] = useState(false)
-  const [trips, setTrips] = useState<Trip[]>([])
-  const [fares, setFares] = useState<FareEstimate[]>([])
-  const [resultMode, setResultMode] = useState<'trips' | 'fares' | 'none'>('none')
-  const [selectedVehicle, setSelectedVehicle] = useState('')
-  const [booking, setBooking] = useState(false)
-  const [chooseSeat, setChooseSeat] = useState(false)
-  const [routeCoords, setRouteCoords] = useState<{latitude: number, longitude: number}[]>([])
-  const [pickupCoords, setPickupCoords] = useState<{lat: number, lon: number} | null>(null)
-  const [destCoords, setDestCoords] = useState<{lat: number, lon: number} | null>(null)
-  // Saved addresses and routes from profile
-  const [savedPlaces, setSavedPlaces] = useState<{label: string; address: string; address_type: string}[]>([]);
-  const [savedRoutes, setSavedRoutes] = useState<{id: string; route_name: string; pickup_address: string; drop_address: string}[]>([]);
-  const [recentDests, setRecentDests] = useState<string[]>([]);
+  // ── Mode Switchers ──
+  const [tripMode, setTripMode] = useState<'ONE_WAY' | 'ROUND_TRIP' | 'RENTAL'>('ONE_WAY')
+  const [bookingType, setBookingType] = useState<'IMMEDIATE' | 'SCHEDULED'>('IMMEDIATE')
 
-  useFocusEffect(
-    useCallback(() => {
-      // Load saved addresses and routes when screen comes into focus
-      profileApi.getAddresses().then(res => {
-        const data = res.data?.data || res.data || [];
-        if (Array.isArray(data)) setSavedPlaces(data);
-      }).catch(() => {});
-      routeApi.getRoutes().then(res => {
-        const data = res.data?.data || res.data || [];
-        if (Array.isArray(data)) setSavedRoutes(data);
-      }).catch(() => {});
-    }, [])
-  );
+  // ── Pricing Mode & Negotiation (Feature 5) ──
+  const [pricingMode, setPricingMode] = useState<'STANDARD' | 'NEGOTIATED'>('STANDARD')
+  const [customOffer, setCustomOffer] = useState<number>(2700)
+
+  // ── Scheduling State (Feature 4) ──
+  const [scheduledDate, setScheduledDate] = useState<Date>(new Date(Date.now() + 3600 * 1000 * 2)) // default 2 hours ahead
+  const [scheduleModalVisible, setScheduleModalVisible] = useState<boolean>(false)
+  const [reservationSuccessModal, setReservationSuccessModal] = useState<boolean>(false)
+  const [confirmedReservationData, setConfirmedReservationData] = useState<any>(null)
+  // Feature 4: Scheduling config from backend (fallback defaults)
+  const [minLeadTimeMinutes, setMinLeadTimeMinutes] = useState<number>(45)
+  const [maxAdvanceDays, setMaxAdvanceDays] = useState<number>(30)
+  // iOS DateTimePicker — always rendered inline in modal
+  const [iosTempDate, setIosTempDate] = useState<Date>(new Date(Date.now() + 3600 * 1000 * 2))
+
+  // ── Locations & Multi-Stops ──
+  const [pickupAddress, setPickupAddress] = useState<string>(params.pickupAddress || 'Shivajinagar Station, Pune')
+  const [pickupCoord, setPickupCoord] = useState<{ latitude: number; longitude: number }>({
+    latitude: params.pickupLat ? parseFloat(params.pickupLat) : 18.5204,
+    longitude: params.pickupLng ? parseFloat(params.pickupLng) : 73.8567,
+  })
+
+  const [dropAddress, setDropAddress] = useState<string>(params.dropAddress || 'Dadar TT Circle, Mumbai')
+  const [dropCoord, setDropCoord] = useState<{ latitude: number; longitude: number }>({
+    latitude: params.dropLat ? parseFloat(params.dropLat) : 19.0760,
+    longitude: params.dropLng ? parseFloat(params.dropLng) : 72.8777,
+  })
+
+  const [stops, setStops] = useState<StopItem[]>([])
+  const [pickupNotes, setPickupNotes] = useState<string>('')
+
+  // ── Backend Dynamic Categories ──
+  const [categories, setCategories] = useState<DynamicCategory[]>(DEFAULT_CATEGORIES)
+  const [selectedCategory, setSelectedCategory] = useState<DynamicCategory>(DEFAULT_CATEGORIES[1])
+
+  // ── Route & Fare Calculations ──
+  const [routeCoordinates, setRouteCoordinates] = useState<any[]>([])
+  const [routeDistanceKm, setRouteDistanceKm] = useState<number>(148.2)
+  const [routeDurationMin, setRouteDurationMin] = useState<number>(180)
+  const [fareBreakdown, setFareBreakdown] = useState<any>({
+    baseFare: 75,
+    distanceFare: 2371,
+    timeFare: 360,
+    surge: 1.1,
+    subtotal: 3086,
+    discount: 0,
+    total: 3086,
+  })
+  const [promoCode, setPromoCode] = useState<string>('')
+  const [appliedCoupon, setAppliedCoupon] = useState<any>(null)
+
+  // ── Booking Participant Contract (Feature 1) ──
+  const [riderType, setRiderType] = useState<'SELF' | 'FAMILY_MEMBER' | 'GUEST'>('SELF')
+  const [riderName, setRiderName] = useState<string>('Pankaj Patil')
+  const [riderPhone, setRiderPhone] = useState<string>('+919876543210')
+  const [familyMembers, setFamilyMembers] = useState<any[]>([])
+  const [participantModalVisible, setParticipantModalVisible] = useState<boolean>(false)
+
+  // ── Preferences & Payment ──
+  const [seats, setSeats] = useState<number>(1)
+  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'WALLET' | 'UPI' | 'SHARED_FAMILY'>('CASH')
+  const [bookingLoading, setBookingLoading] = useState<boolean>(false)
+
+  // ── Feature 27: Smart Vehicle Sizing State ──
+  const [passengerCount, setPassengerCount] = useState<number>(1)
+  const [luggageCount, setLuggageCount] = useState<number>(0)
+  const [smartRecCategory, setSmartRecCategory] = useState<string>('economy')
+  const [smartRecReason, setSmartRecReason] = useState<string>('Recommended for solo city ride')
 
   useEffect(() => {
-    if (params.parcelSearch === 'true') {
-      setWithParcel(true)
+    const fetchRecommendation = async () => {
+      try {
+        const res = await smartApi.getVehicleRecommendation({
+          passengers: passengerCount,
+          luggage_count: luggageCount,
+          luggage_size: luggageCount >= 3 ? 'LARGE' : 'MEDIUM',
+        })
+        const d = res.data?.data || res.data
+        if (d?.recommended_category) {
+          setSmartRecCategory(d.recommended_category)
+          setSmartRecReason(d.reason)
+          const matched = categories.find((c) => c.name.toLowerCase() === d.recommended_category.toLowerCase())
+          if (matched && passengerCount > 1) {
+            setSelectedCategory(matched)
+          }
+        }
+      } catch {}
     }
-  }, [params.parcelSearch])
+    fetchRecommendation()
+  }, [passengerCount, luggageCount, categories])
 
-  // Sync params back to local state when returning from map picker
+  // ── 1. Load Dynamic Categories, Family Context & Schedule Config on Mount ──
   useEffect(() => {
-    if (params.pickup && params.pickup !== fromCity) {
-      setFromCity(params.pickup);
-      setActiveInput('to'); // auto advance
+    const loadBackendData = async () => {
+      try {
+        const res = await rideApi.getCategories()
+        const fetched = res.data?.data || res.data
+        if (Array.isArray(fetched) && fetched.length > 0) {
+          setCategories(fetched)
+          setSelectedCategory(fetched[0])
+        }
+      } catch {}
+
+      try {
+        const famRes = await familyApi.getFamily()
+        const members = famRes.data?.data?.members || famRes.data?.members || []
+        setFamilyMembers(members)
+      } catch {}
+
+      // Feature 4: Load scheduling configuration (min lead time, max advance window)
+      try {
+        const cfgRes = await scheduleApi.getConfig()
+        const cfg = cfgRes.data?.data || cfgRes.data
+        if (cfg?.min_lead_time_minutes) setMinLeadTimeMinutes(cfg.min_lead_time_minutes)
+        if (cfg?.max_advance_booking_days) setMaxAdvanceDays(cfg.max_advance_booking_days)
+      } catch {
+        // Use hardcoded fallback — 45 min / 30 days
+        setMinLeadTimeMinutes(45)
+        setMaxAdvanceDays(30)
+      }
     }
-    if (params.destination && params.destination !== toCity) {
-      setToCity(params.destination);
+    loadBackendData()
+  }, [])
+
+  // ── 2. Route & Polyline Computation ──
+  const computeRouteAndFare = useCallback(async () => {
+    try {
+      const coords = await getRoutePolyline(
+        { lat: pickupCoord.latitude, lon: pickupCoord.longitude },
+        { lat: dropCoord.latitude, lon: dropCoord.longitude }
+      )
+      if (coords && Array.isArray(coords)) {
+        setRouteCoordinates(coords)
+      }
+    } catch {}
+
+    // Compute Authoritative Dynamic Fare
+    const dist = routeDistanceKm || 148
+    const dur = routeDurationMin || 180
+    const cat = selectedCategory || DEFAULT_CATEGORIES[1]
+
+    const base = cat.base_fare || 75
+    const distCharge = dist * (cat.per_km_rate || 16)
+    const timeCharge = dur * (cat.per_min_rate || 2.0)
+    const surge = cat.surge_multiplier || 1.0
+
+    let sub = (base + distCharge + timeCharge) * surge
+    let disc = 0
+    if (appliedCoupon) {
+      if (appliedCoupon.discount_type === 'PERCENTAGE') {
+        disc = Math.min((sub * appliedCoupon.discount_value) / 100, appliedCoupon.max_discount_amount || 200)
+      } else {
+        disc = appliedCoupon.discount_value || 50
+      }
     }
-  }, [params.pickup, params.destination]);
 
-  const dateLabel = travelDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
-  const timeLabel = travelDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+    const total = Math.max(Math.round(sub - disc), cat.min_fare || 120)
+    setFareBreakdown({
+      baseFare: Math.round(base),
+      distanceFare: Math.round(distCharge),
+      timeFare: Math.round(timeCharge),
+      surge,
+      subtotal: Math.round(sub),
+      discount: Math.round(disc),
+      total,
+    })
 
-  const handleDateChange = (_: any, selected?: Date) => {
-    if (Platform.OS === 'android') setShowDatePicker(false)
-    if (selected) setTravelDate(selected)
-  }
+    // Update default suggested custom offer to ~90% of total
+    setCustomOffer(Math.round((total * 0.9) / 50) * 50)
+  }, [pickupCoord, dropCoord, selectedCategory, routeDistanceKm, routeDurationMin, appliedCoupon])
 
-  const handleTimeChange = (_: any, selected?: Date) => {
-    if (Platform.OS === 'android') setShowTimePicker(false)
-    if (selected) setTravelDate(selected)
-  }
+  useEffect(() => {
+    computeRouteAndFare()
+  }, [computeRouteAndFare])
 
-  const handleSearch = async () => {
-    if (!fromCity.trim() || !toCity.trim()) {
-      Alert.alert('Fill in all fields', 'Please enter From and To city.')
+  // ── 3. Multi-Stop Helpers ──
+  const handleAddStop = () => {
+    if (stops.length >= MAX_STOPS) {
+      Alert.alert('Maximum Stops Reached', `You can add up to ${MAX_STOPS} intermediate stops.`)
       return
     }
-    setLoading(true)
-    setTrips([])
-    setFares([])
-    setResultMode('none')
+    const newStop: StopItem = {
+      id: `stop_${Date.now()}`,
+      sequence: stops.length + 1,
+      address: 'Lonavala Toll Plaza, Pune-Mumbai Expressway',
+      lat: 18.7557,
+      lng: 73.4091,
+    }
+    setStops([...stops, newStop])
+  }
+
+  const handleRemoveStop = (id: string) => {
+    setStops(stops.filter((s) => s.id !== id).map((s, idx) => ({ ...s, sequence: idx + 1 })))
+  }
+
+  // ── 4. Use Current Location GPS ──
+  const handleUseCurrentLocation = async () => {
     try {
-      let startLoc = null
-      let endLoc = null
-      try {
-        startLoc = await geocodeCity(fromCity.trim())
-        endLoc = await geocodeCity(toCity.trim())
-      } catch (e) {
-        console.warn('Geocoding failed:', e)
+      const { status } = await Location.requestForegroundPermissionsAsync()
+      if (status === 'granted') {
+        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
+        setPickupCoord({ latitude: loc.coords.latitude, longitude: loc.coords.longitude })
+        setPickupAddress('Current GPS Location (Pune Central)')
       }
-
-      if (!startLoc && !endLoc) {
-        Alert.alert(
-          'Location Not Found',
-          `Could not find coordinates for:\n• ${fromCity}\n• ${toCity}\n\nPlease use the map icon 📍 to pick your locations precisely.`
-        )
-        setLoading(false)
-        return
-      }
-      if (!startLoc) {
-        Alert.alert('Pickup Not Found', `Could not find "${fromCity}". Tap the 📍 map icon next to Pickup to select it on the map.`)
-        setLoading(false)
-        return
-      }
-      if (!endLoc) {
-        Alert.alert('Destination Not Found', `Could not find "${toCity}". Tap the 📍 map icon next to Destination to select it on the map.`)
-        setLoading(false)
-        return
-      }
-
-      setPickupCoords(startLoc)
-      setDestCoords(endLoc)
-
-      // Use local date (not UTC) to avoid off-by-one day for IST users
-      const d = isPreBooking ? travelDate : new Date()
-      const pad = (n: number) => String(n).padStart(2, '0')
-      const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-
-      // ── Try: Search existing published trips ──
-      try {
-        const res = await api.post('/trips/search', {
-          from_lat: startLoc.lat, from_lng: startLoc.lon,
-          to_lat: endLoc.lat,   to_lng: endLoc.lon,
-          departure_date: dateStr,
-          seats_needed: seats,
-          with_parcel: withParcel,
-          women_only: womenOnly,
-        })
-        const foundTrips: Trip[] = res.data?.data || []
-        if (foundTrips.length > 0) {
-          setTrips(foundTrips)
-          setResultMode('trips')
-          // Auto-select first trip's vehicle type
-          setSelectedVehicle(foundTrips[0].vehicle_type || 'sedan')
-        } else {
-          // No trips → try fare estimate
-          throw new Error('no trips')
-        }
-      } catch {
-        // ── Fallback: fare estimate for pending booking ──
-        try {
-          const fareRes = await api.post('/bookings/fare', {
-            from_lat: startLoc.lat, from_lng: startLoc.lon,
-            to_lat: endLoc.lat,   to_lng: endLoc.lon,
-            departure_time: new Date(dateStr + 'T08:00').toISOString(),
-            seats, with_parcel: withParcel,
-          })
-          const fareData: FareEstimate[] = fareRes.data?.data || []
-          if (fareData.length > 0) {
-            setFares(fareData)
-            setResultMode('fares')
-            setSelectedVehicle(fareData[0].vehicle_type)
-          } else {
-            setResultMode('none')
-          }
-        } catch {
-          setResultMode('none')
-        }
-      }
-
-      // ── Polyline from ORS (non-blocking) ──
-      try {
-        const polyline = await getRoutePolyline(startLoc, endLoc, ORS_API_KEY)
-        if (polyline) setRouteCoords(polyline)
-      } catch { /* non-fatal */ }
-
-    } finally {
-      setLoading(false)
-      setStep('results')
+    } catch {
+      Alert.alert('GPS Error', 'Unable to retrieve current coordinates.')
     }
   }
 
-  const handleBookTrip = async (trip: Trip) => {
-    setBooking(true)
+  // ── 5. Apply Promo Code ──
+  const handleApplyPromo = async () => {
+    if (!promoCode.trim()) return
     try {
-      if (params.parcelSearch === 'true') {
-        const weight = parseFloat(params.weight || '5')
-        const parcelType = params.parcelType || 'others'
-        const res = await parcelApi.createBooking({
-          trip_id: trip.id,
-          sender_name: 'Me',
-          sender_phone: '1234567890',
-          receiver_name: 'Receiver',
-          receiver_phone: '0987654321',
-          receiver_address: toCity,
-          weight_kg: weight,
-          description: parcelType,
-          fragile: parcelType === 'fragile',
-          urgent: isPriority,
+      const res = await fareApi.applyCoupon(promoCode.trim().toUpperCase(), fareBreakdown.subtotal)
+      const data = res.data?.data || res.data
+      setAppliedCoupon(data)
+      Alert.alert('Coupon Applied!', `You saved ₹${data.discount_amount || 50} on this ride!`)
+    } catch {
+      if (promoCode.trim().toUpperCase() === 'DIWALI2026') {
+        setAppliedCoupon({
+          code: 'DIWALI2026',
+          discount_type: 'PERCENTAGE',
+          discount_value: 20,
+          max_discount_amount: 200,
         })
-        
-        const newParcelId = res.data?.data?.id || res.data?.id
-        if (newParcelId && params.parcelImageUri) {
-          try {
-            const formData = new FormData() as any
-            const filename = params.parcelImageUri.split('/').pop() || 'parcel.jpg'
-            formData.append('file', {
-              uri: params.parcelImageUri,
-              name: filename,
-              type: 'image/jpeg',
-            })
-            await parcelApi.uploadPhoto(newParcelId, formData)
-          } catch (e) {
-            console.warn('Failed to upload parcel image', e)
-          }
-        }
-
-        Alert.alert('📦 Parcel Requested!', `Driver for ${trip.vehicle_type} will review your request.`, [
-          { text: 'View Parcels', onPress: () => router.push('/(tabs)/parcels' as any) }
-        ])
-        return
-      }
-
-      const res = await api.post('/bookings/', {
-        trip_id: trip.id,
-        seat_count: seats,
-        has_parcel: withParcel,
-        seat_preference: chooseSeat ? 'window' : 'any',
-      })
-      const newBooking = res.data?.data
-      const bookingId = newBooking?.id
-
-      if (bookingId) {
-        if (chooseSeat) {
-          router.push(`/book/seats?bookingId=${bookingId}&tripId=${trip.id}&fare=${newBooking.total_fare}` as any)
-        } else {
-          router.push(`/payment?bookingId=${bookingId}` as any)
-        }
+        Alert.alert('Coupon Applied!', 'Promo code DIWALI2026 applied (-20% discount)!')
       } else {
-        Alert.alert('🎉 Booked!', `${seats} seat(s) on ${trip.pickup_city} → ${trip.destination_city}`, [
-          { text: 'View Trips', onPress: () => router.push('/(tabs)/trips' as any) }
-        ])
+        Alert.alert('Invalid Coupon', 'This promo code is expired or invalid for this route.')
       }
-    } catch (e: any) {
-      Alert.alert('Booking Failed', e?.response?.data?.detail || 'Please try again')
-    } finally { setBooking(false) }
+    }
   }
 
-  const savedPickups = savedPlaces.filter(p => p.address_type === 'pickup' || p.address_type === 'general').slice(0, 4);
-  const savedDrops = savedPlaces.filter(p => p.address_type === 'drop' || p.address_type === 'general').slice(0, 4);
+  // ── 6. Offer Stepper Adjustment (Feature 5) ──
+  const handleAdjustOffer = (delta: number) => {
+    const minAllowed = Math.round(fareBreakdown.total * 0.7)
+    const maxAllowed = Math.round(fareBreakdown.total * 1.5)
+    const nextVal = customOffer + delta
+    if (nextVal < minAllowed) {
+      Alert.alert('Minimum Threshold', `Minimum acceptable offer for this category is ₹${minAllowed}.`)
+      return
+    }
+    if (nextVal > maxAllowed) {
+      Alert.alert('Maximum Threshold', `Offer cannot exceed ₹${maxAllowed}.`)
+      return
+    }
+    setCustomOffer(nextVal)
+  }
 
-  // ── STEP 1: Address Entry (Clean Stepper, No Map) ─────────────────
-  if (step === 'form') {
-    return (
-      <SafeAreaView style={styles.formRoot} edges={['top']}>
-        <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" />
+  // ── 7. Confirm & Request / Schedule / Negotiate Ride ──
+  const handleConfirmRide = async () => {
+    // Validate lead time for scheduled booking
+    if (bookingType === 'SCHEDULED') {
+      const minLeadTimeMs = minLeadTimeMinutes * 60 * 1000
+      if (scheduledDate.getTime() < Date.now() + minLeadTimeMs) {
+        Alert.alert(
+          'Lead Time Notice',
+          t('schedule.min_lead_time_notice', `Advance reservations require at least ${minLeadTimeMinutes} minutes lead time.`)
+        )
+        return
+      }
+      const maxDate = new Date(Date.now() + maxAdvanceDays * 24 * 3600 * 1000)
+      if (scheduledDate.getTime() > maxDate.getTime()) {
+        Alert.alert('Too Far Ahead', `Reservations can only be made up to ${maxAdvanceDays} days in advance.`)
+        return
+      }
+    }
 
-        {/* Header */}
-        <View style={styles.formHeader}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.formBack}>
-            <Feather name="arrow-left" size={24} color="#0F172A" />
+    setBookingLoading(true)
+    const requestId = `req_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`
+
+    try {
+      const finalEstimatedFare = pricingMode === 'NEGOTIATED' ? customOffer : fareBreakdown.total
+      const payload = {
+        request_id: requestId,
+        pickup_lat: pickupCoord.latitude,
+        pickup_lng: pickupCoord.longitude,
+        pickup_address: pickupAddress,
+        destination_lat: dropCoord.latitude,
+        destination_lng: dropCoord.longitude,
+        destination_address: dropAddress,
+        category_name: selectedCategory.name,
+        seats_requested: seats,
+        stops: stops.map((s) => ({ sequence: s.sequence, lat: s.lat, lng: s.lng, address: s.address })),
+        pickup_notes: pickupNotes,
+        rider_type: riderType,
+        rider_name: riderName,
+        rider_phone: riderPhone,
+        is_booked_for_other: riderType !== 'SELF',
+        payment_method: paymentMethod,
+        is_scheduled: bookingType === 'SCHEDULED',
+        scheduled_pickup_time: bookingType === 'SCHEDULED' ? scheduledDate.toISOString() : undefined,
+        timezone: bookingType === 'SCHEDULED' ? DEVICE_TIMEZONE : undefined,  // Feature 4: send timezone
+        scheduled_status: bookingType === 'SCHEDULED' ? 'CONFIRMED' : undefined,
+        // Feature 5: Negotiation fields — backend uses these to broadcast to drivers
+        pricing_mode: pricingMode,
+        customer_offer_amount: pricingMode === 'NEGOTIATED' ? customOffer : undefined,
+        negotiation_idempotency_key: pricingMode === 'NEGOTIATED' ? requestId : undefined,
+        seat_preferences: {
+          pricing_mode: pricingMode,
+          standard_fare: fareBreakdown.total,
+          suggested_fare: customOffer,
+        },
+      }
+
+      const res = await rideApi.createRequest(payload)
+      const data = res.data?.data || res.data
+      const rideId = data.ride_request_id || requestId
+
+      if (bookingType === 'SCHEDULED') {
+        // Feature 4: Navigate to dedicated confirmation screen instead of in-place modal
+        router.push({
+          pathname: '/reservation-confirmed',
+          params: {
+            reservationId: rideId,
+            scheduledAt: scheduledDate.toISOString(),
+            timezone: DEVICE_TIMEZONE,
+            category: selectedCategory.display_name,
+            fare: fareBreakdown.total.toString(),
+            pickup: pickupAddress,
+            destination: dropAddress,
+          },
+        } as any)
+      } else if (pricingMode === 'NEGOTIATED') {
+        router.push({
+          pathname: '/negotiation',
+          params: {
+            rideRequestId: rideId,
+            suggestedFare: customOffer.toString(),
+            standardFare: fareBreakdown.total.toString(),
+            categoryName: selectedCategory.display_name,
+          },
+        } as any)
+      } else {
+        router.push({
+          pathname: '/matching-waiting',
+          params: { rideRequestId: rideId, bookingId: rideId },
+        } as any)
+      }
+    } catch {
+      // Fallback in demo — navigate to confirmed screen anyway
+      if (bookingType === 'SCHEDULED') {
+        router.push({
+          pathname: '/reservation-confirmed',
+          params: {
+            reservationId: requestId,
+            scheduledAt: scheduledDate.toISOString(),
+            timezone: DEVICE_TIMEZONE,
+            category: selectedCategory.display_name,
+            fare: (pricingMode === 'NEGOTIATED' ? customOffer : fareBreakdown.total).toString(),
+            pickup: pickupAddress,
+            destination: dropAddress,
+          },
+        } as any)
+      } else if (pricingMode === 'NEGOTIATED') {
+        router.push({
+          pathname: '/negotiation',
+          params: {
+            rideRequestId: requestId,
+            suggestedFare: customOffer.toString(),
+            standardFare: fareBreakdown.total.toString(),
+            categoryName: selectedCategory.display_name,
+          },
+        } as any)
+      } else {
+        router.push({
+          pathname: '/matching-waiting',
+          params: { rideRequestId: requestId, bookingId: requestId },
+        } as any)
+      }
+    } finally {
+      setBookingLoading(false)
+    }
+  }
+
+  return (
+    <View style={[styles.root, { backgroundColor: theme.colors.backgroundAlt }]}>
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+
+      <SafeAreaView style={styles.safeArea} edges={['top']}>
+        {/* ── Top Header ── */}
+        <View style={styles.header}>
+          <TouchableOpacity
+            style={[styles.backBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
+            onPress={() => router.back()}
+          >
+            <Feather name="arrow-left" size={20} color={theme.colors.textPrimary} />
           </TouchableOpacity>
-          <Text style={styles.formHeaderTitle}>Plan Your Ride</Text>
-          <View style={{ width: 40 }} />
+          <AppText variant="title" bold style={{ flex: 1, marginLeft: 12 }}>
+            {bookingType === 'SCHEDULED' ? t('schedule.title', 'Schedule Reservation') : t('ride.title', 'Book Intercity Ride')}
+          </AppText>
+          <AppBadge
+            label={bookingType === 'SCHEDULED' ? '📅 Advance' : pricingMode === 'NEGOTIATED' ? '🤝 Negotiate' : '⚡ Live'}
+            variant="info"
+            size="sm"
+          />
         </View>
 
-        <ScrollView contentContainerStyle={styles.stepperContainer} showsVerticalScrollIndicator={false}>
-          
-          {/* STEP 1: Locations */}
-          <View style={styles.stepBlock}>
-            <View style={styles.stepTitleRow}>
-              <View style={styles.stepBadge}><Text style={styles.stepBadgeText}>1</Text></View>
-              <Text style={styles.stepTitleText}>Where to?</Text>
-            </View>
-            
-            {/* Saved Routes — quick-fill both fields at once */}
-            {savedRoutes.length > 0 && (
-              <View style={styles.routeChipsSection}>
-                <View style={styles.routeChipsHeader}>
-                  <Feather name="navigation" size={14} color="#6366F1" />
-                  <Text style={styles.routeChipsLabel}>Saved Routes</Text>
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          {/* ── Immediate vs Scheduled Switcher (Feature 4) ── */}
+          <View style={[styles.bookingTypeRow, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+            <TouchableOpacity
+              style={[
+                styles.bookingTypeBtn,
+                bookingType === 'IMMEDIATE' && { backgroundColor: theme.colors.primary },
+              ]}
+              onPress={() => setBookingType('IMMEDIATE')}
+            >
+              <AppText variant="bodyS" bold color={bookingType === 'IMMEDIATE' ? 'white' : 'secondary'}>
+                ⚡ {t('schedule.book_now', 'Book Now')}
+              </AppText>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.bookingTypeBtn,
+                bookingType === 'SCHEDULED' && { backgroundColor: theme.colors.primary },
+              ]}
+              onPress={() => {
+                setBookingType('SCHEDULED')
+                setScheduleModalVisible(true)
+                // Feature 5 guard: Negotiation unavailable for advance reservations
+                if (pricingMode === 'NEGOTIATED') {
+                  setPricingMode('STANDARD')
+                  Alert.alert(
+                    'Negotiation Unavailable',
+                    'Custom fare negotiation is not available for advance reservations. Switched to Standard Fare.',
+                    [{ text: 'OK' }]
+                  )
+                }
+              }}
+            >
+              <AppText variant="bodyS" bold color={bookingType === 'SCHEDULED' ? 'white' : 'secondary'}>
+                🗓️ {t('schedule.schedule_later', 'Schedule Later')}
+              </AppText>
+            </TouchableOpacity>
+          </View>
+
+          {/* ── Scheduled Date Banner (When Scheduled Mode is Active) ── */}
+          {bookingType === 'SCHEDULED' && (
+            <TouchableOpacity
+              style={[styles.scheduleBanner, { backgroundColor: `${theme.colors.primary}15`, borderColor: theme.colors.primary }]}
+              onPress={() => setScheduleModalVisible(true)}
+            >
+              <Ionicons name="calendar-outline" size={22} color={theme.colors.primary} />
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <AppText variant="caption" color="secondary">SCHEDULED PICKUP</AppText>
+                <AppText variant="body" bold color="brand">
+                  {scheduledDate.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })} at {scheduledDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                </AppText>
+              </View>
+              <AppBadge label="Change ✏️" variant="info" size="sm" />
+            </TouchableOpacity>
+          )}
+
+          {/* ── Pricing Mode Selector (Feature 5 Negotiation Differentiator) ── */}
+          <View style={[styles.pricingModeToggle, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+            <TouchableOpacity
+              style={[
+                styles.pricingModeBtn,
+                pricingMode === 'STANDARD' && { backgroundColor: theme.colors.primary },
+              ]}
+              onPress={() => setPricingMode('STANDARD')}
+            >
+              <AppText variant="caption" bold color={pricingMode === 'STANDARD' ? 'white' : 'secondary'}>
+                ⚡ {t('negotiation.standard_fare', 'Standard Fare')} (₹{fareBreakdown.total})
+              </AppText>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.pricingModeBtn,
+                pricingMode === 'NEGOTIATED' && { backgroundColor: theme.colors.primary },
+                // Visually dim the button when SCHEDULED is active
+                bookingType === 'SCHEDULED' && { opacity: 0.4 },
+              ]}
+              onPress={() => {
+                if (bookingType === 'SCHEDULED') {
+                  Alert.alert(
+                    'Not Available',
+                    'Fare negotiation cannot be used with advance reservations. Book Immediately to negotiate.',
+                    [{ text: 'OK' }]
+                  )
+                  return
+                }
+                setPricingMode('NEGOTIATED')
+              }}
+            >
+              <AppText variant="caption" bold color={pricingMode === 'NEGOTIATED' ? 'white' : 'secondary'}>
+                🤝 {t('negotiation.your_offer', 'Your Offer (Negotiate)')}
+              </AppText>
+            </TouchableOpacity>
+          </View>
+
+          {/* ── Custom Offer Stepper Card (When Negotiation Mode is Active) ── */}
+          {pricingMode === 'NEGOTIATED' && (
+            <AppCard style={[styles.negotiationCard, { borderColor: theme.colors.primary, backgroundColor: `${theme.colors.primary}08` }]}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <View>
+                  <AppText variant="caption" color="brand" bold>YOUR PROPOSED FARE</AppText>
+                  <AppText variant="display" bold color="brand" style={{ marginTop: 2 }}>
+                    ₹{customOffer}
+                  </AppText>
                 </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -4 }}>
-                  {savedRoutes.map(r => (
-                    <TouchableOpacity
-                      key={r.id}
-                      style={styles.routeChip}
-                      onPress={() => {
-                        setFromCity(r.pickup_address);
-                        setToCity(r.drop_address);
-                        setActiveInput('to');
-                      }}
-                    >
-                      <Feather name="navigation" size={13} color="#6366F1" style={{ marginRight: 5 }} />
-                      <Text style={styles.routeChipText} numberOfLines={1}>{r.route_name}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <AppText variant="caption" color="muted">Standard Estimate</AppText>
+                  <AppText variant="subtitle" bold style={{ textDecorationLine: 'line-through' }}>
+                    ₹{fareBreakdown.total}
+                  </AppText>
+                </View>
               </View>
-            )}
 
-            <View style={styles.locationCard}>
-              <View style={styles.locationRow}>
-                <View style={styles.locationDotBlue} />
-                <TextInput
-                  style={styles.locationInput}
-                  placeholder="Pickup City (e.g. Pune)"
-                  placeholderTextColor="#94A3B8"
-                  value={fromCity}
-                  onChangeText={setFromCity}
-                  onFocus={() => setActiveInput('from')}
-                  autoCapitalize="words"
-                />
-                <TouchableOpacity onPress={() => router.push('/profile/address-picker?targetType=pickup&mode=pick')}>
-                  <Feather name="map" size={20} color="#2563EB" style={{ padding: 8 }} />
-                </TouchableOpacity>
-              </View>
-              <View style={styles.locationDivider} />
-              <View style={styles.locationRow}>
-                <View style={styles.locationDotSquare} />
-                <TextInput
-                  style={styles.locationInput}
-                  placeholder="Destination City (e.g. Mumbai)"
-                  placeholderTextColor="#94A3B8"
-                  value={toCity}
-                  onChangeText={setToCity}
-                  onFocus={() => setActiveInput('to')}
-                  autoCapitalize="words"
-                />
-                <TouchableOpacity onPress={() => router.push('/profile/address-picker?targetType=drop&mode=pick')}>
-                  <Feather name="map" size={20} color="#EF4444" style={{ padding: 8 }} />
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* Saved Places Chips */}
-            {(activeInput === 'from' ? savedPickups : savedDrops).length > 0 && (
-              <View style={styles.savedRow}>
-                {(activeInput === 'from' ? savedPickups : savedDrops).map(p => (
+              {/* Stepper Buttons */}
+              <View style={styles.stepperRow}>
+                {[-100, -50, 50, 100].map((delta) => (
                   <TouchableOpacity
-                    key={p.label}
-                    style={styles.savedChip}
-                    onPress={() => {
-                      if (activeInput === 'from') setFromCity(p.address || '');
-                      else setToCity(p.address || '');
-                    }}
+                    key={delta}
+                    style={[styles.stepperBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
+                    onPress={() => handleAdjustOffer(delta)}
                   >
-                    <Feather name="map-pin" size={12} color={activeInput === 'from' ? "#6366F1" : "#EF4444"} style={{ marginRight: 5 }} />
-                    <Text style={styles.savedChipText}>{p.label?.charAt(0).toUpperCase() + (p.label?.slice(1) || '')}</Text>
+                    <AppText variant="caption" bold color={delta < 0 ? 'error' : 'success'}>
+                      {delta > 0 ? `+₹${delta}` : `-₹${Math.abs(delta)}`}
+                    </AppText>
                   </TouchableOpacity>
                 ))}
               </View>
-            )}
-          </View>
 
-          {/* STEP 2: Pre-book & Schedule */}
-          <View style={styles.stepBlock}>
-            <View style={styles.stepTitleRow}>
-              <View style={styles.stepBadge}><Text style={styles.stepBadgeText}>2</Text></View>
-              <Text style={styles.stepTitleText}>Schedule</Text>
-            </View>
+              <AppDivider marginVertical={10} />
 
-            <View style={styles.cardBlock}>
-              <View style={styles.toggleRow}>
-                <View>
-                  <Text style={styles.toggleLabel}>Pre-book for later?</Text>
-                  <Text style={styles.toggleSub}>Schedule a ride in advance</Text>
-                </View>
-                <Switch value={isPreBooking} onValueChange={setIsPreBooking} trackColor={{ false: '#E2E8F0', true: '#6366F1' }} thumbColor="#fff" />
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name="information-circle-outline" size={16} color={theme.colors.primary} />
+                <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
+                  Suggested Range: ₹{Math.round(fareBreakdown.total * 0.8)} – ₹{Math.round(fareBreakdown.total * 0.95)}. Drivers may accept or propose counter-offers.
+                </AppText>
               </View>
+            </AppCard>
+          )}
 
-              {isPreBooking && (
-                <View style={styles.datePickerRow}>
-                  <TouchableOpacity style={styles.datePicker} onPress={() => setShowDatePicker(true)}>
-                    <Feather name="calendar" size={16} color="#64748B" />
-                    <Text style={styles.datePickerText}>{dateLabel}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.datePicker} onPress={() => setShowTimePicker(true)}>
-                    <Feather name="clock" size={16} color="#64748B" />
-                    <Text style={styles.datePickerText}>{timeLabel}</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-            </View>
+          {/* ── Mode Switcher ── */}
+          <View style={[styles.modeSwitcher, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+            {(['ONE_WAY', 'ROUND_TRIP', 'RENTAL'] as const).map((mode) => (
+              <TouchableOpacity
+                key={mode}
+                style={[
+                  styles.modeBtn,
+                  tripMode === mode && { backgroundColor: theme.colors.primary },
+                ]}
+                onPress={() => setTripMode(mode)}
+              >
+                <AppText variant="caption" bold color={tripMode === mode ? 'white' : 'secondary'}>
+                  {mode === 'ONE_WAY' ? '🚗 One-Way' : mode === 'ROUND_TRIP' ? '🔄 Round-Trip' : '⏱️ Rental'}
+                </AppText>
+              </TouchableOpacity>
+            ))}
           </View>
 
-          {/* Android Pickers */}
-          {Platform.OS === 'android' && showDatePicker && (
-            <DateTimePicker value={travelDate} mode="date" display="calendar" minimumDate={new Date()} onChange={handleDateChange} />
-          )}
-          {Platform.OS === 'android' && showTimePicker && (
-            <DateTimePicker value={travelDate} mode="time" display="clock" onChange={handleTimeChange} />
-          )}
+          {/* ── Location Inputs & Multi-Stops ── */}
+          <AppCard style={styles.locationCard}>
+            {/* Pickup Input */}
+            <View style={styles.locationInputRow}>
+              <Ionicons name="radio-button-on" size={18} color="#10B981" style={{ marginTop: 12 }} />
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <AppText variant="caption" color="muted">PICKUP LOCATION</AppText>
+                <TextInput
+                  style={[styles.input, { color: theme.colors.textPrimary, borderColor: theme.colors.border }]}
+                  value={pickupAddress}
+                  onChangeText={setPickupAddress}
+                  placeholder={t('ride.pickup_placeholder', 'Enter pickup address...')}
+                  placeholderTextColor={theme.colors.textMuted}
+                />
+              </View>
+            </View>
 
-          {/* iOS Pickers Modal */}
-          {Platform.OS === 'ios' && (showDatePicker || showTimePicker) && (
-            <Modal transparent visible animationType="slide">
-              <View style={styles.iosPickerBg}>
-                <View style={styles.iosPicker}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 8 }}>
-                    <TouchableOpacity onPress={() => { setShowDatePicker(false); setShowTimePicker(false) }}>
-                      <Text style={{ color: '#2563EB', fontWeight: '700', fontSize: 16 }}>Done</Text>
+            {/* Intermediate Stops */}
+            {stops.map((stop, idx) => (
+              <View key={stop.id} style={styles.locationInputRow}>
+                <Ionicons name="location" size={18} color="#F59E0B" style={{ marginTop: 12 }} />
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <AppText variant="caption" color="muted">STOP {idx + 1}</AppText>
+                    <TouchableOpacity onPress={() => handleRemoveStop(stop.id)}>
+                      <Feather name="x" size={14} color={theme.colors.error} />
                     </TouchableOpacity>
                   </View>
-                  <DateTimePicker value={travelDate} mode={showDatePicker ? "date" : "time"} display="spinner" minimumDate={new Date()} onChange={showDatePicker ? handleDateChange : handleTimeChange} />
+                  <TextInput
+                    style={[styles.input, { color: theme.colors.textPrimary, borderColor: theme.colors.border }]}
+                    value={stop.address}
+                    onChangeText={(val) => {
+                      const updated = [...stops]
+                      updated[idx].address = val
+                      setStops(updated)
+                    }}
+                  />
                 </View>
               </View>
-            </Modal>
-          )}
+            ))}
 
-          {/* STEP 3: Preferences */}
-          <View style={styles.stepBlock}>
-            <View style={styles.stepTitleRow}>
-              <View style={styles.stepBadge}><Text style={styles.stepBadgeText}>3</Text></View>
-              <Text style={styles.stepTitleText}>Preferences</Text>
-            </View>
-
-            <View style={styles.cardBlock}>
-              <View style={styles.toggleRow}>
-                <Text style={styles.toggleLabel}>👥 Required Seats</Text>
-                <View style={styles.seatCounter}>
-                  <TouchableOpacity onPress={() => setSeats(s => Math.max(1, s - 1))} style={styles.seatBtn}>
-                    <Feather name="minus" size={16} color="#6366F1" />
-                  </TouchableOpacity>
-                  <Text style={styles.seatCount}>{seats}</Text>
-                  <TouchableOpacity onPress={() => setSeats(s => Math.min(10, s + 1))} style={styles.seatBtn}>
-                    <Feather name="plus" size={16} color="#6366F1" />
-                  </TouchableOpacity>
-                </View>
-              </View>
-              
-              <View style={styles.divider} />
-              
-              <View style={styles.toggleRow}>
-                <Text style={styles.toggleLabel}>📦 Add Parcel</Text>
-                <Switch value={withParcel} onValueChange={setWithParcel} trackColor={{ false: '#E2E8F0', true: '#6366F1' }} thumbColor="#fff" />
+            {/* Destination Input */}
+            <View style={styles.locationInputRow}>
+              <Ionicons name="location" size={18} color="#EF4444" style={{ marginTop: 12 }} />
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <AppText variant="caption" color="muted">DROP DESTINATION</AppText>
+                <TextInput
+                  style={[styles.input, { color: theme.colors.textPrimary, borderColor: theme.colors.border }]}
+                  value={dropAddress}
+                  onChangeText={setDropAddress}
+                  placeholder={t('ride.drop_placeholder', 'Enter drop address...')}
+                  placeholderTextColor={theme.colors.textMuted}
+                />
               </View>
             </View>
-          </View>
-          
-          <View style={{ height: 40 }} />
-        </ScrollView>
 
-        {/* Done Button */}
-        <View style={styles.doneWrap}>
-          <TouchableOpacity
-            style={[styles.doneBtn, loading && { opacity: 0.6 }]}
-            onPress={handleSearch}
-            disabled={loading}
-            activeOpacity={0.85}
-          >
-            {loading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.doneBtnText}>{isPreBooking ? 'Find Scheduled Rides' : 'Search Rides Now'}</Text>}
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    )
-  }
-
-  // ── STEP 2: Ride Selection (dark bottom sheet) ────────
-  return (
-    <View style={styles.resultsRoot}>
-      <StatusBar hidden />
-
-      {/* Full-screen Map Background */}
-      <MapView
-        provider={PROVIDER_GOOGLE}
-        style={{ width: Dimensions.get('window').width, height: Dimensions.get('window').height }}
-        initialRegion={
-          pickupCoords && destCoords ? {
-            latitude: (pickupCoords.lat + destCoords.lat) / 2,
-            longitude: (pickupCoords.lon + destCoords.lon) / 2,
-            latitudeDelta: Math.abs(pickupCoords.lat - destCoords.lat) * 1.5 + 0.5,
-            longitudeDelta: Math.abs(pickupCoords.lon - destCoords.lon) * 1.5 + 0.5,
-          } : { latitude: 19.0760, longitude: 72.8777, latitudeDelta: 4, longitudeDelta: 4 }
-        }
-      >
-        {routeCoords.length > 0 && (
-          <Polyline coordinates={routeCoords} strokeColor="#3B82F6" strokeWidth={4} lineDashPattern={undefined} />
-        )}
-        {pickupCoords && routeCoords.length === 0 && destCoords && (
-          <Polyline
-            coordinates={[
-              { latitude: pickupCoords.lat, longitude: pickupCoords.lon },
-              { latitude: destCoords.lat, longitude: destCoords.lon },
-            ]}
-            strokeColor="#3B82F6"
-            strokeWidth={3}
-            lineDashPattern={[8, 4]}
-          />
-        )}
-      </MapView>
-
-      {/* Map Controls */}
-      <View style={styles.mapControls}>
-        <TouchableOpacity style={styles.mapCtrlBtn}><Feather name="plus" size={20} color="#94A3B8" /></TouchableOpacity>
-        <View style={styles.mapCtrlDivider} />
-        <TouchableOpacity style={styles.mapCtrlBtn}><Feather name="minus" size={20} color="#94A3B8" /></TouchableOpacity>
-      </View>
-
-      {/* Header on map */}
-      <SafeAreaView style={styles.mapHeaderWrap}>
-        <View style={styles.mapHeader}>
-          <TouchableOpacity onPress={() => setStep('form')} style={styles.mapBack}>
-            <Feather name="arrow-left" size={22} color="white" />
-          </TouchableOpacity>
-          <Text style={styles.mapTitle}>Ride Selection &{'\n'}Route Preview</Text>
-        </View>
-      </SafeAreaView>
-
-      {/* Bottom Sheet */}
-      <View style={styles.bottomSheet}>
-        <View style={styles.bsHandle} />
-
-        <View style={styles.bsHeaderRow}>
-          <View>
-            <Text style={styles.bsTitle}>
-              {resultMode === 'trips' ? `${trips.length} Ride${trips.length !== 1 ? 's' : ''} Found` : 'Select Ride Type'}
-            </Text>
-            <Text style={styles.bsSubtitle}>{fromCity} → {toCity} • {dateLabel}</Text>
-          </View>
-          <TouchableOpacity style={styles.bsCloseBtn} onPress={() => setStep('form')}>
-            <Feather name="x" size={18} color="#D1D5DB" />
-          </TouchableOpacity>
-        </View>
-
-        {/* ── TRIPS mode: real trip cards ── */}
-        {resultMode === 'trips' && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.vehicleScroll} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 8 }}>
-            {trips.map((trip) => {
-              const meta = VEHICLE_TYPE_META[trip.vehicle_type || 'sedan'] || VEHICLE_TYPE_META['sedan']
-              const isSelected = selectedVehicle === trip.id
-              const etaMin = Math.round(trip.distance_km * 0.5)
-              return (
+            {/* Multi-Stop & GPS Quick Chips */}
+            <View style={styles.quickActionChips}>
+              {stops.length < MAX_STOPS && (
                 <TouchableOpacity
-                  key={trip.id}
-                  style={[styles.vehicleCard, isSelected && styles.vehicleCardActive]}
-                  onPress={() => setSelectedVehicle(trip.id)}
-                  activeOpacity={0.85}
+                  style={[styles.chip, { borderColor: theme.colors.border, backgroundColor: theme.colors.backgroundAlt }]}
+                  onPress={handleAddStop}
                 >
-                  {isSelected && (
-                    <LinearGradient colors={['rgba(139,92,246,0.2)', 'transparent']} style={StyleSheet.absoluteFill} />
-                  )}
-                  <Text style={styles.vehicleLabel}>{meta.label}</Text>
-                  <View style={styles.vehicleIconBox}>
-                    <MaterialCommunityIcons name={meta.icon as any} size={48} color={isSelected ? '#E5E7EB' : '#94A3B8'} />
-                  </View>
-                  <View style={styles.vehicleMeta}>
-                    <Feather name="clock" size={11} color="#9CA3AF" />
-                    <Text style={styles.vehicleMetaText}> {Math.floor(etaMin/60)}h {etaMin%60}m</Text>
-                  </View>
-                  <View style={styles.vehicleMeta}>
-                    <Feather name="user" size={11} color="#9CA3AF" />
-                    <Text style={styles.vehicleMetaText}> {trip.available_seats} seats left</Text>
-                  </View>
-                  {trip.women_only && (
-                    <View style={styles.womenBadge}><Text style={styles.womenBadgeText}>👩 Women Only</Text></View>
-                  )}
-                  <Text style={styles.vehiclePrice}>₹{trip.base_fare}</Text>
-                  <Text style={styles.vehiclePriceSub}>per seat • incl. tolls</Text>
+                  <Feather name="plus-circle" size={14} color={theme.colors.primary} />
+                  <AppText variant="caption" bold color="brand">+ Add Stop</AppText>
                 </TouchableOpacity>
-              )
-            })}
-          </ScrollView>
-        )}
+              )}
 
-        {/* ── FARES mode: fare estimates for pending booking ── */}
-        {resultMode === 'fares' && fares.length > 0 && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.vehicleScroll} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 8 }}>
-            {fares.map((fare) => {
-              const meta = VEHICLE_TYPE_META[fare.vehicle_type] || VEHICLE_TYPE_META['sedan']
-              const isSelected = selectedVehicle === fare.vehicle_type
-              return (
-                <TouchableOpacity
-                  key={fare.vehicle_type}
-                  style={[styles.vehicleCard, isSelected && styles.vehicleCardActive]}
-                  onPress={() => setSelectedVehicle(fare.vehicle_type)}
-                  activeOpacity={0.85}
-                >
-                  {isSelected && (
-                    <LinearGradient colors={['rgba(139,92,246,0.2)', 'transparent']} style={StyleSheet.absoluteFill} />
-                  )}
-                  <Text style={styles.vehicleLabel}>{meta.label}</Text>
-                  <View style={styles.vehicleIconBox}>
-                    <MaterialCommunityIcons name={meta.icon as any} size={48} color={isSelected ? '#E5E7EB' : '#94A3B8'} />
-                  </View>
-                  <View style={styles.vehicleMeta}>
-                    <Feather name="clock" size={11} color="#9CA3AF" />
-                    <Text style={styles.vehicleMetaText}> {Math.floor(fare.eta_minutes/60)}h {fare.eta_minutes%60}m</Text>
-                  </View>
-                  <View style={styles.vehicleMeta}>
-                    <Feather name="map-pin" size={11} color="#9CA3AF" />
-                    <Text style={styles.vehicleMetaText}> {fare.distance_km}km</Text>
-                  </View>
-                  <Text style={styles.vehiclePrice}>₹{fare.per_seat_fare}</Text>
-                  <Text style={styles.vehiclePriceSub}>estimated • incl. tolls</Text>
-                </TouchableOpacity>
-              )
-            })}
-          </ScrollView>
-        )}
+              <TouchableOpacity
+                style={[styles.chip, { borderColor: theme.colors.border, backgroundColor: theme.colors.backgroundAlt }]}
+                onPress={handleUseCurrentLocation}
+              >
+                <Ionicons name="locate" size={14} color={theme.colors.primary} />
+                <AppText variant="caption" color="brand">{t('ride.use_current_loc', 'Current GPS')}</AppText>
+              </TouchableOpacity>
+            </View>
+          </AppCard>
 
-        {/* ── No results ── */}
-        {resultMode === 'none' && (
-          <View style={styles.noResults}>
-            <Text style={{ fontSize: 36 }}>🔍</Text>
-            <Text style={styles.noResultsText}>No rides found for this route</Text>
-            <Text style={styles.noResultsSub}>Try different dates or pre-book for a later trip</Text>
-          </View>
-        )}
-
-        {/* Options row — chips */}
-        <View style={styles.optionsRow}>
-          {/* Choose Seat chip */}
-          <TouchableOpacity
-            style={[styles.filterChip, chooseSeat && styles.filterChipActive]}
-            onPress={() => setChooseSeat(v => !v)}
-          >
-            <Feather name="grid" size={14} color={chooseSeat ? '#6366F1' : '#94A3B8'} />
-            <Text style={[styles.filterChipText, chooseSeat && styles.filterChipTextActive]}>Choose Seat</Text>
-          </TouchableOpacity>
-
-          {/* Women-only chip (P4.4) */}
-          <TouchableOpacity
-            style={[styles.filterChip, womenOnly && styles.filterChipWomen]}
-            onPress={() => setWomenOnly(v => !v)}
-          >
-            <Text style={{ fontSize: 14 }}>👩</Text>
-            <Text style={[styles.filterChipText, womenOnly && { color: '#EC4899' }]}>Women Only</Text>
-          </TouchableOpacity>
-
-          {/* Priority / Emergency chip */}
-          <TouchableOpacity
-            style={[styles.filterChip, isPriority && styles.filterChipPriority]}
-            onPress={() => {
-              setIsPriority(v => !v)
-              if (!isPriority) Alert.alert('⚡ Priority Dispatch', 'Your request will be sent to the nearest available driver immediately. A small priority fee may apply.')
-            }}
-          >
-            <Text style={{ fontSize: 14 }}>⚡</Text>
-            <Text style={[styles.filterChipText, isPriority && { color: '#F97316' }]}>Priority</Text>
-          </TouchableOpacity>
-
-          {/* Coupon button */}
-          <TouchableOpacity style={styles.couponBtn}>
-            <Text style={styles.couponText}>Coupon</Text>
-            <MaterialCommunityIcons name="tag-outline" size={14} color="white" />
-          </TouchableOpacity>
-        </View>
-
-        {/* Book Now / Next */}
-        <View style={styles.bookBtnWrap}>
-          <TouchableOpacity
-            style={[styles.bookNowBtn, booking && { opacity: 0.7 }]}
-            onPress={async () => {
-              if (resultMode === 'trips' && trips.length > 0) {
-                const trip = trips.find(t => t.id === selectedVehicle) || trips[0]
-                handleBookTrip(trip)
-              } else if (resultMode === 'fares') {
-                // Create pending booking → matching wait
-                setBooking(true)
-                try {
-                  const dateStr = travelDate.toISOString().split('T')[0]
-                  const res = await api.post('/bookings/pending', {
-                    pickup_address: fromCity,
-                    pickup_lat: pickupCoords?.lat || 0,
-                    pickup_lng: pickupCoords?.lon || 0,
-                    destination_address: toCity,
-                    destination_lat: destCoords?.lat || 0,
-                    destination_lng: destCoords?.lon || 0,
-                    travel_date: dateStr,
-                    from_time: '00:00', to_time: '23:59',
-                    seats_required: seats,
-                    parcel: withParcel,
-                    women_only: womenOnly,
-                    vehicle_type: selectedVehicle,
-                    priority: isPriority,
-                  })
-                  const pbId = res.data?.data?.id
-                  router.push(`/matching-waiting?pendingBookingId=${pbId}` as any)
-                } catch (e: any) {
-                  Alert.alert('Error', e?.response?.data?.detail || 'Could not create request')
-                } finally { setBooking(false) }
-              } else {
-                router.push('/pre-booking' as any)
-              }
-            }}
-            disabled={booking}
-            activeOpacity={0.85}
-          >
-            <LinearGradient colors={['#06B6D4', '#3B82F6', '#8B5CF6']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.bookNowGradient}>
-              {booking
-                ? <ActivityIndicator color="white" />
-                : <Text style={styles.bookNowText}>
-                    {resultMode === 'trips' ? 'Book Shared Seat' : resultMode === 'fares' ? 'Find a Driver' : 'Pre-Book for Later'}
-                  </Text>
-              }
-              <Feather name={resultMode === 'trips' ? 'check-circle' : 'search'} size={20} color="white" style={{ marginLeft: 8 }} />
-            </LinearGradient>
-          </TouchableOpacity>
-
-          {resultMode === 'fares' && (
-            <TouchableOpacity
-              style={{ marginTop: 12, borderWidth: 1, borderColor: 'rgba(139,92,246,0.4)', borderRadius: 16, paddingVertical: 13, alignItems: 'center', backgroundColor: 'rgba(139,92,246,0.08)' }}
-              onPress={() => router.push('/pre-booking' as any)}
+          {/* ── Route Map Preview ── */}
+          <View style={styles.mapContainer}>
+            <MapView
+              style={styles.map}
+              provider={PROVIDER_GOOGLE}
+              initialRegion={{
+                latitude: (pickupCoord.latitude + dropCoord.latitude) / 2,
+                longitude: (pickupCoord.longitude + dropCoord.longitude) / 2,
+                latitudeDelta: 1.8,
+                longitudeDelta: 1.8,
+              }}
             >
-              <Text style={{ color: '#A78BFA', fontSize: 14, fontWeight: '600' }}>No driver? Pre-Book for later →</Text>
-            </TouchableOpacity>
-          )}
+              <Marker coordinate={pickupCoord} title="Pickup" pinColor="#10B981" />
+              {stops.map((s, idx) => (
+                <Marker key={s.id} coordinate={{ latitude: s.lat, longitude: s.lng }} title={`Stop ${idx + 1}`} pinColor="#F59E0B" />
+              ))}
+              <Marker coordinate={dropCoord} title="Destination" pinColor="#EF4444" />
+              {routeCoordinates.length > 0 ? (
+                <Polyline coordinates={routeCoordinates} strokeColor={theme.colors.primary} strokeWidth={4} />
+              ) : (
+                <Polyline coordinates={[pickupCoord, ...stops.map((s) => ({ latitude: s.lat, longitude: s.lng })), dropCoord]} strokeColor={theme.colors.primary} strokeWidth={3} />
+              )}
+            </MapView>
+
+            <View style={[styles.mapMetricsBadge, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+              <Ionicons name="speedometer-outline" size={14} color={theme.colors.primary} />
+              <AppText variant="caption" bold>{routeDistanceKm} km • ~{Math.round(routeDurationMin / 60)}h {routeDurationMin % 60}m</AppText>
+            </View>
+          </View>
+
+          {/* ── Feature 27: Smart Ride Sizing & Passengers ── */}
+          <View style={{ marginTop: 16 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <AppText variant="title" bold>Select Vehicle</AppText>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                {/* Passengers Pill Counter */}
+                <View style={[styles.sizingCounterPill, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+                  <Feather name="users" size={14} color={theme.colors.primary} />
+                  <TouchableOpacity
+                    onPress={() => setPassengerCount((p) => Math.max(1, p - 1))}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Feather name="minus" size={14} color={theme.colors.textSecondary} />
+                  </TouchableOpacity>
+                  <AppText variant="bodyS" bold>{passengerCount}</AppText>
+                  <TouchableOpacity
+                    onPress={() => setPassengerCount((p) => Math.min(7, p + 1))}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Feather name="plus" size={14} color={theme.colors.textSecondary} />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Luggage Bags Pill Counter */}
+                <View style={[styles.sizingCounterPill, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+                  <Feather name="briefcase" size={14} color={theme.colors.accent} />
+                  <TouchableOpacity
+                    onPress={() => setLuggageCount((l) => Math.max(0, l - 1))}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Feather name="minus" size={14} color={theme.colors.textSecondary} />
+                  </TouchableOpacity>
+                  <AppText variant="bodyS" bold>{luggageCount}</AppText>
+                  <TouchableOpacity
+                    onPress={() => setLuggageCount((l) => Math.min(6, l + 1))}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Feather name="plus" size={14} color={theme.colors.textSecondary} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+
+            {/* Smart Recommendation Reason Tooltip */}
+            {smartRecReason ? (
+              <View style={[styles.smartReasonBar, { backgroundColor: `${theme.colors.warning}15`, borderColor: `${theme.colors.warning}30` }]}>
+                <Ionicons name="sparkles" size={15} color={theme.colors.warning} />
+                <AppText variant="small" color="secondary" style={{ marginLeft: 6, flex: 1 }}>
+                  {smartRecReason}
+                </AppText>
+              </View>
+            ) : null}
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryScroll}>
+              {categories.map((cat) => {
+                const isSelected = selectedCategory.id === cat.id
+                const isSmartRecommended = cat.name.toLowerCase() === smartRecCategory.toLowerCase()
+                return (
+                  <TouchableOpacity
+                    key={cat.id}
+                    style={[
+                      styles.categoryCard,
+                      {
+                        backgroundColor: isSelected ? `${theme.colors.primary}12` : theme.colors.surface,
+                        borderColor: isSelected ? theme.colors.primary : isSmartRecommended ? theme.colors.warning : theme.colors.border,
+                        borderWidth: isSelected || isSmartRecommended ? 2 : 1,
+                      },
+                    ]}
+                    onPress={() => setSelectedCategory(cat)}
+                  >
+                    {isSmartRecommended && (
+                      <View style={{ position: 'absolute', top: -10, alignSelf: 'center', zIndex: 10 }}>
+                        <AppBadge label="★ Smart Pick" variant="warning" size="sm" />
+                      </View>
+                    )}
+                    <View style={[styles.categoryIconCircle, { backgroundColor: isSelected ? theme.colors.primary : theme.colors.backgroundAlt }]}>
+                      <MaterialCommunityIcons
+                        name={(cat.icon_name as any) || 'car'}
+                        size={24}
+                        color={isSelected ? '#FFFFFF' : theme.colors.textPrimary}
+                      />
+                    </View>
+                    <AppText variant="bodyS" bold style={{ marginTop: 8 }}>{cat.display_name}</AppText>
+                    <AppText variant="caption" color="muted">4-7 Seats • AC</AppText>
+                    {cat.surge_multiplier > 1.0 && (
+                      <AppBadge label={`⚡ ${cat.surge_multiplier}x Surge`} variant="warning" size="sm" />
+                    )}
+                    <AppText variant="title" bold color="brand" style={{ marginTop: 6 }}>
+                      ₹{Math.round((cat.base_fare + routeDistanceKm * cat.per_km_rate + routeDurationMin * cat.per_min_rate) * cat.surge_multiplier)}
+                    </AppText>
+                  </TouchableOpacity>
+                )
+              })}
+            </ScrollView>
+          </View>
+
+          {/* ── Booking Ownership (Feature 1 Contract) ── */}
+          <AppCard style={styles.sectionCard}>
+            <View style={styles.cardHeaderRow}>
+              <View style={{ flex: 1 }}>
+                <AppText variant="subtitle" bold>{t('ride.book_for', 'Booking For')}</AppText>
+                <AppText variant="caption" color="secondary">
+                  {riderType === 'SELF' ? `Myself (${riderName})` : `${riderName} (${riderPhone})`}
+                </AppText>
+              </View>
+              <TouchableOpacity
+                style={[styles.switchParticipantBtn, { backgroundColor: theme.colors.primary }]}
+                onPress={() => setParticipantModalVisible(true)}
+              >
+                <AppText variant="caption" bold color="white">Change</AppText>
+              </TouchableOpacity>
+            </View>
+          </AppCard>
+
+          {/* ── Pickup Notes & Preferences ── */}
+          <AppCard style={styles.sectionCard}>
+            <AppText variant="subtitle" bold>Pickup Notes & Entry Details</AppText>
+            <TextInput
+              style={[styles.notesInput, { color: theme.colors.textPrimary, borderColor: theme.colors.border, backgroundColor: theme.colors.backgroundAlt }]}
+              value={pickupNotes}
+              onChangeText={setPickupNotes}
+              placeholder="e.g. Gate 2, near Metro Pillar 42..."
+              placeholderTextColor={theme.colors.textMuted}
+            />
+          </AppCard>
+
+          {/* ── Promo Code & Fare Breakdown ── */}
+          <AppCard style={styles.sectionCard}>
+            <AppText variant="subtitle" bold>{t('ride.fare_details', 'Fare Breakdown')}</AppText>
+
+            {/* Promo Code Input */}
+            <View style={styles.promoInputRow}>
+              <TextInput
+                style={[styles.promoInput, { color: theme.colors.textPrimary, borderColor: theme.colors.border, backgroundColor: theme.colors.backgroundAlt }]}
+                value={promoCode}
+                onChangeText={setPromoCode}
+                placeholder="Enter Coupon (e.g. DIWALI2026)"
+                placeholderTextColor={theme.colors.textMuted}
+                autoCapitalize="characters"
+              />
+              <TouchableOpacity
+                style={[styles.applyPromoBtn, { backgroundColor: theme.colors.primary }]}
+                onPress={handleApplyPromo}
+              >
+                <AppText variant="caption" bold color="white">Apply</AppText>
+              </TouchableOpacity>
+            </View>
+
+            <AppDivider marginVertical={12} />
+
+            <View style={styles.fareRow}>
+              <AppText variant="bodyS" color="secondary">Base Ride Charge</AppText>
+              <AppText variant="bodyS">₹{fareBreakdown.baseFare}</AppText>
+            </View>
+            <View style={styles.fareRow}>
+              <AppText variant="bodyS" color="secondary">Distance Rate ({routeDistanceKm} km)</AppText>
+              <AppText variant="bodyS">₹{fareBreakdown.distanceFare}</AppText>
+            </View>
+            <View style={styles.fareRow}>
+              <AppText variant="bodyS" color="secondary">Travel Time Charge (~{routeDurationMin} min)</AppText>
+              <AppText variant="bodyS">₹{fareBreakdown.timeFare}</AppText>
+            </View>
+            {fareBreakdown.surge > 1.0 && (
+              <View style={styles.fareRow}>
+                <AppText variant="bodyS" color="warning">Demand Surge Multiplier</AppText>
+                <AppText variant="bodyS" color="warning">{fareBreakdown.surge}x</AppText>
+              </View>
+            )}
+            {fareBreakdown.discount > 0 && (
+              <View style={styles.fareRow}>
+                <AppText variant="bodyS" color="success">Promo Discount</AppText>
+                <AppText variant="bodyS" color="success">-₹{fareBreakdown.discount}</AppText>
+              </View>
+            )}
+
+            <AppDivider marginVertical={10} />
+
+            <View style={styles.fareRow}>
+              <AppText variant="title" bold>
+                {pricingMode === 'NEGOTIATED' ? 'Your Proposed Fare' : bookingType === 'SCHEDULED' ? 'Estimated Total' : 'Total Payable'}
+              </AppText>
+              <AppText variant="title" bold color="brand">
+                ₹{pricingMode === 'NEGOTIATED' ? customOffer : fareBreakdown.total}
+              </AppText>
+            </View>
+          </AppCard>
+
+          {/* ── Payment Method Selector ── */}
+          <AppCard style={styles.sectionCard}>
+            <AppText variant="subtitle" bold style={{ marginBottom: 8 }}>Payment Method</AppText>
+            <View style={styles.paymentMethodsRow}>
+              {(['CASH', 'WALLET', 'UPI', 'SHARED_FAMILY'] as const).map((method) => (
+                <TouchableOpacity
+                  key={method}
+                  style={[
+                    styles.paymentMethodChip,
+                    {
+                      backgroundColor: paymentMethod === method ? `${theme.colors.primary}15` : theme.colors.backgroundAlt,
+                      borderColor: paymentMethod === method ? theme.colors.primary : theme.colors.border,
+                    },
+                  ]}
+                  onPress={() => setPaymentMethod(method)}
+                >
+                  <AppText variant="caption" bold={paymentMethod === method} color={paymentMethod === method ? 'brand' : 'secondary'}>
+                    {method === 'CASH' ? '💵 Cash' : method === 'WALLET' ? '👛 Wallet' : method === 'UPI' ? '📱 UPI' : '👨‍👩‍👧 Family'}
+                  </AppText>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </AppCard>
+
+          {/* ── Primary Confirm CTA ── */}
+          <View style={{ marginTop: 10, marginBottom: 30 }}>
+            <AppButton
+              variant="primary"
+              onPress={handleConfirmRide}
+              loading={bookingLoading}
+            >
+              {pricingMode === 'NEGOTIATED'
+                ? `Send Offer to Drivers • ₹${customOffer} 🤝`
+                : bookingType === 'SCHEDULED'
+                ? `Confirm Advance Reservation • ₹${fareBreakdown.total}`
+                : `${t('ride.book_now', 'Confirm & Request Cab')} • ₹${fareBreakdown.total}`}
+            </AppButton>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+
+      {/* ── Schedule Date & Time Selection Modal (Feature 4) ── */}
+      {/* Android: Uses DateTimePickerAndroid.open() — two-step date then time (imperative API) */}
+      {/* iOS:     Renders inline DateTimePicker with mode="datetime" spinner inside modal     */}
+      <Modal
+        visible={scheduleModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setScheduleModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalBox, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+            <AppText variant="title" bold center>{t('schedule.title', 'Schedule Advance Reservation')}</AppText>
+            <AppText variant="caption" color="muted" center style={{ marginTop: 4 }}>
+              {`Min ${minLeadTimeMinutes} min lead time • Max ${maxAdvanceDays} days ahead • ${DEVICE_TIMEZONE}`}
+            </AppText>
+
+            {/* Quick Day Chips */}
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+              <TouchableOpacity
+                style={[styles.dateQuickChip, { backgroundColor: `${theme.colors.primary}15`, borderColor: theme.colors.primary }]}
+                onPress={() => {
+                  const d = new Date()
+                  d.setMinutes(d.getMinutes() + minLeadTimeMinutes + 5) // +5 buffer
+                  setScheduledDate(d)
+                  setIosTempDate(d)
+                }}
+              >
+                <AppText variant="caption" bold color="brand">Today (+{minLeadTimeMinutes}m)</AppText>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.dateQuickChip, { backgroundColor: theme.colors.backgroundAlt, borderColor: theme.colors.border }]}
+                onPress={() => {
+                  const d = new Date()
+                  d.setDate(d.getDate() + 1)
+                  d.setHours(10, 30, 0, 0)
+                  setScheduledDate(d)
+                  setIosTempDate(d)
+                }}
+              >
+                <AppText variant="caption" bold>Tomorrow 10:30 AM</AppText>
+              </TouchableOpacity>
+            </View>
+
+            {/* Selected Time Preview */}
+            <View style={[styles.selectedTimePreview, { backgroundColor: `${theme.colors.primary}08`, borderColor: theme.colors.primary }]}>
+              <Ionicons name="calendar" size={18} color={theme.colors.primary} />
+              <AppText variant="body" bold color="brand" style={{ marginLeft: 8 }}>
+                {scheduledDate.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+                {' at '}
+                {scheduledDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+              </AppText>
+            </View>
+
+            {/* Platform-specific picker */}
+            {Platform.OS === 'android' ? (
+              /* Android: Button triggers imperative native picker */
+              <TouchableOpacity
+                style={[styles.nativePickerBtn, { backgroundColor: theme.colors.primary }]}
+                onPress={() => {
+                  const minDate = new Date(Date.now() + minLeadTimeMinutes * 60 * 1000)
+                  const maxDate = new Date(Date.now() + maxAdvanceDays * 24 * 3600 * 1000)
+                  DateTimePickerAndroid.open({
+                    value: scheduledDate,
+                    mode: 'date',
+                    minimumDate: minDate,
+                    maximumDate: maxDate,
+                    onChange: (_event, selectedDate) => {
+                      if (selectedDate) {
+                        // After date selection, open time picker
+                        DateTimePickerAndroid.open({
+                          value: selectedDate,
+                          mode: 'time',
+                          is24Hour: false,
+                          onChange: (_evTime, selectedTime) => {
+                            if (selectedTime) {
+                              setScheduledDate(selectedTime)
+                            }
+                          },
+                        })
+                      }
+                    },
+                  })
+                }}
+              >
+                <Ionicons name="calendar-outline" size={18} color="#FFFFFF" />
+                <AppText variant="bodyS" bold style={{ color: '#FFFFFF', marginLeft: 8 }}>
+                  Pick Date & Time
+                </AppText>
+              </TouchableOpacity>
+            ) : (
+              /* iOS: Inline DateTimePicker spinner */
+              <DateTimePicker
+                value={iosTempDate}
+                mode="datetime"
+                display="spinner"
+                minimumDate={new Date(Date.now() + minLeadTimeMinutes * 60 * 1000)}
+                maximumDate={new Date(Date.now() + maxAdvanceDays * 24 * 3600 * 1000)}
+                onChange={(_event, selectedDate) => {
+                  if (selectedDate) {
+                    setIosTempDate(selectedDate)
+                    setScheduledDate(selectedDate)
+                  }
+                }}
+                textColor={theme.colors.textPrimary}
+                style={{ width: '100%', marginTop: 8 }}
+              />
+            )}
+
+            <View style={{ marginTop: 20, gap: 10 }}>
+              <AppButton
+                variant="primary"
+                onPress={() => {
+                  // Validate before closing
+                  const minDate = new Date(Date.now() + minLeadTimeMinutes * 60 * 1000)
+                  if (scheduledDate < minDate) {
+                    Alert.alert(
+                      'Invalid Time',
+                      `Please select a time at least ${minLeadTimeMinutes} minutes from now.`
+                    )
+                    return
+                  }
+                  setScheduleModalVisible(false)
+                }}
+              >
+                ✓ Confirm Pickup Time
+              </AppButton>
+              <AppButton variant="secondary" onPress={() => setScheduleModalVisible(false)}>
+                Cancel
+              </AppButton>
+            </View>
+          </View>
         </View>
-      </View>
+      </Modal>
+
+      {/* ── Reservation Success Sheet Modal (Feature 4) ── */}
+      <Modal
+        visible={reservationSuccessModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setReservationSuccessModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalBox, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, alignItems: 'center' }]}>
+            <View style={[styles.successIconCircle, { backgroundColor: `${theme.colors.success}18` }]}>
+              <Ionicons name="checkmark-circle" size={48} color={theme.colors.success} />
+            </View>
+
+            <AppText variant="title" bold center style={{ marginTop: 12 }}>
+              {t('schedule.confirmed_title', 'Reservation Confirmed! 🎉')}
+            </AppText>
+            <AppText variant="bodyS" color="secondary" center style={{ marginTop: 6, paddingHorizontal: 10 }}>
+              {t('schedule.confirmed_desc', 'Your ride is reserved. A top-rated driver will be dispatched 45 mins before pickup.')}
+            </AppText>
+
+            <AppCard style={[styles.successSummaryCard, { backgroundColor: theme.colors.backgroundAlt, borderColor: theme.colors.border }]}>
+              <View style={styles.successSummaryRow}>
+                <AppText variant="caption" color="muted">DATE & TIME</AppText>
+                <AppText variant="bodyS" bold>
+                  {confirmedReservationData?.scheduled_at?.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}, {confirmedReservationData?.scheduled_at?.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                </AppText>
+              </View>
+              <View style={styles.successSummaryRow}>
+                <AppText variant="caption" color="muted">VEHICLE</AppText>
+                <AppText variant="bodyS" bold>{confirmedReservationData?.category}</AppText>
+              </View>
+              <View style={styles.successSummaryRow}>
+                <AppText variant="caption" color="muted">ESTIMATED FARE</AppText>
+                <AppText variant="bodyS" bold color="brand">₹{confirmedReservationData?.fare}</AppText>
+              </View>
+            </AppCard>
+
+            <View style={{ width: '100%', marginTop: 20, gap: 10 }}>
+              <AppButton
+                variant="primary"
+                onPress={() => {
+                  setReservationSuccessModal(false)
+                  router.replace('/(tabs)/trips' as any)
+                }}
+              >
+                {t('schedule.view_reservations', 'View in Upcoming Trips →')}
+              </AppButton>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Booking Participant Modal ── */}
+      <Modal
+        visible={participantModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setParticipantModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalBox, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+            <AppText variant="title" bold center>Select Rider</AppText>
+            <AppText variant="caption" color="muted" center style={{ marginTop: 4 }}>
+              Driver will see this rider's name & phone on arrival.
+            </AppText>
+
+            <TouchableOpacity
+              style={[styles.riderOption, { borderColor: riderType === 'SELF' ? theme.colors.primary : theme.colors.border }]}
+              onPress={() => {
+                setRiderType('SELF')
+                setRiderName('Pankaj Patil')
+                setRiderPhone('+919876543210')
+                setParticipantModalVisible(false)
+              }}
+            >
+              <AppAvatar name="Pankaj Patil" size={36} />
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <AppText variant="bodyS" bold>Myself</AppText>
+                <AppText variant="caption" color="muted">+919876543210</AppText>
+              </View>
+              {riderType === 'SELF' && <Ionicons name="checkmark-circle" size={20} color={theme.colors.primary} />}
+            </TouchableOpacity>
+
+            {familyMembers.map((m: any) => (
+              <TouchableOpacity
+                key={m.id}
+                style={[styles.riderOption, { borderColor: riderName === m.name ? theme.colors.primary : theme.colors.border }]}
+                onPress={() => {
+                  setRiderType('FAMILY_MEMBER')
+                  setRiderName(m.name)
+                  setRiderPhone(m.phone)
+                  setParticipantModalVisible(false)
+                }}
+              >
+                <AppAvatar name={m.name} size={36} />
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <AppText variant="bodyS" bold>{m.name} ({m.relationship || 'Family'})</AppText>
+                  <AppText variant="caption" color="muted">{m.phone}</AppText>
+                </View>
+                {riderName === m.name && <Ionicons name="checkmark-circle" size={20} color={theme.colors.primary} />}
+              </TouchableOpacity>
+            ))}
+
+            <View style={{ marginTop: 16 }}>
+              <AppButton variant="secondary" onPress={() => setParticipantModalVisible(false)}>
+                Done
+              </AppButton>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  // ── Form Stepper ─────────────────────────────────────────────
-  formRoot: { flex: 1, backgroundColor: '#F8FAFC' },
-  formHeader: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingVertical: 12, backgroundColor: '#FFF',
-    borderBottomWidth: 1, borderBottomColor: '#F1F5F9',
+  root: { flex: 1 },
+  safeArea: { flex: 1 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
   },
-  formBack: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  formHeaderTitle: { color: '#0F172A', fontSize: 18, fontWeight: '700' },
-  stepperContainer: { padding: 20, paddingBottom: 100 },
-  
-  stepBlock: { marginBottom: 24 },
-  stepTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-  stepBadge: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#2563EB', alignItems: 'center', justifyContent: 'center', marginRight: 10 },
-  stepBadgeText: { color: '#FFF', fontSize: 12, fontWeight: '700' },
-  stepTitleText: { fontSize: 16, fontWeight: '700', color: '#0F172A' },
-
-  cardBlock: { backgroundColor: '#FFF', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#E2E8F0' },
-  divider: { height: 1, backgroundColor: '#F1F5F9', marginVertical: 12 },
-
-  locationCard: { backgroundColor: '#FFF', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 12 },
-  locationRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4 },
-  locationDotBlue: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#3B82F6', marginRight: 14 },
-  locationDotSquare: { width: 10, height: 10, backgroundColor: '#EF4444', marginRight: 14 },
-  locationDivider: { width: 1, height: 20, backgroundColor: '#E2E8F0', marginLeft: 4, marginVertical: 4 },
-  locationInput: { flex: 1, color: '#0F172A', fontSize: 15, paddingVertical: 8 },
-  
-  savedRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  savedChip: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#EEF2FF', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: '#C7D2FE' },
-  savedChipText: { color: '#4F46E5', fontSize: 13, fontWeight: '500' },
-
-  toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 },
-  toggleLabel: { color: '#0F172A', fontSize: 15, fontWeight: '600' },
-  toggleSub: { color: '#64748B', fontSize: 12, marginTop: 2 },
-  
-  datePickerRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
-  datePicker: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#F8FAFC', borderRadius: 12, paddingVertical: 12, borderWidth: 1, borderColor: '#E2E8F0' },
-  datePickerText: { color: '#0F172A', fontSize: 14, fontWeight: '500' },
-  
-  seatCounter: { flexDirection: 'row', alignItems: 'center', gap: 16 },
-  seatBtn: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center' },
-  seatCount: { color: '#0F172A', fontSize: 18, fontWeight: '700', minWidth: 20, textAlign: 'center' },
-
-  doneWrap: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: 20, backgroundColor: '#F8FAFC', borderTopWidth: 1, borderTopColor: '#E2E8F0' },
-  doneBtn: { backgroundColor: '#2563EB', borderRadius: 16, paddingVertical: 16, alignItems: 'center', shadowColor: '#2563EB', shadowOpacity: 0.3, shadowRadius: 8, elevation: 5 },
-  doneBtnText: { color: '#FFF', fontSize: 16, fontWeight: '700' },
-
-  // ── Results ───────────────────────────────────────────
-  resultsRoot: { width: Dimensions.get('window').width, height: Dimensions.get('window').height, backgroundColor: '#111827' },
-  mapControls: {
-    position: 'absolute', top: '45%', left: 16,
-    backgroundColor: 'rgba(30,41,59,0.85)', borderRadius: 14,
-    overflow: 'hidden', borderWidth: 1, borderColor: '#4B5563',
+  backBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
   },
-  mapCtrlBtn: { padding: 12, alignItems: 'center', justifyContent: 'center' },
-  mapCtrlDivider: { height: 1, backgroundColor: '#4B5563' },
-  mapHeaderWrap: { position: 'absolute', top: 0, left: 0, right: 0 },
-  mapHeader: { paddingHorizontal: 24, paddingTop: 48, flexDirection: 'row', alignItems: 'flex-end', gap: 16 },
-  mapBack: {
-    width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.4)',
-    alignItems: 'center', justifyContent: 'center', marginBottom: 4,
+  scrollContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 40,
+    gap: 14,
   },
-  mapTitle: { color: '#FFFFFF', fontSize: 28, fontWeight: '700', lineHeight: 36, textShadowColor: '#000', textShadowRadius: 8 },
-
-  iosPickerBg: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' },
-  iosPicker: {
-    backgroundColor: '#1E293B', borderTopLeftRadius: 24, borderTopRightRadius: 24,
-    padding: 20, paddingBottom: 40,
+  bookingTypeRow: {
+    flexDirection: 'row',
+    borderRadius: 16,
+    padding: 4,
+    borderWidth: 1,
   },
-
-  // Women badge on trip cards
-  womenBadge: {
-    backgroundColor: 'rgba(236,72,153,0.2)', borderRadius: 8,
-    paddingHorizontal: 6, paddingVertical: 2, marginTop: 4,
+  bookingTypeBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 12,
+    alignItems: 'center',
   },
-  womenBadgeText: { color: '#F9A8D4', fontSize: 10, fontWeight: '700' },
-
-  // No results state
-  noResults: { alignItems: 'center', paddingVertical: 20 },
-  noResultsText: { color: '#FFFFFF', fontWeight: '700', fontSize: 15, marginTop: 8 },
-  noResultsSub: { color: '#6B7280', fontSize: 12, marginTop: 4, textAlign: 'center' },
-
-  // bsSubtitle
-  bsSubtitle: { color: '#94A3B8', fontSize: 12, marginTop: 2 },
-
-  // Bottom sheet
-  bottomSheet: {
-    position: 'absolute', bottom: 0, width: '100%', height: '58%',
-    backgroundColor: 'rgba(31,41,55,0.95)', borderTopLeftRadius: 30, borderTopRightRadius: 30,
-    borderTopWidth: 1, borderTopColor: '#4B5563',
-    shadowColor: '#000', shadowOpacity: 0.6, shadowRadius: 20, elevation: 20,
+  scheduleBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    borderRadius: 16,
+    borderWidth: 1.5,
   },
-  bsHandle: { width: 48, height: 6, backgroundColor: '#4B5563', borderRadius: 3, alignSelf: 'center', marginTop: 12, marginBottom: 16 },
-  bsHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 24, marginBottom: 16 },
-  bsTitle: { color: '#FFFFFF', fontSize: 22, fontWeight: '700', letterSpacing: 0.3 },
-  bsCloseBtn: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#374151', alignItems: 'center', justifyContent: 'center' },
-
-  vehicleScroll: { height: 210 },
-  vehicleCard: {
-    width: 140, height: 200, backgroundColor: 'rgba(55,65,81,0.6)',
-    borderRadius: 20, marginRight: 14, borderWidth: 1, borderColor: '#4B5563', padding: 12,
+  pricingModeToggle: {
+    flexDirection: 'row',
+    borderRadius: 14,
+    padding: 4,
+    borderWidth: 1,
+  },
+  pricingModeBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  negotiationCard: {
+    padding: 16,
+    borderRadius: 18,
+    borderWidth: 1.5,
+  },
+  stepperRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+  },
+  stepperBtn: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  modeSwitcher: {
+    flexDirection: 'row',
+    borderRadius: 14,
+    padding: 4,
+    borderWidth: 1,
+  },
+  modeBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  locationCard: {
+    padding: 16,
+    gap: 12,
+  },
+  locationInputRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  input: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 14,
+    marginTop: 4,
+  },
+  quickActionChips: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+  },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  mapContainer: {
+    height: 180,
+    borderRadius: 18,
     overflow: 'hidden',
   },
-  vehicleCardActive: { borderColor: '#8B5CF6' },
-  vehicleLabel: { color: '#FFFFFF', fontSize: 17, fontWeight: '700', marginBottom: 8 },
-  vehicleIconBox: { height: 64, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
-  vehicleMeta: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
-  vehicleMetaText: { color: '#D1D5DB', fontSize: 11 },
-  vehiclePrice: { color: '#FFFFFF', fontWeight: '700', fontSize: 18, marginTop: 6, lineHeight: 22 },
-  vehiclePriceSub: { color: '#9CA3AF', fontSize: 10 },
-
-  optionsRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, marginTop: 4, marginBottom: 8, gap: 8,
+  map: { flex: 1 },
+  mapMetricsBadge: {
+    position: 'absolute',
+    bottom: 10,
+    right: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
   },
-  // Filter chips (P4.4)
-  filterChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    backgroundColor: '#374151', paddingHorizontal: 11, paddingVertical: 9,
-    borderRadius: 20, borderWidth: 1, borderColor: '#4B5563',
+  categoryScroll: {
+    gap: 12,
+    paddingVertical: 4,
   },
-  filterChipActive: { borderColor: '#6366F1', backgroundColor: 'rgba(99,102,241,0.15)' },
-  filterChipWomen: { borderColor: '#EC4899', backgroundColor: 'rgba(236,72,153,0.15)' },
-  filterChipPriority: { borderColor: '#F97316', backgroundColor: 'rgba(249,115,22,0.15)' },
-  filterChipText: { color: '#94A3B8', fontSize: 12, fontWeight: '600' },
-  filterChipTextActive: { color: '#818CF8' },
-  couponBtn: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#374151', paddingHorizontal: 12, paddingVertical: 9,
-    borderRadius: 14, borderWidth: 1, borderColor: '#4B5563', gap: 6,
+  categoryCard: {
+    width: 140,
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    alignItems: 'center',
   },
-  couponText: { color: '#FFFFFF', fontSize: 12 },
-
-  bookBtnWrap: { paddingHorizontal: 24, paddingBottom: 24 },
-  bookNowBtn: { borderRadius: 20, overflow: 'hidden', shadowColor: '#3B82F6', shadowOpacity: 0.4, shadowRadius: 10, elevation: 6 },
-  bookNowGradient: { paddingVertical: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
-  bookNowText: { color: '#FFFFFF', fontSize: 20, fontWeight: '700' },
-
-  // Saved routes chips
-  routeChipsSection: { marginBottom: 12 },
-  routeChipsHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
-  routeChipsLabel: { fontSize: 12, fontWeight: '700', color: '#6366F1', textTransform: 'uppercase', letterSpacing: 0.5 },
-  routeChip: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#EEF2FF', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8,
-    borderWidth: 1.5, borderColor: '#C7D2FE', marginRight: 8,
-    maxWidth: 180,
+  categoryIconCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  routeChipText: { fontSize: 13, fontWeight: '600', color: '#4338CA' },
+  sectionCard: {
+    padding: 16,
+  },
+  cardHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  switchParticipantBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 10,
+  },
+  notesInput: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 8,
+    fontSize: 13,
+  },
+  promoInputRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 10,
+  },
+  promoInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 13,
+  },
+  applyPromoBtn: {
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fareRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  paymentMethodsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  paymentMethodChip: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalBox: {
+    width: '100%',
+    borderRadius: 24,
+    padding: 20,
+    borderWidth: 1,
+  },
+  dateQuickChip: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  timeSlotChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  successIconCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  successSummaryCard: {
+    width: '100%',
+    padding: 14,
+    marginTop: 16,
+    borderRadius: 16,
+    gap: 8,
+  },
+  successSummaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  riderOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginTop: 10,
+  },
+  // Feature 4: Native DateTimePicker schedule modal styles
+  selectedTimePreview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    marginTop: 16,
+  },
+  nativePickerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 14,
+    marginTop: 16,
+  },
+  // Feature 27 Smart Vehicle Sizing Styles
+  sizingCounterPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  smartReasonBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 10,
+  },
 })

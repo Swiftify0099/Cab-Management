@@ -21,11 +21,19 @@ import {
 } from '../../src/components/ui'
 
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
-  pending:      { label: 'Pending',    color: '#F59E0B' },
-  pickup_done:  { label: 'Picked Up',  color: '#3B82F6' },
-  in_transit:   { label: 'In Transit', color: '#8B5CF6' },
-  delivered:    { label: 'Delivered',  color: '#22C55E' },
-  cancelled:    { label: 'Cancelled',  color: '#EF4444' },
+  created:          { label: 'Created',     color: '#94A3B8' },
+  searching_driver: { label: 'Searching',   color: '#F59E0B' },
+  pending:          { label: 'Searching',   color: '#F59E0B' },
+  driver_assigned:  { label: 'Assigned',    color: '#6366F1' },
+  accepted:         { label: 'Assigned',    color: '#6366F1' },
+  at_pickup:        { label: 'At Pickup',   color: '#3B82F6' },
+  pickup_done:      { label: 'Picked Up',   color: '#3B82F6' },
+  picked_up:        { label: 'Picked Up',   color: '#3B82F6' },
+  in_transit:       { label: 'In Transit',  color: '#8B5CF6' },
+  near_destination: { label: 'Arriving',    color: '#06B6D4' },
+  at_destination:   { label: 'Arrived',     color: '#06B6D4' },
+  delivered:        { label: 'Delivered',   color: '#22C55E' },
+  cancelled:        { label: 'Cancelled',   color: '#EF4444' },
 }
 
 const FILTERS = ['All', 'Active', 'Delivered'] as const
@@ -79,12 +87,13 @@ export default function ParcelsTab() {
   const onRefresh = () => { setRefreshing(true); loadParcels() }
 
   const filtered = parcels.filter(p => {
-    if (filter === 'All')       return true
-    if (filter === 'Active')    return ['pending', 'pickup_done', 'in_transit'].includes(p.status)
-    return p.status === 'delivered'
+    const s = (p.status || '').toLowerCase()
+    if (filter === 'All') return true
+    if (filter === 'Active') return ['searching_driver', 'pending', 'created', 'driver_assigned', 'accepted', 'at_pickup', 'pickup_done', 'picked_up', 'in_transit', 'near_destination', 'at_destination'].includes(s)
+    return s === 'delivered'
   })
 
-  const statusCfg = (status: string) => STATUS_CONFIG[status] || { label: status, color: '#94A3B8' }
+  const statusCfg = (status: string) => STATUS_CONFIG[(status || '').toLowerCase()] || { label: status, color: '#94A3B8' }
 
   return (
     <View style={styles.root}>
@@ -131,17 +140,23 @@ export default function ParcelsTab() {
           )}
 
           {!loading && filtered.map(parcel => {
+            const pId      = parcel.parcel_id || parcel.id
             const cfg      = statusCfg(parcel.status)
             const steps: any[] = parcel.steps || parcel.timeline || []
-            const isExpanded   = expanded === parcel.id
+            const isExpanded   = expanded === pId
 
             return (
-              <View key={parcel.id} style={styles.glassCard}>
+              <TouchableOpacity
+                key={pId}
+                style={styles.glassCard}
+                activeOpacity={0.88}
+                onPress={() => router.push({ pathname: '/parcel-tracking', params: { parcel_id: pId } } as any)}
+              >
                 {/* Top Row */}
                 <View style={styles.cardTopRow}>
                   <View style={{ flex: 1 }}>
                     <AppText variant="bodyS" bold color="white" style={{ marginBottom: 4 }}>
-                      #{parcel.tracking_number || parcel.id?.slice(0, 8)?.toUpperCase()}
+                      #{parcel.tracking_number || pId?.slice(0, 8)?.toUpperCase()}
                     </AppText>
                     <AppText variant="small" color="secondary" numberOfLines={1}>
                       {parcel.receiver_address || parcel.dropoff_address || 'Delivery address'}
@@ -150,44 +165,12 @@ export default function ParcelsTab() {
                   <AppBadge label={cfg.label} color={cfg.color} bg={cfg.color + '22'} />
                 </View>
 
-                {/* ETA */}
-                {parcel.eta && (
-                  <View style={styles.etaRow}>
-                    <Feather name="clock" size={12} color={theme.colors.textMuted} />
-                    <AppText variant="small" color="secondary" style={{ marginLeft: 6 }}>
-                      ETA: <AppText variant="small" bold color="white">{parcel.eta}</AppText>
-                    </AppText>
-                  </View>
-                )}
-
-                {/* Expand Toggle */}
-                {steps.length > 0 && (
-                  <TouchableOpacity onPress={() => setExpanded(isExpanded ? null : parcel.id)}>
-                    <AppText variant="caption" color="brand" style={{ marginVertical: 8 }}>
-                      {isExpanded ? '▲ Hide Timeline' : '▼ Show Timeline'}
-                    </AppText>
-                  </TouchableOpacity>
-                )}
-
-                {/* Timeline */}
-                {isExpanded && steps.length > 0 && (
-                  <View style={styles.timeline}>
-                    {steps.map((step: any, i: number) => (
-                      <View key={i} style={styles.timelineRow}>
-                        <View style={styles.timelineLeft}>
-                          <StepIcon status={step.status} />
-                          {i < steps.length - 1 && (
-                            <View style={[styles.connector, { backgroundColor: step.status === 'done' ? '#22C55E' : '#334155' }]} />
-                          )}
-                        </View>
-                        <View style={styles.timelineContent}>
-                          <AppText variant="bodyS" semibold color="white">{step.label}</AppText>
-                          <AppText variant="small" color="muted" style={{ marginTop: 2 }}>{step.date}</AppText>
-                        </View>
-                      </View>
-                    ))}
-                  </View>
-                )}
+                {/* Weight and Category info */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                  <AppText variant="small" color="muted">
+                    📦 {parcel.weight_kg || 1} kg • ₹{parcel.fare || 100}
+                  </AppText>
+                </View>
 
                 {/* Fragile Alert */}
                 {parcel.is_fragile && (
@@ -203,22 +186,20 @@ export default function ParcelsTab() {
                 {parcel.receiver_name && (
                   <View style={styles.receiverRow}>
                     <Ionicons name="person-outline" size={14} color={theme.colors.textMuted} />
-                    <AppText variant="small" color="muted" style={{ marginLeft: 6 }}>{parcel.receiver_name}</AppText>
+                    <AppText variant="small" color="muted" style={{ marginLeft: 6 }}>Receiver: {parcel.receiver_name}</AppText>
                   </View>
                 )}
 
-                {/* Live Track */}
-                {(parcel.status === 'in_transit' || parcel.status === 'pickup_done') && (
-                  <AppButton
-                    variant="primary"
-                    icon="map"
-                    style={{ marginTop: 12 }}
-                    onPress={() => router.push({ pathname: '/track', params: { tripId: parcel.trip_id, isParcel: 'true' } } as any)}
-                  >
-                    Track Live on Map
-                  </AppButton>
-                )}
-              </View>
+                {/* Live Track Action */}
+                <AppButton
+                  variant="primary"
+                  icon="map"
+                  style={{ marginTop: 12 }}
+                  onPress={() => router.push({ pathname: '/parcel-tracking', params: { parcel_id: pId } } as any)}
+                >
+                  {parcel.status === 'delivered' ? 'View Delivery Receipt (POD)' : 'Track Live Shipment'}
+                </AppButton>
+              </TouchableOpacity>
             )
           })}
         </ScrollView>

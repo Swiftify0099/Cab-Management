@@ -1,0 +1,275 @@
+"""
+Rental Service Adapter — Maps RentalBooking domain to Common Job Contract.
+════════════════════════════════════════════════════════════════════════════════
+State Machine Mapping:
+  RentalBookingStatus.PENDING         → CommonJobStatus.PENDING
+  RentalBookingStatus.DRIVER_ASSIGNED → CommonJobStatus.ASSIGNED
+  RentalBookingStatus.DRIVER_EN_ROUTE → CommonJobStatus.DRIVER_ARRIVING
+  RentalBookingStatus.DRIVER_ARRIVED  → CommonJobStatus.DRIVER_ARRIVED
+  RentalBookingStatus.ACTIVE          → CommonJobStatus.ACTIVE
+  RentalBookingStatus.COMPLETED       → CommonJobStatus.COMPLETED
+  RentalBookingStatus.CANCELLED       → CommonJobStatus.CANCELLED
+  RentalBookingStatus.EXPIRED         → CommonJobStatus.FAILED
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+from typing import Optional, Dict, Any, List
+
+import structlog
+from sqlalchemy import select, and_, desc
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from common.models.all_models import (
+    RentalBooking, RentalBookingStatus, Driver, User, CustomerProfile,
+)
+from common.services.common_job_contract import (
+    ServiceAdapter, CommonJobResponse, CommonJobStatus, CommonJobType,
+    CommonJobCommand, CommandResult, JobListItem,
+    LocationPoint, FareSnapshot, CustomerInfo,
+)
+
+logger = structlog.get_logger(__name__)
+
+_RENTAL_STATUS_MAP: Dict[str, CommonJobStatus] = {
+    RentalBookingStatus.PENDING:         CommonJobStatus.PENDING,
+    RentalBookingStatus.DRIVER_ASSIGNED: CommonJobStatus.ASSIGNED,
+    RentalBookingStatus.DRIVER_EN_ROUTE: CommonJobStatus.DRIVER_ARRIVING,
+    RentalBookingStatus.DRIVER_ARRIVED:  CommonJobStatus.DRIVER_ARRIVED,
+    RentalBookingStatus.ACTIVE:          CommonJobStatus.ACTIVE,
+    RentalBookingStatus.COMPLETED:       CommonJobStatus.COMPLETED,
+    RentalBookingStatus.CANCELLED:       CommonJobStatus.CANCELLED,
+    RentalBookingStatus.EXPIRED:         CommonJobStatus.FAILED,
+}
+
+_RENTAL_ACTIVE_STATUSES = [
+    RentalBookingStatus.DRIVER_ASSIGNED,
+    RentalBookingStatus.DRIVER_EN_ROUTE,
+    RentalBookingStatus.DRIVER_ARRIVED,
+    RentalBookingStatus.ACTIVE,
+]
+
+_SUPPORTED_COMMANDS = {
+    CommonJobCommand.ACCEPT,
+    CommonJobCommand.REJECT,
+    CommonJobCommand.ARRIVE_PICKUP,
+    CommonJobCommand.START,
+    CommonJobCommand.COMPLETE,
+    CommonJobCommand.CANCEL,
+}
+
+
+def _mask_phone(phone: str) -> str:
+    if not phone or len(phone) < 6:
+        return phone or ""
+    return phone[:6] + "••••" + phone[-4:]
+
+
+class RentalServiceAdapter(ServiceAdapter):
+    """
+    Adapts RentalBooking domain entities to Common Job Contract.
+    """
+
+    def get_job_type(self) -> CommonJobType:
+        return CommonJobType.RENTAL
+
+    async def get_active_job(self, driver_id: str, db: AsyncSession) -> Optional[CommonJobResponse]:
+        try:
+            driver_uuid = uuid.UUID(driver_id)
+        except ValueError:
+            return None
+
+        result = await db.execute(
+            select(RentalBooking).where(
+                and_(
+                    RentalBooking.driver_id == driver_uuid,
+                    RentalBooking.status.in_(_RENTAL_ACTIVE_STATUSES),
+                )
+            ).order_by(desc(RentalBooking.updated_at)).limit(1)
+        )
+        booking = result.scalar_one_or_none()
+        if not booking:
+            return None
+
+        return await self._map_to_common_job(booking, db)
+
+    async def get_job_by_id(self, job_id: str, driver_id: str, db: AsyncSession) -> Optional[CommonJobResponse]:
+        try:
+            booking_uuid = uuid.UUID(job_id)
+            driver_uuid = uuid.UUID(driver_id)
+        except ValueError:
+            return None
+
+        result = await db.execute(
+            select(RentalBooking).where(
+                and_(
+                    RentalBooking.id == booking_uuid,
+                    RentalBooking.driver_id == driver_uuid,
+                )
+            )
+        )
+        booking = result.scalar_one_or_none()
+        if not booking:
+            return None
+
+        return await self._map_to_common_job(booking, db)
+
+    async def process_command(
+        self, job_id: str, command: CommonJobCommand,
+        driver_id: str, db: AsyncSession, params: Optional[Dict[str, Any]] = None
+    ) -> CommandResult:
+        if command not in _SUPPORTED_COMMANDS:
+            return CommandResult(
+                success=False,
+                message=f"Command '{command.value}' not supported for RENTAL jobs."
+            )
+
+        try:
+            booking_uuid = uuid.UUID(job_id)
+            driver_uuid = uuid.UUID(driver_id)
+        except ValueError:
+            return CommandResult(success=False, message="Invalid job or driver ID.")
+
+        result = await db.execute(
+            select(RentalBooking).where(
+                and_(
+                    RentalBooking.id == booking_uuid,
+                    RentalBooking.driver_id == driver_uuid,
+                )
+            )
+        )
+        booking = result.scalar_one_or_none()
+        if not booking:
+            return CommandResult(success=False, message="Rental booking not found or not assigned to you.")
+
+        params = params or {}
+
+        if command == CommonJobCommand.ARRIVE_PICKUP:
+            booking.status = RentalBookingStatus.DRIVER_ARRIVED
+            booking.updated_at = datetime.utcnow()
+            await db.commit()
+            return CommandResult(
+                success=True,
+                message="Arrived at customer pickup location.",
+                updated_status=CommonJobStatus.DRIVER_ARRIVED.value,
+            )
+        elif command == CommonJobCommand.START:
+            booking.status = RentalBookingStatus.ACTIVE
+            booking.actual_start_time = datetime.utcnow()
+            booking.updated_at = datetime.utcnow()
+            await db.commit()
+            return CommandResult(
+                success=True,
+                message="Rental package started. Backend timer active.",
+                updated_status=CommonJobStatus.ACTIVE.value,
+            )
+        elif command == CommonJobCommand.COMPLETE:
+            booking.status = RentalBookingStatus.COMPLETED
+            booking.actual_end_time = datetime.utcnow()
+            booking.updated_at = datetime.utcnow()
+            await db.commit()
+            return CommandResult(
+                success=True,
+                message="Rental package ended. Final fare calculated.",
+                updated_status=CommonJobStatus.COMPLETED.value,
+            )
+        elif command == CommonJobCommand.CANCEL:
+            if booking.status in (RentalBookingStatus.COMPLETED, RentalBookingStatus.CANCELLED):
+                return CommandResult(success=False, message="Rental booking already finalized.")
+            booking.status = RentalBookingStatus.CANCELLED
+            booking.updated_at = datetime.utcnow()
+            await db.commit()
+            return CommandResult(
+                success=True,
+                message="Rental booking cancelled.",
+                updated_status=CommonJobStatus.CANCELLED.value,
+            )
+        else:
+            return CommandResult(success=False, message=f"Unhandled command '{command.value}'.")
+
+    async def get_job_history(
+        self, driver_id: str, db: AsyncSession, limit: int = 20, offset: int = 0
+    ) -> List[JobListItem]:
+        try:
+            driver_uuid = uuid.UUID(driver_id)
+        except ValueError:
+            return []
+
+        result = await db.execute(
+            select(RentalBooking).where(
+                and_(
+                    RentalBooking.driver_id == driver_uuid,
+                    RentalBooking.status.in_([
+                        RentalBookingStatus.COMPLETED,
+                        RentalBookingStatus.CANCELLED,
+                        RentalBookingStatus.EXPIRED,
+                    ])
+                )
+            ).order_by(desc(RentalBooking.updated_at)).limit(limit).offset(offset)
+        )
+        bookings = result.scalars().all()
+
+        return [
+            JobListItem(
+                job_type=CommonJobType.RENTAL.value,
+                job_id=str(b.id),
+                domain_id=str(b.id),
+                status=_RENTAL_STATUS_MAP.get(b.status, CommonJobStatus.FAILED).value,
+                pickup_address=b.pickup_address or "",
+                dropoff_address="Hourly Package",
+                fare_amount=float(b.final_fare or b.estimated_fare or 0),
+                currency="INR",
+                created_at=b.created_at.isoformat() if b.created_at else None,
+            )
+            for b in bookings
+        ]
+
+    # ─── Internal Mapping ─────────────────────────────────────────────────────
+
+    async def _map_to_common_job(self, booking: RentalBooking, db: AsyncSession) -> CommonJobResponse:
+        common_status = _RENTAL_STATUS_MAP.get(booking.status, CommonJobStatus.PENDING)
+
+        service_specific: Dict[str, Any] = {
+            "reference": booking.reference,
+            "vehicle_category": booking.vehicle_category,
+            "planned_duration_minutes": booking.planned_duration_minutes,
+            "included_km": float(booking.included_km or 0),
+            "actual_km": float(booking.actual_km or 0),
+            "actual_start_time": booking.actual_start_time.isoformat() if booking.actual_start_time else None,
+        }
+
+        total_fare = float(booking.final_fare or booking.estimated_fare or 0)
+        driver_earning = round(total_fare * 0.82, 2)
+
+        return CommonJobResponse(
+            job_type=CommonJobType.RENTAL.value,
+            job_id=str(booking.id),
+            domain_id=str(booking.id),
+            status=common_status.value,
+            pickup=LocationPoint(
+                latitude=float(booking.pickup_lat or 0),
+                longitude=float(booking.pickup_lng or 0),
+                address=booking.pickup_address or "",
+            ),
+            dropoff=LocationPoint(
+                latitude=float(booking.pickup_lat or 0),
+                longitude=float(booking.pickup_lng or 0),
+                address="Hourly Package Location",
+            ),
+            fare_snapshot=FareSnapshot(
+                total_fare=total_fare,
+                driver_earning=driver_earning,
+                currency="INR",
+                payment_method=booking.payment_method or "WALLET",
+            ),
+            customer=CustomerInfo(
+                name="Rental Customer",
+                phone_masked="",
+                special_notes=f"Plan: {booking.planned_duration_minutes} mins / {booking.included_km} km",
+            ),
+            start_otp=None,
+            created_at=booking.created_at.isoformat() if booking.created_at else None,
+            updated_at=booking.updated_at.isoformat() if booking.updated_at else None,
+            service_specific=service_specific,
+        )

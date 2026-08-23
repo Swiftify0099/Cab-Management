@@ -33,8 +33,12 @@ from common.models.all_models import (
     DriverBankAccount,
     DriverDocument,
     KYCStatus,
+    MediaAsset,
+    MediaOwnerType,
+    MediaType,
 )
 from common.schemas.response import APIResponse
+from common.utils.cloudinary_service import CloudinaryService
 from common.utils.storage import (
     ALLOWED_DOCUMENT_TYPES,
     delete_upload,
@@ -187,7 +191,7 @@ async def get_document_details(
 @router.post(
     "/documents/{doc_type}",
     response_model=APIResponse[dict],
-    summary="Upload or replace a KYC document with metadata",
+    summary="Upload or replace a KYC document in Cloudinary with metadata",
 )
 async def upload_kyc_document(
     doc_type: str,
@@ -195,10 +199,11 @@ async def upload_kyc_document(
     document_number: Optional[str] = Form(None),
     issue_date: Optional[str] = Form(None),
     expires_at: Optional[str] = Form(None),
+    vehicle_id: Optional[str] = Form(None),
     current_user: AuthenticatedUser = Depends(get_current_active_driver),
     db: AsyncSession = Depends(get_db),
 ):
-    """Uploads new document or replaces existing document, incrementing version."""
+    """Uploads new document or replaces existing document, storing bytes in Cloudinary and metadata in DB."""
     result = await db.execute(
         select(Driver).where(Driver.user_id == current_user.id)
     )
@@ -225,19 +230,51 @@ async def upload_kyc_document(
         except ValueError:
             pass
 
-    # Save file
-    path = await save_upload(
-        file=file,
-        category="kyc_documents",
-        allowed_types=ALLOWED_DOCUMENT_TYPES,
-        max_size=10 * 1024 * 1024,
-    )
+    parsed_vehicle_id: Optional[uuid.UUID] = None
+    if vehicle_id:
+        try:
+            parsed_vehicle_id = uuid.UUID(vehicle_id)
+        except ValueError:
+            pass
 
+    # 1. Upload to Cloudinary private/authenticated storage
+    upload_res = await CloudinaryService.upload_driver_kyc_document(
+        driver_id=str(driver.id),
+        doc_type=doc_type,
+        file=file,
+        vehicle_id=str(parsed_vehicle_id) if parsed_vehicle_id else None,
+    )
+    secure_url = upload_res.get("secure_url") or upload_res.get("url")
+    public_id = upload_res.get("public_id")
+
+    # 2. Record MediaAsset metadata (Zero file bytes in PostgreSQL)
+    media_asset = MediaAsset(
+        owner_type=MediaOwnerType.DRIVER,
+        owner_id=driver.id,
+        media_type=MediaType.KYC_DOCUMENT if not parsed_vehicle_id else MediaType.VEHICLE_DOCUMENT,
+        cloudinary_public_id=public_id,
+        resource_type=upload_res.get("resource_type", "image"),
+        format=upload_res.get("format", "jpg"),
+        mime_type=file.content_type or "image/jpeg",
+        file_size_bytes=upload_res.get("bytes", 0),
+        version=upload_res.get("version", 1),
+        secure_url=secure_url,
+        thumbnail_url=secure_url,
+        status="ACTIVE",
+        is_private=True,
+    )
+    db.add(media_asset)
+    await db.flush()
+
+    # 3. Save or update DriverDocument record
     doc = await save_or_update_kyc_document(
         db=db,
         driver=driver,
         doc_type=dt_enum,
-        file_path=path,
+        file_path=secure_url,
+        cloudinary_public_id=public_id,
+        media_asset_id=media_asset.id,
+        vehicle_id=parsed_vehicle_id,
         document_number=document_number.strip() if document_number else None,
         issue_date=parsed_issue,
         expires_at=parsed_expiry,
@@ -245,12 +282,64 @@ async def upload_kyc_document(
     await db.commit()
 
     return APIResponse(
-        message=f"{dt_enum.value} uploaded successfully",
+        message=f"{dt_enum.value} uploaded successfully to Cloudinary",
         data={
             "doc_type": doc.doc_type.value,
-            "file_url": get_file_url(doc.file_path),
+            "public_id": public_id,
             "version": doc.version,
             "status": doc.status,
+        },
+    )
+
+
+@router.get(
+    "/documents/{doc_type}/access",
+    response_model=APIResponse[dict],
+    summary="Get short-lived secure access URL for a driver's private KYC document",
+)
+async def get_document_access_url(
+    doc_type: str,
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generates a temporary signed URL for viewing sensitive KYC documents (IDOR-protected)."""
+    result = await db.execute(
+        select(Driver).where(Driver.user_id == current_user.id)
+    )
+    driver = result.scalar_one_or_none()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver profile not found")
+
+    try:
+        dt_enum = DocumentType(doc_type)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid document type: {doc_type}")
+
+    doc_res = await db.execute(
+        select(DriverDocument).where(
+            DriverDocument.driver_id == driver.id,
+            DriverDocument.doc_type == dt_enum,
+            DriverDocument.is_current == True,
+        )
+    )
+    doc = doc_res.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found for this driver")
+
+    if doc.cloudinary_public_id:
+        signed_url = CloudinaryService.generate_secure_access_url(
+            public_id=doc.cloudinary_public_id,
+            expiry_seconds=1800,  # 30 min access
+        )
+    else:
+        signed_url = get_file_url(doc.file_path)
+
+    return APIResponse(
+        message="Secure access URL generated",
+        data={
+            "doc_type": doc.doc_type.value,
+            "access_url": signed_url,
+            "expires_in_seconds": 1800,
         },
     )
 

@@ -29,6 +29,7 @@ export const RideRequestDevSheet: React.FC<Props> = ({
   onSimulateStateChange,
   onSimulateSocketToggle,
 }) => {
+  if (!__DEV__) return null;
   const triggerEconomySample = () => {
     const offer: RideOfferPayload = {
       offer_id: `sim-econ-${Date.now()}`,

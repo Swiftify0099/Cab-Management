@@ -46,8 +46,8 @@ export default function PropertySelectionScreen() {
   const { theme, isDark } = useTheme();
 
   const handleSelect = (type: string) => {
-    // Navigate to property search screen with the selected type
-    router.push({ pathname: '/book/propertySearch', params: { type } });
+    // Navigate to authoritative hotel stay search flow (Feature 16)
+    router.push({ pathname: '/hotel/search' as any, params: { property_type: type } });
   };
 
   const renderIcon = (item: typeof PROPERTY_TYPES[0]) => {

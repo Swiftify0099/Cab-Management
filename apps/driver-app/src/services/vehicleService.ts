@@ -547,9 +547,8 @@ export class VehicleService {
       console.warn('[VehicleService] Error loading local cache:', e)
     }
 
-    // Seed defaults
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_MOCK_VEHICLES))
-    return INITIAL_MOCK_VEHICLES
+    // No backend data and no local cache — return empty (driver needs to add vehicles)
+    return []
   }
 
   /**

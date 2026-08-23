@@ -40,6 +40,7 @@ interface Props {
 }
 
 export function WalletDevSheet({ visible, onClose, onDataChanged }: Props) {
+  if (!__DEV__) return null
   const { isDark } = useTheme()
   const [loadingAction, setLoadingAction] = useState<string | null>(null)
 

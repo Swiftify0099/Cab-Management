@@ -35,8 +35,16 @@ from common.middleware.auth import (
     get_current_active_customer,
     get_current_user,
 )
-from common.models.all_models import CustomerProfile, SavedAddress, SavedRoute
+from common.models.all_models import (
+    CustomerProfile,
+    MediaAsset,
+    MediaOwnerType,
+    MediaType,
+    SavedAddress,
+    SavedRoute,
+)
 from common.schemas.response import APIResponse, MessageResponse
+from common.utils.cloudinary_service import CloudinaryService
 from common.utils.storage import (
     ALLOWED_IMAGE_TYPES,
     delete_upload,
@@ -162,36 +170,87 @@ async def update_my_profile(
 @router.post(
     "/me/photo",
     response_model=APIResponse[dict],
-    summary="Upload profile photo",
+    summary="Upload customer profile photo to Cloudinary",
 )
 async def upload_profile_photo(
     photo: UploadFile = File(...),
     current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload profile photo. Accepts JPEG/PNG/WebP, max 5MB."""
+    """Upload customer profile photo. Stores file in Cloudinary and metadata in PostgreSQL."""
     profile = await get_customer_profile(db=db, user_id=current_user.id)
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
 
-    # Delete old photo
-    if profile.profile_photo:
-        await delete_upload(profile.profile_photo)
+    old_photo = profile.profile_photo
 
-    # Save new photo
-    relative_path = await save_upload(
+    # Upload to Cloudinary with face auto-crop
+    upload_res = await CloudinaryService.upload_customer_profile_photo(
+        customer_id=str(current_user.id),
         file=photo,
-        category="profiles",
-        allowed_types=ALLOWED_IMAGE_TYPES,
-        max_size=5 * 1024 * 1024,
     )
+    photo_url = upload_res.get("secure_url") or upload_res.get("url")
+    public_id = upload_res.get("public_id")
 
-    profile.profile_photo = relative_path
+    # Record MediaAsset metadata in PostgreSQL (Zero binary bytes)
+    media_asset = MediaAsset(
+        owner_type=MediaOwnerType.CUSTOMER,
+        owner_id=current_user.id,
+        media_type=MediaType.PROFILE_PHOTO,
+        cloudinary_public_id=public_id,
+        resource_type=upload_res.get("resource_type", "image"),
+        format=upload_res.get("format", "jpg"),
+        mime_type=photo.content_type or "image/jpeg",
+        file_size_bytes=upload_res.get("bytes", 0),
+        version=upload_res.get("version", 1),
+        secure_url=photo_url,
+        thumbnail_url=photo_url,
+        status="ACTIVE",
+        is_private=False,
+    )
+    db.add(media_asset)
+
+    # Atomic update: set new URL and commit
+    profile.profile_photo = photo_url
     await db.commit()
 
+    # Clean up old photo from Cloudinary if existed
+    if old_photo and old_photo != photo_url:
+        await delete_upload(old_photo)
+
     return APIResponse(
-        message="Profile photo updated",
-        data={"photo_url": get_file_url(relative_path)},
+        message="Profile photo updated successfully",
+        data={
+            "photo_url": photo_url,
+            "public_id": public_id,
+            "version": upload_res.get("version", 1),
+        },
+    )
+
+
+@router.delete(
+    "/me/photo",
+    response_model=APIResponse[dict],
+    summary="Remove customer profile photo",
+)
+async def delete_profile_photo(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Removes customer profile photo, deletes Cloudinary asset, and clears DB metadata."""
+    profile = await get_customer_profile(db=db, user_id=current_user.id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    old_photo = profile.profile_photo
+    if old_photo:
+        await delete_upload(old_photo)
+        profile.profile_photo = None
+        await db.commit()
+
+    return APIResponse(
+        message="Profile photo removed successfully",
+        data={"photo_url": None},
     )
 
 

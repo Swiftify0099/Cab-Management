@@ -21,6 +21,7 @@ interface Props {
 }
 
 export function AvailabilityDevSheet({ visible, data, onClose }: Props) {
+  if (!__DEV__) return null
   const { theme, isDark } = useTheme()
 
   const handleSim = (action: any) => {

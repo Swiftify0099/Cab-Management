@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
 
-backend_root = r"C:\Users\panka\OneDrive\Desktop\CabBooking\backend"
+backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(backend_root)
 sys.path.insert(0, backend_root)
 sys.path.insert(0, os.path.join(backend_root, 'common'))
@@ -23,9 +23,7 @@ from app.services.communication_service import CommunicationService
 from app.services.ride_start_service import RideStartService
 from sqlalchemy import select
 
-DB_URL = "postgresql+asyncpg://cabooking_user:cabooking_pass@127.0.0.1:5432/cabooking"
-test_engine = create_async_engine(DB_URL, poolclass=NullPool, echo=False)
-TestSession = async_sessionmaker(bind=test_engine, class_=AsyncSession, expire_on_commit=False)
+from common.database import async_session_maker
 
 
 async def run_regression():
@@ -33,7 +31,7 @@ async def run_regression():
     print("🏆 FULL E2E REGRESSION & SECURITY AUDIT: FEATURE 8 + FEATURE 9", flush=True)
     print("=" * 80, flush=True)
 
-    async with TestSession() as db:
+    async with async_session_maker() as db:
         # Step 1: Create fresh test user, driver profile, vehicle, and wallet
         print("\n[STEP 1] Setting up authentic database entities...", flush=True)
         driver_uid = uuid.uuid4()
@@ -328,7 +326,6 @@ async def run_regression():
         print("🎉 100% REGRESSION PASS: FEATURES 8 & 9 ARE FULLY OPERATIONAL AND SECURE!", flush=True)
         print("=" * 80, flush=True)
 
-    await test_engine.dispose()
 
 if __name__ == '__main__':
     asyncio.run(run_regression())

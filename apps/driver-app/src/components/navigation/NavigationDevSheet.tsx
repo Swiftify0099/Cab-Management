@@ -63,6 +63,7 @@ export const NavigationDevSheet: React.FC<Props> = ({
   onSimulateNoShowEligible,
   onReset,
 }) => {
+  if (!__DEV__) return null;
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.backdrop}>

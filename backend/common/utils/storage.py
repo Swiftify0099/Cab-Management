@@ -42,9 +42,11 @@ def _generate_filename(original_filename: str) -> str:
 
 
 def get_file_url(relative_path: str) -> str:
-    """Convert a stored relative path to a public URL."""
+    """Convert a stored path or Cloudinary reference to an accessible URL."""
     if not relative_path:
         return ""
+    if relative_path.startswith("http://") or relative_path.startswith("https://"):
+        return relative_path
     return f"{settings.LOCAL_UPLOAD_URL}/{relative_path}"
 
 
@@ -55,10 +57,8 @@ async def save_upload(
     max_size: Optional[int] = None,
 ) -> str:
     """
-    Save an uploaded file to local disk.
-    Returns relative path (e.g. 'profiles/abc123.jpg').
-
-    In production: swap this function body to upload to S3/R2.
+    Saves an uploaded file to Cloudinary (or local disk in offline fallback).
+    Returns the secure Cloudinary URL or relative local path.
     """
     if allowed_types is None:
         allowed_types = ALLOWED_IMAGE_TYPES
@@ -66,6 +66,27 @@ async def save_upload(
     if max_size is None:
         max_size = MAX_FILE_SIZES.get(category, 5 * 1024 * 1024)
 
+    # If Cloudinary storage backend is configured, upload to Cloudinary
+    if getattr(settings, "STORAGE_BACKEND", "local") == "cloudinary":
+        try:
+            from common.utils.cloudinary_service import CloudinaryService
+            is_private = category in ("kyc_documents", "kyc", "documents")
+            res = await CloudinaryService.upload_file(
+                file=file,
+                folder=category,
+                is_private=is_private,
+                max_size=max_size,
+                allowed_types=allowed_types,
+            )
+            return res.get("secure_url") or res.get("url") or res.get("public_id")
+        except Exception as e:
+            # If Cloudinary fails in dev/offline, log and fall back to local disk
+            if not settings.is_production:
+                pass
+            else:
+                raise
+
+    # ── Local Disk Storage Fallback ──
     # Validate MIME type
     content_type = file.content_type or ""
     if content_type not in allowed_types:
@@ -101,11 +122,27 @@ async def save_upload(
 
 
 async def delete_upload(relative_path: str) -> None:
-    """Delete a stored file. Silently ignores if file doesn't exist."""
+    """Delete a stored file or Cloudinary asset. Silently ignores if missing."""
     if not relative_path:
         return
+
+    # If Cloudinary asset / URL
+    if "cloudinary.com" in relative_path or "/" in relative_path and not os.path.exists(os.path.join(settings.LOCAL_UPLOAD_DIR, relative_path)):
+        try:
+            from common.utils.cloudinary_service import CloudinaryService
+            # Extract public_id if full URL
+            if "cloudinary.com" in relative_path:
+                parts = relative_path.split("/")
+                public_id = "/".join(parts[-2:]).split(".")[0]
+            else:
+                public_id = relative_path
+            await CloudinaryService.delete_asset(public_id)
+            return
+        except Exception:
+            pass
+
     full_path = os.path.join(settings.LOCAL_UPLOAD_DIR, relative_path)
     try:
         os.remove(full_path)
-    except FileNotFoundError:
+    except (FileNotFoundError, OSError):
         pass

@@ -24,6 +24,7 @@ export const ScheduledDevSheet: React.FC<ScheduledDevSheetProps> = ({
   onClose,
   onSimulated,
 }) => {
+  if (!__DEV__) return null;
   const { theme, isDark } = useTheme();
   const [running, setRunning] = useState<string | null>(null);
 

@@ -200,6 +200,10 @@ export const SupportService = {
    * Developer Mode sandbox simulator
    */
   async simulateDevScenario(scenarioKey: string, ticketId?: string): Promise<any> {
+    if (!__DEV__) {
+      console.warn('[SupportService] simulateDevScenario is disabled in production builds.');
+      return null;
+    }
     try {
       const res = await api.post('/matching/support/dev-simulate', {
         scenario_key: scenarioKey,

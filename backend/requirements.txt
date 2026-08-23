@@ -21,3 +21,4 @@ python-socketio==5.11.4
 razorpay==1.4.1
 shapely==2.0.6
 setuptools
+cloudinary>=1.40.0

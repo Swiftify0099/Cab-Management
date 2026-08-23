@@ -42,6 +42,7 @@ export const RatingDevSheet: React.FC<RatingDevSheetProps> = ({
   onClose,
   onSelectScenario,
 }) => {
+  if (!__DEV__) return null;
   const { theme, isDark } = useTheme();
   const [loadingId, setLoadingId] = useState<string | null>(null);
 

@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException
 
 from common.models.all_models import (
-    User, Driver, DriverStatus,
+    User, Driver, DriverStatus, Vehicle,
     RideRequest, RideRequestStatus, RideCategory,
     RideStop, RideReceipt, DriverEarningLedger, DriverCustomerRating,
     DriverPointWallet, DriverPointTransaction, RideEventLog
@@ -365,8 +365,161 @@ class TripCompletionService:
             "message": "Trip successfully completed! Receipt generated.",
         }
 
+    async def get_customer_ride_receipt(self, customer_user_id: str, ride_id: uuid.UUID) -> Dict[str, Any]:
+        """Returns the immutable ride receipt breakdown for the authenticated customer."""
+        r_res = await self.db.execute(select(RideRequest).where(RideRequest.id == ride_id))
+        ride = r_res.scalar_one_or_none()
+        if not ride:
+            raise HTTPException(status_code=404, detail="Ride request not found")
+
+        if ride.customer_id != uuid.UUID(customer_user_id):
+            raise HTTPException(status_code=403, detail="Unauthorized: User did not participate in this ride")
+
+        receipt_res = await self.db.execute(select(RideReceipt).where(RideReceipt.ride_id == ride_id))
+        receipt = receipt_res.scalar_one_or_none()
+        if not receipt:
+            raise HTTPException(status_code=404, detail="Receipt not found for this ride")
+
+        # Fetch driver details for customer receipt view
+        driver_name = "Driver Partner"
+        driver_rating = 4.9
+        driver_phone_masked = "•••• ••••"
+        vehicle_model = "Cab Vehicle"
+        vehicle_plate = "MH-12-XX-0000"
+
+        if ride.assigned_driver_id:
+            d_res = await self.db.execute(select(Driver).where(Driver.id == ride.assigned_driver_id))
+            driver = d_res.scalar_one_or_none()
+            if driver:
+                driver_name = driver.full_name or "Driver Partner"
+                driver_rating = round(float(driver.rating or 4.9), 1)
+                if driver.phone:
+                    driver_phone_masked = driver.phone[:3] + " •••• ••" + driver.phone[-2:] if len(driver.phone) >= 10 else "•••• ••••"
+                v_res = await self.db.execute(select(Vehicle).where(Vehicle.driver_id == driver.id))
+                veh = v_res.scalar_one_or_none()
+                if veh:
+                    vehicle_model = f"{veh.make} {veh.model}"
+                    vehicle_plate = veh.registration_number
+
+        return {
+            "receipt_number": receipt.receipt_number,
+            "ride_id": str(receipt.ride_id),
+            "pickup_address": ride.pickup_address,
+            "destination_address": ride.destination_address,
+            "base_fare": float(receipt.base_fare),
+            "distance_km": receipt.distance_km,
+            "distance_charge": float(receipt.distance_charge),
+            "duration_min": receipt.duration_min,
+            "time_charge": float(receipt.time_charge),
+            "waiting_charge": float(receipt.waiting_charge),
+            "stops_fee": float(receipt.stops_fee),
+            "tolls_charge": float(receipt.tolls_charge),
+            "parking_charge": float(receipt.parking_charge),
+            "taxes_and_fees": float(receipt.taxes_and_fees),
+            "discount_amount": float(receipt.discount_amount or 0.0),
+            "surge_multiplier": receipt.surge_multiplier,
+            "customer_final_fare": float(receipt.customer_final_fare),
+            "tip_amount": float(receipt.tip_amount or 0.0),
+            "payment_method": receipt.payment_method,
+            "payment_status": receipt.payment_status,
+            "completed_at": receipt.created_at.isoformat() if receipt.created_at else None,
+            "driver": {
+                "id": str(ride.assigned_driver_id) if ride.assigned_driver_id else None,
+                "name": driver_name,
+                "rating": driver_rating,
+                "phone_masked": driver_phone_masked,
+                "vehicle_model": vehicle_model,
+                "vehicle_plate": vehicle_plate,
+            }
+        }
+
+    async def add_driver_tip(
+        self,
+        customer_user_id: str,
+        ride_id: uuid.UUID,
+        tip_amount: float,
+        idempotency_key: Optional[str] = None,
+        payment_method: str = "wallet",
+    ) -> Dict[str, Any]:
+        """
+        Customer adds an optional tip for the driver after ride completion.
+        Posts immutable tip transaction to driver ledger and updates receipt.
+        """
+        if tip_amount <= 0 or tip_amount > 5000:
+            raise HTTPException(status_code=400, detail="Invalid tip amount (Must be between ₹1 and ₹5000)")
+
+        r_res = await self.db.execute(select(RideRequest).where(RideRequest.id == ride_id))
+        ride = r_res.scalar_one_or_none()
+        if not ride:
+            raise HTTPException(status_code=404, detail="Ride request not found")
+
+        if ride.customer_id != uuid.UUID(customer_user_id):
+            raise HTTPException(status_code=403, detail="Unauthorized: User did not participate in this ride")
+
+        if ride.status != RideRequestStatus.COMPLETED:
+            raise HTTPException(status_code=400, detail="Tips can only be added for completed rides")
+
+        if not ride.assigned_driver_id:
+            raise HTTPException(status_code=400, detail="No driver assigned to this ride")
+
+        receipt_res = await self.db.execute(select(RideReceipt).where(RideReceipt.ride_id == ride_id))
+        receipt = receipt_res.scalar_one_or_none()
+        if not receipt:
+            raise HTTPException(status_code=404, detail="Receipt not found for this ride")
+
+        d_res = await self.db.execute(select(Driver).where(Driver.id == ride.assigned_driver_id))
+        driver = d_res.scalar_one_or_none()
+        if not driver:
+            raise HTTPException(status_code=404, detail="Driver profile not found")
+
+        # 1. Update Receipt Tip Amount
+        receipt.tip_amount = (receipt.tip_amount or Decimal("0.00")) + Decimal(str(tip_amount))
+
+        # 2. Post Tip to Driver Earning Ledger (Direct 100% credit to driver, 0% platform fee)
+        today_date = date.today()
+        ledger_tip = DriverEarningLedger(
+            id=uuid.uuid4(),
+            driver_id=driver.id,
+            ride_id=ride.id,
+            entry_type="TIP",
+            amount=Decimal(str(tip_amount)),
+            currency="INR",
+            direction="CREDIT",
+            status="SETTLED",
+            description=f"Passenger Tip for Ride #{ride.id.hex[:6].upper()}",
+            effective_date=today_date,
+            metadata_json={
+                "customer_user_id": customer_user_id,
+                "idempotency_key": idempotency_key,
+                "payment_method": payment_method,
+            },
+        )
+        self.db.add(ledger_tip)
+
+        # 3. Update Driver aggregate wallet & earnings
+        driver.total_earnings = (driver.total_earnings or Decimal("0.00")) + Decimal(str(tip_amount))
+        driver.wallet_balance = (driver.wallet_balance or Decimal("0.00")) + Decimal(str(tip_amount))
+
+        await self.db.commit()
+
+        # 4. Notify Driver in Realtime
+        await _safe_redis_publish("driver:earnings", {
+            "event": "tip:received",
+            "driver_id": str(driver.id),
+            "ride_id": str(ride.id),
+            "tip_amount": tip_amount,
+        })
+
+        return {
+            "success": True,
+            "ride_id": str(ride.id),
+            "tip_amount": tip_amount,
+            "total_tip": float(receipt.tip_amount),
+            "message": f"₹{tip_amount:.2f} tip sent to your driver! Thank you for your generosity.",
+        }
+
     async def get_ride_receipt(self, driver_user_id: str, ride_id: uuid.UUID) -> Dict[str, Any]:
-        """Returns the immutable ride receipt breakdown."""
+        """Returns the immutable ride receipt breakdown for driver."""
         d_res = await self.db.execute(select(Driver).where(Driver.user_id == uuid.UUID(driver_user_id)))
         driver = d_res.scalar_one_or_none()
         if not driver:
@@ -393,11 +546,12 @@ class TripCompletionService:
             "tolls_charge": float(receipt.tolls_charge),
             "parking_charge": float(receipt.parking_charge),
             "taxes_and_fees": float(receipt.taxes_and_fees),
+            "discount_amount": float(receipt.discount_amount or 0.0),
             "surge_multiplier": receipt.surge_multiplier,
             "customer_final_fare": float(receipt.customer_final_fare),
             "platform_commission": float(receipt.platform_commission),
             "driver_net_earning": float(receipt.driver_net_earning),
-            "tip_amount": float(receipt.tip_amount),
+            "tip_amount": float(receipt.tip_amount or 0.0),
             "payment_method": receipt.payment_method,
             "payment_status": receipt.payment_status,
             "created_at": receipt.created_at.isoformat() if receipt.created_at else None,

@@ -1,293 +1,415 @@
 /**
- * Customer App — Activity History (My Trips)
- * Refactored: All hardcoded colors → theme tokens.
- * Components: AppLoader, AppModal, AppCard, AppBadge, AppChip, AppEmptyState, AppButton, AppText.
- * Business logic: UNCHANGED. API calls: UNCHANGED. 12h cancel policy: UNCHANGED.
+ * Customer App — Unified Activity & Scheduled Reservations Hub
+ * Route: /(tabs)/trips
+ * Features 23, 3, 4: One Unified Activity Hub across Rides, Parcels, Hotels, Transport, Rentals, Outstation, Airport.
  */
-import { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect } from 'react'
 import {
-  View, ScrollView, TouchableOpacity, StyleSheet,
-  Alert, RefreshControl, TextInput, StatusBar,
+  View,
+  ScrollView,
+  TouchableOpacity,
+  StyleSheet,
+  RefreshControl,
+  TextInput,
+  StatusBar,
+  ActivityIndicator,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { router } from 'expo-router'
-import { useFocusEffect } from 'expo-router'
-import { Feather, MaterialCommunityIcons } from '@expo/vector-icons'
-import { api } from '../../src/api/client'
+import { router, useFocusEffect } from 'expo-router'
+import { Feather } from '@expo/vector-icons'
+
+import { activityApi } from '../../src/api/client'
+import { useCustomerSocket } from '../../src/hooks/useCustomerSocket'
 import { useTheme } from '../../src/contexts/ThemeContext'
+import { useTranslation } from '../../src/i18n'
 import {
-  AppText, AppLoader, AppModal, AppBadge, AppChip, AppEmptyState, AppButton,
+  AppText,
+  AppBadge,
+  AppCard,
+  AppDivider,
 } from '../../src/components/ui'
 
-const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
-  pending:         { label: 'Pending',        color: '#B45309', bg: '#FFFBEB' },
-  confirmed:       { label: 'Confirmed',       color: '#1D4ED8', bg: '#EFF6FF' },
-  payment_pending: { label: 'Pay Now',         color: '#C2410C', bg: '#FFF7ED' },
-  paid:            { label: 'Paid',            color: '#065F46', bg: '#ECFDF5' },
-  driver_accepted: { label: 'Driver Coming',   color: '#0C4A6E', bg: '#F0F9FF' },
-  started:         { label: 'In Progress',     color: '#166534', bg: '#F0FDF4' },
-  completed:       { label: 'Ride Completed',  color: '#4C1D95', bg: '#F5F3FF' },
-  delivered:       { label: 'Delivered',       color: '#166534', bg: '#F0FDF4' },
-  cancelled:       { label: 'Cancelled',       color: '#991B1B', bg: '#FEF2F2' },
-}
+const SERVICE_CATEGORIES = [
+  { id: 'ALL', label: 'All Services', icon: 'grid' },
+  { id: 'RIDE', label: 'Rides', icon: 'car' },
+  { id: 'PARCEL', label: 'Parcel', icon: 'package' },
+  { id: 'HOTEL', label: 'Hotels', icon: 'home' },
+  { id: 'TRANSPORT', label: 'Transport', icon: 'truck' },
+  { id: 'RENTAL', label: 'Rentals', icon: 'clock' },
+  { id: 'OUTSTATION', label: 'Outstation', icon: 'map-pin' },
+  { id: 'AIRPORT', label: 'Airport', icon: 'navigation' },
+]
 
-const FILTERS = ['Upcoming', 'Completed', 'Cancelled']
+const STATUS_TABS = ['Upcoming', 'Active', 'Completed', 'Cancelled']
 
 export default function TripsTab() {
   const { theme, isDark } = useTheme()
-  const [bookings,      setBookings]      = useState<any[]>([])
-  const [loading,       setLoading]       = useState(true)
-  const [refreshing,    setRefreshing]    = useState(false)
-  const [filter,        setFilter]        = useState('Upcoming')
-  const [cancelModal,   setCancelModal]   = useState<string | null>(null)
-  const [cancelReason,  setCancelReason]  = useState('')
-  const [cancelling,    setCancelling]    = useState(false)
-  const [cancelTarget,  setCancelTarget]  = useState<any>(null)
+  const { t } = useTranslation()
 
-  const load = useCallback(async () => {
+  const [activities, setActivities] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const [selectedCategory, setSelectedCategory] = useState('ALL')
+  const [selectedStatus, setSelectedStatus] = useState('Upcoming')
+  const [searchQuery, setSearchQuery] = useState('')
+
+  // Socket integration for live updates
+  const { onReconnectSyncTrips, reservationDriverAssigned, clearReservationDriverAssigned } = useCustomerSocket()
+
+  const loadActivities = useCallback(async () => {
     try {
-      const res = await api.get('/bookings/my-trips')
-      setBookings(res.data?.data || [])
+      const res = await activityApi.getActivity({
+        category: selectedCategory === 'ALL' ? undefined : selectedCategory,
+        status_filter: selectedStatus.toUpperCase(),
+      })
+      setActivities(res.data?.data || [])
     } catch {
-      setBookings([])
+      // Fallback
+      setActivities([])
     } finally {
-      setLoading(false); setRefreshing(false)
+      setLoading(false)
+      setRefreshing(false)
     }
-  }, [])
+  }, [selectedCategory, selectedStatus])
 
-  useFocusEffect(useCallback(() => { load() }, [load]))
-
-  const onRefresh = () => { setRefreshing(true); load() }
-
-  const checkCancelPolicy = (booking: any) => {
-    const depTime = booking.trip?.departure_time
-    if (!depTime) return { canCancel: true, withinWindow: false }
-    const hoursUntilDep = (new Date(depTime).getTime() - Date.now()) / (1000 * 60 * 60)
-    const withinWindow  = hoursUntilDep <= 12 && hoursUntilDep > 0
-    return { canCancel: true, withinWindow, hoursUntilDep }
-  }
-
-  const openCancelModal = (booking: any) => {
-    const { withinWindow } = checkCancelPolicy(booking)
-    setCancelTarget(booking)
-    if (withinWindow) {
-      Alert.alert(
-        '⚠️ Cancellation Policy',
-        'Your trip departs within 12 hours. A cancellation fee of 20% will be deducted. Remaining amount will be refunded to your wallet.',
-        [
-          { text: 'Go Back', style: 'cancel' },
-          { text: 'Proceed to Cancel', style: 'destructive', onPress: () => setCancelModal(booking.id) },
-        ]
-      )
-    } else {
-      setCancelModal(booking.id)
-    }
-  }
-
-  const handleCancel = async () => {
-    if (!cancelModal || !cancelReason.trim()) return
-    setCancelling(true)
-    try {
-      await api.post(`/bookings/${cancelModal}/cancel`, { reason: cancelReason })
-      setCancelModal(null); setCancelReason(''); setCancelTarget(null)
-      load()
-      Alert.alert('✅ Cancelled', 'Your booking has been cancelled. Any refund will appear in your wallet within 24h.')
-    } catch (e: any) {
-      Alert.alert('Error', e?.response?.data?.detail || 'Cannot cancel this booking')
-    } finally { setCancelling(false) }
-  }
-
-  const filteredBookings = bookings.filter(b => {
-    if (filter === 'Upcoming')  return ['pending', 'confirmed', 'paid', 'driver_accepted', 'started'].includes(b.status)
-    if (filter === 'Completed') return ['completed', 'delivered'].includes(b.status)
-    if (filter === 'Cancelled') return b.status === 'cancelled'
-    return true
-  })
-
-  if (loading) return (
-    <AppLoader fullScreen />
+  useFocusEffect(
+    useCallback(() => {
+      loadActivities()
+    }, [loadActivities])
   )
 
+  useEffect(() => {
+    onReconnectSyncTrips(() => {
+      loadActivities()
+    })
+  }, [onReconnectSyncTrips, loadActivities])
+
+  useEffect(() => {
+    if (!reservationDriverAssigned) return
+    loadActivities()
+    clearReservationDriverAssigned()
+  }, [reservationDriverAssigned, clearReservationDriverAssigned, loadActivities])
+
+  const getStatusBadge = (statusGroup: string, statusLabel: string) => {
+    if (statusGroup === 'active') return <AppBadge label={statusLabel} variant="success" size="sm" />
+    if (statusGroup === 'upcoming') return <AppBadge label={statusLabel} variant="info" size="sm" />
+    if (statusGroup === 'cancelled') return <AppBadge label={statusLabel} variant="error" size="sm" />
+    return <AppBadge label={statusLabel} variant="default" size="sm" />
+  }
+
+  const filteredItems = activities.filter((it) => {
+    if (!searchQuery.trim()) return true
+    const q = searchQuery.toLowerCase()
+    return (
+      it.title?.toLowerCase().includes(q) ||
+      it.subtitle?.toLowerCase().includes(q) ||
+      it.service_name?.toLowerCase().includes(q)
+    )
+  })
+
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.backgroundAlt }]}>
-      <StatusBar
-        barStyle={isDark ? 'light-content' : 'dark-content'}
-        backgroundColor={theme.colors.backgroundAlt}
-      />
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
       {/* Header */}
-      <View style={[styles.header, { backgroundColor: theme.colors.backgroundAlt }]}>
-        <AppText variant="display" bold style={styles.pageTitle}>Activity History</AppText>
+      <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
+        <View style={{ flex: 1 }}>
+          <AppText variant="title" bold style={{ fontSize: 22 }}>
+            Activity & History
+          </AppText>
+          <AppText variant="caption" color="secondary">
+            Unified bookings, orders, stays & rentals
+          </AppText>
+        </View>
+
+        <TouchableOpacity
+          style={[styles.headerActionBtn, { backgroundColor: isDark ? '#1E293B' : '#F1F5F9' }]}
+          onPress={() => router.push('/support' as any)}
+        >
+          <Feather name="help-circle" size={20} color={theme.colors.primary} />
+        </TouchableOpacity>
       </View>
 
-      {/* Segmented Filter */}
-      <View style={styles.segmentWrap}>
-        <View style={[styles.segmentContainer, { backgroundColor: theme.colors.border }]}>
-          {FILTERS.map(f => (
+      {/* Search Input */}
+      <View style={[styles.searchContainer, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+        <Feather name="search" size={18} color="#94A3B8" style={{ marginRight: 8 }} />
+        <TextInput
+          style={[styles.searchInput, { color: theme.colors.textPrimary }]}
+          placeholder="Search by destination, parcel, or hotel..."
+          placeholderTextColor="#94A3B8"
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+        {searchQuery.length > 0 && (
+          <TouchableOpacity onPress={() => setSearchQuery('')}>
+            <Feather name="x" size={16} color="#94A3B8" />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Service Category Pills */}
+      <View style={{ maxHeight: 44, marginVertical: 6 }}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}>
+          {SERVICE_CATEGORIES.map((cat) => {
+            const isSelected = selectedCategory === cat.id
+            return (
+              <TouchableOpacity
+                key={cat.id}
+                style={[
+                  styles.categoryPill,
+                  {
+                    backgroundColor: isSelected ? theme.colors.primary : theme.colors.surface,
+                    borderColor: isSelected ? theme.colors.primary : theme.colors.border,
+                  },
+                ]}
+                onPress={() => setSelectedCategory(cat.id)}
+              >
+                <Feather
+                  name={cat.icon as any}
+                  size={14}
+                  color={isSelected ? '#FFF' : theme.colors.textSecondary}
+                  style={{ marginRight: 6 }}
+                />
+                <AppText
+                  variant="caption"
+                  style={{
+                    color: isSelected ? '#FFF' : theme.colors.textPrimary,
+                  }}
+                  bold={isSelected}
+                >
+                  {cat.label}
+                </AppText>
+              </TouchableOpacity>
+            )
+          })}
+        </ScrollView>
+      </View>
+
+      {/* Status Segmented Tabs */}
+      <View style={[styles.statusTabsWrapper, { backgroundColor: isDark ? '#1E293B' : '#E2E8F0' }]}>
+        {STATUS_TABS.map((tab) => {
+          const isSelected = selectedStatus === tab
+          return (
             <TouchableOpacity
-              key={f}
-              onPress={() => setFilter(f)}
+              key={tab}
               style={[
-                styles.segmentBtn,
-                filter === f && [styles.segmentBtnActive, { shadowColor: theme.colors.primary }],
+                styles.statusTabBtn,
+                { backgroundColor: isSelected ? theme.colors.surface : 'transparent' },
               ]}
+              onPress={() => setSelectedStatus(tab)}
             >
               <AppText
                 variant="caption"
-                semibold={filter !== f}
-                bold={filter === f}
-                color={filter === f ? 'primary' : 'secondary'}
+                style={{
+                  color: isSelected ? theme.colors.primary : theme.colors.textSecondary,
+                }}
+                bold={isSelected}
               >
-                {f}
+                {tab}
               </AppText>
             </TouchableOpacity>
-          ))}
-        </View>
+          )
+        })}
       </View>
 
-      <ScrollView
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary} />}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {filteredBookings.length === 0 ? (
-          <AppEmptyState
-            icon="🗺️"
-            title="No trips here yet"
-            subtitle="Ready for your next adventure?"
-            action={{ label: 'Book a Ride →', onPress: () => router.push('/book/cab' as any) }}
-          />
-        ) : (
-          filteredBookings.map(booking => {
-            const cfg       = STATUS_CONFIG[booking.status] || STATUS_CONFIG.pending
-            const dep       = booking.trip?.departure_time ? new Date(booking.trip.departure_time) : null
-            const canCancel = ['pending', 'confirmed', 'payment_pending'].includes(booking.status)
-            const isParcel  = booking.has_parcel || booking.type === 'parcel'
-
-            return (
-              <View key={booking.id} style={[styles.card, {
-                backgroundColor: theme.colors.surface,
-                borderColor:     theme.colors.border,
-                shadowColor:     isDark ? '#000' : '#94A3B8',
-              }]}>
-                {/* Card Top */}
-                <View style={styles.cardTop}>
-                  <View style={[styles.cardIconBox, { backgroundColor: theme.colors.border }]}>
-                    {isParcel
-                      ? <Feather name="box" size={20} color={theme.colors.textPrimary} />
-                      : <MaterialCommunityIcons name="car-outline" size={20} color={theme.colors.textPrimary} />
-                    }
+      {/* Main Content Area */}
+      {loading ? (
+        <View style={styles.centerContainer}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+          <AppText style={{ marginTop: 12 }} color="secondary">
+            Loading your activities...
+          </AppText>
+        </View>
+      ) : filteredItems.length === 0 ? (
+        <ScrollView
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadActivities(); }} />}
+          contentContainerStyle={styles.centerContainer}
+        >
+          <Feather name="calendar" size={48} color={theme.colors.textSecondary} style={{ opacity: 0.5, marginBottom: 12 }} />
+          <AppText variant="h3">
+            No {selectedStatus.toLowerCase()} activities
+          </AppText>
+          <AppText variant="caption" color="secondary" style={{ textAlign: 'center', marginTop: 4, paddingHorizontal: 32 }}>
+            When you book rides, parcels, stays, or rentals, your orders will appear here with live tracking & receipts.
+          </AppText>
+        </ScrollView>
+      ) : (
+        <ScrollView
+          style={styles.listContainer}
+          contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadActivities(); }} />}
+        >
+          {filteredItems.map((item) => (
+            <AppCard
+              key={`${item.reference_type}-${item.id}`}
+              style={styles.activityCard}
+              onPress={() => {
+                if (item.deep_link) {
+                  router.push(item.deep_link as any)
+                } else {
+                  router.push(`/activity/${item.id}?reference_type=${item.reference_type}&reference_id=${item.reference_id}` as any)
+                }
+              }}
+            >
+              {/* Top Row: Service Badge & Status */}
+              <View style={styles.cardHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <View style={[styles.serviceIconBox, { backgroundColor: theme.colors.primary + '15' }]}>
+                    <Feather name={item.icon as any} size={16} color={theme.colors.primary} />
                   </View>
-                  <AppText variant="subtitle" style={{ flex: 1 }}>{isParcel ? 'Parcel' : 'Ride'}</AppText>
-                  <AppBadge label={cfg.label} color={cfg.color} bg={cfg.bg} />
+                  <AppText variant="caption" style={{ marginLeft: 8 }} bold>
+                    {item.service_name}
+                  </AppText>
+                </View>
+                {getStatusBadge(item.status_group, item.status_label)}
+              </View>
+
+              <View style={{ marginVertical: 8 }}>
+                <AppDivider />
+              </View>
+
+              {/* Title & Route */}
+              <AppText variant="body" bold style={{ fontSize: 15 }} numberOfLines={1}>
+                {item.title}
+              </AppText>
+              <AppText variant="caption" color="secondary" style={{ marginTop: 2 }} numberOfLines={1}>
+                {item.subtitle}
+              </AppText>
+
+              {/* Bottom Row: Amount & Action */}
+              <View style={styles.cardFooter}>
+                <View>
+                  <AppText variant="caption" color="secondary">
+                    Total Fare
+                  </AppText>
+                  <AppText variant="body" bold style={{ color: theme.colors.textPrimary }}>
+                    {item.currency}{item.amount.toFixed(2)}
+                  </AppText>
                 </View>
 
-                <AppText variant="h3" bold style={styles.route}>
-                  {booking.trip?.pickup_city} to {booking.trip?.destination_city}
-                </AppText>
-                {dep && (
-                  <AppText variant="bodyS" color="secondary" style={styles.depTime}>
-                    {dep.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })},{' '}
-                    {dep.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-                  </AppText>
-                )}
-                <AppText variant="title" semibold>₹{booking.total_fare}</AppText>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, { borderColor: theme.colors.border }]}
+                    onPress={() => router.push(`/support/new-ticket?ref_type=${item.reference_type}&ref_id=${item.reference_id}` as any)}
+                  >
+                    <Feather name="help-circle" size={14} color={theme.colors.textSecondary} style={{ marginRight: 4 }} />
+                    <AppText variant="caption" color="secondary" semibold>
+                      Get Help
+                    </AppText>
+                  </TouchableOpacity>
 
-                {/* Actions */}
-                {booking.status === 'payment_pending' && (
-                  <AppButton
-                    variant="primary"
-                    style={styles.actionBtn}
-                    onPress={() => router.push(`/payment?bookingId=${booking.id}` as any)}
+                  <TouchableOpacity
+                    style={[styles.primaryActionBtn, { backgroundColor: theme.colors.primary }]}
+                    onPress={() => {
+                      if (item.deep_link) {
+                        router.push(item.deep_link as any)
+                      }
+                    }}
                   >
-                    💳 Pay ₹{booking.total_fare} Now
-                  </AppButton>
-                )}
-                {canCancel && (
-                  <AppButton
-                    variant="outline"
-                    style={[styles.actionBtn, { borderColor: theme.colors.error }]}
-                    onPress={() => openCancelModal(booking)}
-                  >
-                    Cancel Booking
-                  </AppButton>
-                )}
+                    <AppText variant="caption" style={{ color: '#FFF' }} bold>
+                      {item.status_group === 'active' ? 'Track Live' : 'View Details'}
+                    </AppText>
+                  </TouchableOpacity>
+                </View>
               </View>
-            )
-          })
-        )}
-        <View style={{ height: 24 }} />
-      </ScrollView>
-
-      {/* Cancel Modal */}
-      <AppModal
-        visible={!!cancelModal}
-        onClose={() => { setCancelModal(null); setCancelReason('') }}
-        title="Cancel Booking"
-        subtitle="Please provide a reason"
-      >
-        <TextInput
-          style={[styles.reasonInput, {
-            borderColor:     theme.colors.border,
-            color:           theme.colors.textPrimary,
-            backgroundColor: theme.colors.inputBg,
-          }]}
-          multiline
-          numberOfLines={3}
-          placeholder="e.g. Change of plans..."
-          placeholderTextColor={theme.colors.placeholder}
-          value={cancelReason}
-          onChangeText={setCancelReason}
-        />
-        <View style={styles.modalBtns}>
-          <AppButton
-            variant="outline"
-            style={styles.modalBtn}
-            onPress={() => { setCancelModal(null); setCancelReason('') }}
-          >
-            Keep
-          </AppButton>
-          <AppButton
-            variant="danger"
-            style={styles.modalBtn}
-            loading={cancelling}
-            disabled={!cancelReason.trim()}
-            onPress={handleCancel}
-          >
-            Confirm Cancel
-          </AppButton>
-        </View>
-      </AppModal>
+            </AppCard>
+          ))}
+        </ScrollView>
+      )}
     </SafeAreaView>
   )
 }
 
 const styles = StyleSheet.create({
-  container:    { flex: 1 },
-  header:       { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 4 },
-  pageTitle:    { letterSpacing: -0.5 },
-
-  segmentWrap:  { paddingHorizontal: 20, marginBottom: 20 },
-  segmentContainer: { borderRadius: 14, padding: 4, flexDirection: 'row' },
-  segmentBtn:   { flex: 1, paddingVertical: 9, alignItems: 'center', borderRadius: 10 },
-  segmentBtnActive: { backgroundColor: 'rgba(59,130,246,0.1)', shadowOpacity: 0.15, shadowRadius: 4, elevation: 2 },
-
-  scrollContent:{ paddingHorizontal: 20, paddingBottom: 40 },
-
-  card: {
-    borderRadius: 20, padding: 20, marginBottom: 16,
-    shadowOpacity: 0.12, shadowRadius: 8, elevation: 2, borderWidth: 1,
+  container: { flex: 1 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
   },
-  cardTop:      { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-  cardIconBox:  { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
-  route:        { marginBottom: 4, lineHeight: 28 },
-  depTime:      { marginBottom: 8 },
-  actionBtn:    { marginTop: 10 },
-
-  reasonInput: {
-    borderWidth: 1.5, borderRadius: 14, padding: 14,
-    fontSize: 14, marginBottom: 16, minHeight: 80, textAlignVertical: 'top',
+  headerActionBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  modalBtns:    { flexDirection: 'row', gap: 10 },
-  modalBtn:     { flex: 1 },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 16,
+    marginTop: 10,
+    paddingHorizontal: 12,
+    height: 42,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  searchInput: { flex: 1, fontSize: 14 },
+  categoryPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  statusTabsWrapper: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginTop: 6,
+    marginBottom: 4,
+    padding: 4,
+    borderRadius: 10,
+  },
+  statusTabBtn: {
+    flex: 1,
+    paddingVertical: 6,
+    alignItems: 'center',
+    borderRadius: 8,
+  },
+  centerContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 60,
+  },
+  listContainer: { flex: 1 },
+  activityCard: {
+    padding: 14,
+    borderRadius: 14,
+    marginBottom: 12,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  serviceIconBox: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  actionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  primaryActionBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
 })

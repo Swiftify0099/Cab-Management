@@ -262,6 +262,10 @@ CRITICAL PRIVACY DIRECTIVE:
    * Runs sandbox simulation scenario in Developer Mode
    */
   async simulateDevScenario(scenario_key: string): Promise<any> {
+    if (!__DEV__) {
+      console.warn('[AISmartDriverService] simulateDevScenario is disabled in production builds.');
+      return null;
+    }
     try {
       const res = await api.post('/matching/ai/dev-simulate', { scenario_key });
       return res.data;

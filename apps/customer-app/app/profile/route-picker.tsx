@@ -1,194 +1,222 @@
 /**
- * Route Picker — Customer App
- * /profile/route-picker
- *
- * 3-step flow:
- *   Step 1 (pickup)  → user searches/drags map to set Pickup location
- *   Step 2 (drop)    → user searches/drags map to set Drop location
- *   Step 3 (name)    → user names the route and saves
+ * Customer App — Saved Route 3-Step Wizard
+ * Route: /profile/route-picker
+ * Feature 2: Customer Address & Location Management.
  */
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react'
 import {
-  View, Text, StyleSheet, TouchableOpacity, TextInput,
-  ActivityIndicator, Alert, FlatList, Keyboard, Dimensions,
-} from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Feather, Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
-import MapView, { PROVIDER_GOOGLE, Region } from 'react-native-maps';
-import * as Location from 'expo-location';
-import { routeApi } from '../../src/api/client';
+  View,
+  StyleSheet,
+  TouchableOpacity,
+  TextInput,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Keyboard,
+  Dimensions,
+  StatusBar,
+} from 'react-native'
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
+import { Feather, Ionicons } from '@expo/vector-icons'
+import { router } from 'expo-router'
+import MapView, { PROVIDER_GOOGLE, Region } from 'react-native-maps'
+import * as Location from 'expo-location'
+import { routeApi } from '../../src/api/client'
+import { useTheme } from '../../src/contexts/ThemeContext'
+import { useTranslation } from '../../src/i18n'
+import {
+  AppText,
+  AppButton,
+  AppCard,
+  AppDivider,
+  AppBadge,
+} from '../../src/components/ui'
 
-const GOOGLE_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || '';
-const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
+const GOOGLE_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || ''
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window')
 
-type StepType = 'pickup' | 'drop' | 'name';
+type StepType = 'pickup' | 'drop' | 'name'
 
 interface LocationPoint {
-  address: string;
-  label: string;
-  lat: number;
-  lon: number;
+  address: string
+  label: string
+  lat: number
+  lon: number
 }
 
 export default function RoutePickerScreen() {
-  const insets = useSafeAreaInsets();
-  const mapRef = useRef<MapView>(null);
+  const { theme, isDark } = useTheme()
+  const { t } = useTranslation()
+  const insets = useSafeAreaInsets()
+  const mapRef = useRef<MapView>(null)
 
-  const [step, setStep] = useState<StepType>('pickup');
-  const [permGranted, setPermGranted] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [step, setStep] = useState<StepType>('pickup')
+  const [permGranted, setPermGranted] = useState(false)
+  const [saving, setSaving] = useState(false)
 
   // Map state
   const [region, setRegion] = useState<Region>({
-    latitude: 19.0760,
-    longitude: 72.8777,
+    latitude: 18.5204,
+    longitude: 73.8567,
     latitudeDelta: 0.01,
     longitudeDelta: 0.01,
-  });
-  const [mapReady, setMapReady] = useState(false);
-  const [loadingAddress, setLoadingAddress] = useState(false);
-  const [addressText, setAddressText] = useState('');
+  })
+  const [loadingAddress, setLoadingAddress] = useState(false)
+  const [addressText, setAddressText] = useState('')
 
   // Search
-  const [searchQuery, setSearchQuery] = useState('');
-  const [predictions, setPredictions] = useState<any[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('')
+  const [predictions, setPredictions] = useState<any[]>([])
+  const [isSearching, setIsSearching] = useState(false)
 
   // Saved points
-  const [pickup, setPickup] = useState<LocationPoint | null>(null);
-  const [drop, setDrop] = useState<LocationPoint | null>(null);
+  const [pickup, setPickup] = useState<LocationPoint | null>(null)
+  const [drop, setDrop] = useState<LocationPoint | null>(null)
+  const [routeName, setRouteName] = useState('')
 
-  // Name step
-  const [routeName, setRouteName] = useState('');
-
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
-    (async () => {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status === 'granted') {
-        setPermGranted(true);
-        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-        const newRegion: Region = {
-          latitude: loc.coords.latitude,
-          longitude: loc.coords.longitude,
-          latitudeDelta: 0.01,
-          longitudeDelta: 0.01,
-        };
-        setRegion(newRegion);
-        fetchAddressFromCoords(loc.coords.latitude, loc.coords.longitude);
+    ;(async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync()
+        if (status === 'granted') {
+          setPermGranted(true)
+          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
+          const newRegion: Region = {
+            latitude: loc.coords.latitude,
+            longitude: loc.coords.longitude,
+            latitudeDelta: 0.01,
+            longitudeDelta: 0.01,
+          }
+          setRegion(newRegion)
+          fetchAddressFromCoords(loc.coords.latitude, loc.coords.longitude)
+        }
+      } catch (e) {
+        console.warn('Location error', e)
       }
-    })();
-  }, []);
+    })()
+  }, [])
 
-  // Reset address when step changes to drop
   useEffect(() => {
     if (step === 'drop') {
-      setAddressText('');
-      setSearchQuery('');
-      setPredictions([]);
+      setAddressText('')
+      setSearchQuery('')
+      setPredictions([])
     }
-  }, [step]);
+  }, [step])
 
   const fetchAddressFromCoords = async (lat: number, lng: number) => {
-    setLoadingAddress(true);
+    setLoadingAddress(true)
     try {
       if (GOOGLE_API_KEY) {
         const res = await fetch(
           `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_API_KEY}`
-        );
-        const data = await res.json();
+        )
+        const data = await res.json()
         if (data.results?.length > 0) {
-          setAddressText(data.results[0].formatted_address);
-          return;
+          setAddressText(data.results[0].formatted_address)
+          return
         }
       }
-      const places = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
+      const places = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng })
       if (places.length > 0) {
-        const p = places[0];
-        const parts = [p.name, p.street, p.district, p.city, p.region, p.country].filter(Boolean);
-        setAddressText(parts.join(', '));
+        const p = places[0]
+        const parts = [p.name, p.street, p.district, p.city, p.region, p.country].filter(Boolean)
+        setAddressText(parts.join(', '))
       }
-    } catch (e) {
-      console.warn('[RoutePicker] Geocode error:', e);
+    } catch {
+      // Fallback
     } finally {
-      setLoadingAddress(false);
+      setLoadingAddress(false)
     }
-  };
+  }
 
   const onRegionChangeComplete = (newRegion: Region) => {
-    setRegion(newRegion);
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    setRegion(newRegion)
+    if (timeoutRef.current) clearTimeout(timeoutRef.current)
     timeoutRef.current = setTimeout(() => {
-      fetchAddressFromCoords(newRegion.latitude, newRegion.longitude);
-    }, 800);
-  };
+      fetchAddressFromCoords(newRegion.latitude, newRegion.longitude)
+    }, 700)
+  }
 
   const handleSearchChange = (text: string) => {
-    setSearchQuery(text);
-    if (!text.trim()) { setPredictions([]); return; }
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    setSearchQuery(text)
+    if (!text.trim()) {
+      setPredictions([])
+      return
+    }
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current)
     searchTimeoutRef.current = setTimeout(async () => {
-      if (!GOOGLE_API_KEY) return;
+      if (!GOOGLE_API_KEY) return
       try {
         const res = await fetch(
-          `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(text)}&key=${GOOGLE_API_KEY}&components=country:in`
-        );
-        const data = await res.json();
-        if (data.status === 'OK') setPredictions(data.predictions);
-      } catch (e) { console.warn('Autocomplete error', e); }
-    }, 500);
-  };
+          `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(
+            text
+          )}&key=${GOOGLE_API_KEY}&components=country:in`
+        )
+        const data = await res.json()
+        if (data.status === 'OK') setPredictions(data.predictions)
+      } catch (e) {
+        console.warn('Autocomplete error', e)
+      }
+    }, 400)
+  }
 
   const handleSelectPrediction = async (placeId: string, description: string) => {
-    Keyboard.dismiss();
-    setSearchQuery('');
-    setPredictions([]);
-    setIsSearching(true);
+    Keyboard.dismiss()
+    setSearchQuery('')
+    setPredictions([])
+    setIsSearching(true)
     try {
-      const res = await fetch(
-        `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&key=${GOOGLE_API_KEY}`
-      );
-      const data = await res.json();
-      if (data.status === 'OK' && data.result?.geometry?.location) {
-        const { lat, lng } = data.result.geometry.location;
-        const newRegion = { latitude: lat, longitude: lng, latitudeDelta: 0.01, longitudeDelta: 0.01 };
-        setRegion(newRegion);
-        mapRef.current?.animateToRegion(newRegion, 800);
-        setAddressText(data.result.formatted_address || description);
+      if (GOOGLE_API_KEY) {
+        const res = await fetch(
+          `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&key=${GOOGLE_API_KEY}`
+        )
+        const data = await res.json()
+        if (data.status === 'OK' && data.result?.geometry?.location) {
+          const { lat, lng } = data.result.geometry.location
+          const newRegion = { latitude: lat, longitude: lng, latitudeDelta: 0.01, longitudeDelta: 0.01 }
+          setRegion(newRegion)
+          mapRef.current?.animateToRegion(newRegion, 800)
+          setAddressText(data.result.formatted_address || description)
+          return
+        }
       }
-    } catch (e) { console.warn('Place details error', e); }
-    finally { setIsSearching(false); }
-  };
+      setAddressText(description)
+    } catch {
+      setAddressText(description)
+    } finally {
+      setIsSearching(false)
+    }
+  }
 
   const handleConfirmPoint = () => {
     if (!addressText) {
-      Alert.alert('No location', 'Please drag the map or search a location first.');
-      return;
+      Alert.alert('Missing Location', 'Please select a location on the map first.')
+      return
     }
     if (step === 'pickup') {
-      setPickup({ address: addressText, label: 'Pickup', lat: region.latitude, lon: region.longitude });
-      // Auto-generate route name suggestion
-      const city = addressText.split(',')[0]?.trim() || 'From';
-      setRouteName(city + ' → ');
-      setStep('drop');
+      setPickup({ address: addressText, label: 'Pickup', lat: region.latitude, lon: region.longitude })
+      const city = addressText.split(',')[0]?.trim() || 'From'
+      setRouteName(city + ' → ')
+      setStep('drop')
     } else if (step === 'drop') {
-      setDrop({ address: addressText, label: 'Drop', lat: region.latitude, lon: region.longitude });
-      const city = addressText.split(',')[0]?.trim() || 'To';
-      setRouteName(prev => prev + city);
-      setStep('name');
+      setDrop({ address: addressText, label: 'Drop', lat: region.latitude, lon: region.longitude })
+      const city = addressText.split(',')[0]?.trim() || 'To'
+      setRouteName((prev) => prev + city)
+      setStep('name')
     }
-  };
+  }
 
   const handleSaveRoute = async () => {
-    if (!pickup || !drop) return;
+    if (!pickup || !drop) return
     if (!routeName.trim()) {
-      Alert.alert('Name required', 'Please give this route a name.');
-      return;
+      Alert.alert('Route Name Required', 'Please enter a name for this saved route.')
+      return
     }
-    setSaving(true);
+    setSaving(true)
     try {
       await routeApi.addRoute({
         route_name: routeName.trim(),
@@ -200,87 +228,101 @@ export default function RoutePickerScreen() {
         drop_address: drop.address,
         drop_lat: drop.lat,
         drop_lon: drop.lon,
-      });
-      Alert.alert('Route Saved! 🎉', `"${routeName.trim()}" has been saved.`, [
+      })
+      Alert.alert(t('common.success', 'Success'), `"${routeName.trim()}" has been saved!`, [
         { text: 'OK', onPress: () => router.back() },
-      ]);
+      ])
     } catch (e: any) {
-      Alert.alert('Error', e?.response?.data?.detail || 'Failed to save route. Please try again.');
+      Alert.alert(t('common.error', 'Error'), e?.response?.data?.detail || 'Failed to save route.')
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
-  };
+  }
 
-  // ── STEP 3: Name the route ──
+  // ── STEP 3: Route Name & Confirmation ──
   if (step === 'name') {
     return (
-      <SafeAreaView style={styles.detailsRoot}>
-        <View style={styles.header}>
+      <SafeAreaView style={[styles.detailsRoot, { backgroundColor: theme.colors.backgroundAlt }]} edges={['top']}>
+        <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+        <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
           <TouchableOpacity onPress={() => setStep('drop')} style={styles.backBtn}>
-            <Feather name="arrow-left" size={24} color="#0F172A" />
+            <Feather name="arrow-left" size={24} color={theme.colors.textPrimary} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Name Your Route</Text>
+          <AppText variant="h3" bold style={styles.headerTitle}>
+            Name Your Saved Route
+          </AppText>
+          <View style={{ width: 40 }} />
         </View>
 
-        {/* Route Summary */}
-        <View style={styles.routeSummary}>
-          <View style={styles.routePoint}>
-            <View style={[styles.routeDot, { backgroundColor: '#10B981' }]} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.routePointLabel}>PICKUP</Text>
-              <Text style={styles.routePointAddress} numberOfLines={2}>{pickup?.address}</Text>
+        <View style={{ padding: 20, flex: 1 }}>
+          {/* Route Connection Card */}
+          <AppCard style={styles.routeSummaryCard}>
+            <View style={styles.routePoint}>
+              <View style={[styles.routeDot, { backgroundColor: theme.colors.success }]} />
+              <View style={{ flex: 1 }}>
+                <AppText variant="label" color="secondary">PICKUP POINT</AppText>
+                <AppText variant="body" bold numberOfLines={2} style={{ marginTop: 2 }}>{pickup?.address}</AppText>
+              </View>
             </View>
-          </View>
-          <View style={styles.routeLine} />
-          <View style={styles.routePoint}>
-            <View style={[styles.routeDot, { backgroundColor: '#EF4444' }]} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.routePointLabel}>DROP</Text>
-              <Text style={styles.routePointAddress} numberOfLines={2}>{drop?.address}</Text>
-            </View>
-          </View>
-        </View>
 
-        <View style={styles.formSection}>
-          <Text style={styles.fieldLabel}>Route Name</Text>
+            <View style={[styles.routeLine, { backgroundColor: theme.colors.border }]} />
+
+            <View style={styles.routePoint}>
+              <View style={[styles.routeDot, { backgroundColor: theme.colors.error }]} />
+              <View style={{ flex: 1 }}>
+                <AppText variant="label" color="secondary">DROP DESTINATION</AppText>
+                <AppText variant="body" bold numberOfLines={2} style={{ marginTop: 2 }}>{drop?.address}</AppText>
+              </View>
+            </View>
+          </AppCard>
+
+          {/* Name Field */}
+          <AppText variant="label" color="secondary" style={styles.fieldLabel}>
+            Route Nickname *
+          </AppText>
           <TextInput
-            style={styles.routeNameInput}
-            placeholder="e.g. Home → Office"
-            placeholderTextColor="#94A3B8"
+            style={[
+              styles.input,
+              {
+                backgroundColor: theme.colors.surface,
+                borderColor: theme.colors.border,
+                color: theme.colors.textPrimary,
+              },
+            ]}
+            placeholder="e.g. Daily Commute, Home to Office"
+            placeholderTextColor={theme.colors.placeholder}
             value={routeName}
             onChangeText={setRouteName}
             autoFocus
           />
-          <Text style={styles.hint}>This name will appear as a quick-select chip when booking a cab.</Text>
-        </View>
+          <AppText variant="small" color="muted" style={{ marginTop: 8 }}>
+            This saved route will appear as a 1-tap shortcut on your home booking screen.
+          </AppText>
 
-        <View style={styles.footer}>
-          <TouchableOpacity
-            style={[styles.saveBtn, saving && { opacity: 0.6 }]}
-            onPress={handleSaveRoute}
-            disabled={saving}
-          >
-            {saving
-              ? <ActivityIndicator color="#fff" />
-              : <>
-                  <Ionicons name="checkmark-circle" size={20} color="#fff" style={{ marginRight: 8 }} />
-                  <Text style={styles.saveBtnText}>Save Route</Text>
-                </>
-            }
-          </TouchableOpacity>
+          <View style={{ marginTop: 'auto', marginBottom: 20 }}>
+            <AppButton
+              onPress={handleSaveRoute}
+              loading={saving}
+              variant="primary"
+            >
+              Save Favorite Route
+            </AppButton>
+          </View>
         </View>
       </SafeAreaView>
-    );
+    )
   }
 
-  // ── STEP 1 & 2: Map picker ──
-  const isPickup = step === 'pickup';
-  const accentColor = isPickup ? '#10B981' : '#EF4444';
-  const stepLabel = isPickup ? 'Set Pickup Location' : 'Set Drop Location';
-  const stepNum = isPickup ? '1/2' : '2/2';
+  // ── STEP 1 & 2: Map Picker (Pickup or Drop) ──
+  const isPickup = step === 'pickup'
+  const accentColor = isPickup ? theme.colors.success : theme.colors.error
+  const stepLabel = isPickup ? 'Step 1: Set Pickup Location' : 'Step 2: Set Drop Location'
+  const stepNum = isPickup ? '1 / 2' : '2 / 2'
 
   return (
     <View style={{ width: SCREEN_W, height: SCREEN_H, backgroundColor: '#E5E5E5' }}>
+      <StatusBar barStyle="dark-content" />
+
       {/* Map */}
       <MapView
         ref={mapRef}
@@ -290,75 +332,85 @@ export default function RoutePickerScreen() {
         onRegionChangeComplete={onRegionChangeComplete}
         showsUserLocation={permGranted}
         showsMyLocationButton={false}
-        onMapReady={() => setMapReady(true)}
         zoomEnabled
         scrollEnabled
         pitchEnabled={false}
         rotateEnabled={false}
       />
 
-      {/* Center Pin */}
+      {/* Center Pin Indicator */}
       <View
-        style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center', paddingBottom: 40 }]}
+        style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center', paddingBottom: 44 }]}
         pointerEvents="none"
       >
         <View style={[styles.pinBubble, { backgroundColor: accentColor }]}>
-          <Text style={styles.pinText}>{isPickup ? '📍 Pickup' : '🏁 Drop'}</Text>
+          <AppText variant="small" bold color="white">
+            {isPickup ? '📍 Pickup' : '🏁 Drop'}
+          </AppText>
         </View>
-        <Ionicons name="location" size={48} color={accentColor} />
-        <View style={[styles.pinShadow]} />
+        <Ionicons name="location" size={46} color={accentColor} />
+        <View style={styles.pinShadow} />
       </View>
 
-      {/* Header + Search */}
+      {/* Header Bar */}
       <View style={[styles.mapHeaderWrap, { paddingTop: insets.top + 8 }]}>
-        {/* Step indicator */}
         <View style={styles.stepRow}>
-          <TouchableOpacity style={styles.mapBackBtn} onPress={() => {
-            if (step === 'drop') setStep('pickup');
-            else router.back();
-          }}>
-            <Feather name="arrow-left" size={22} color="#0F172A" />
+          <TouchableOpacity
+            style={[styles.mapBackBtn, { backgroundColor: theme.colors.surface }]}
+            onPress={() => {
+              if (step === 'drop') setStep('pickup')
+              else router.back()
+            }}
+          >
+            <Feather name="arrow-left" size={22} color={theme.colors.textPrimary} />
           </TouchableOpacity>
           <View style={[styles.stepBadge, { backgroundColor: accentColor }]}>
-            <Text style={styles.stepBadgeText}>{stepNum}</Text>
+            <AppText variant="caption" bold color="white">{stepNum}</AppText>
           </View>
-          <Text style={styles.stepTitle}>{stepLabel}</Text>
+          <AppText variant="body" bold color="white" style={styles.stepTitleShadow}>
+            {stepLabel}
+          </AppText>
         </View>
 
-        {/* Search Box */}
-        <View style={styles.mapSearchBox}>
-          <Feather name="search" size={18} color="#64748B" />
+        {/* Search Input */}
+        <View style={[styles.mapSearchBox, { backgroundColor: theme.colors.surface }]}>
+          <Feather name="search" size={18} color={theme.colors.textMuted} />
           <TextInput
-            style={styles.mapSearchInput}
+            style={[styles.mapSearchInput, { color: theme.colors.textPrimary }]}
             placeholder={`Search ${isPickup ? 'pickup' : 'drop'} location...`}
             value={searchQuery}
             onChangeText={handleSearchChange}
-            placeholderTextColor="#94A3B8"
+            placeholderTextColor={theme.colors.placeholder}
           />
           {isSearching && <ActivityIndicator size="small" color={accentColor} />}
           {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => { setSearchQuery(''); setPredictions([]); }}>
-              <Feather name="x-circle" size={18} color="#94A3B8" />
+            <TouchableOpacity onPress={() => { setSearchQuery(''); setPredictions([]) }}>
+              <Feather name="x-circle" size={18} color={theme.colors.textMuted} />
             </TouchableOpacity>
           )}
         </View>
 
+        {/* Predictions Dropdown */}
         {predictions.length > 0 && (
-          <View style={styles.predictionsContainer}>
+          <View style={[styles.predictionsContainer, { backgroundColor: theme.colors.surface }]}>
             <FlatList
               data={predictions}
               keyExtractor={(item) => item.place_id}
               keyboardShouldPersistTaps="handled"
               renderItem={({ item }) => (
                 <TouchableOpacity
-                  style={styles.predictionItem}
+                  style={[styles.predictionItem, { borderBottomColor: theme.colors.border }]}
                   onPress={() => handleSelectPrediction(item.place_id, item.description)}
                 >
-                  <Feather name="map-pin" size={16} color="#64748B" style={{ marginTop: 2 }} />
+                  <Feather name="map-pin" size={16} color={accentColor} style={{ marginTop: 2 }} />
                   <View style={{ marginLeft: 10, flex: 1 }}>
-                    <Text style={styles.predMainText}>{item.structured_formatting?.main_text || item.description}</Text>
+                    <AppText variant="body" semibold>
+                      {item.structured_formatting?.main_text || item.description}
+                    </AppText>
                     {item.structured_formatting?.secondary_text && (
-                      <Text style={styles.predSubText}>{item.structured_formatting.secondary_text}</Text>
+                      <AppText variant="small" color="muted">
+                        {item.structured_formatting.secondary_text}
+                      </AppText>
                     )}
                   </View>
                 </TouchableOpacity>
@@ -367,142 +419,146 @@ export default function RoutePickerScreen() {
           </View>
         )}
 
-        {/* Pickup progress strip (when on drop step) */}
         {!isPickup && pickup && (
-          <View style={styles.pickupStrip}>
-            <Ionicons name="checkmark-circle" size={18} color="#10B981" />
-            <Text style={styles.pickupStripText} numberOfLines={1}> ✅ Pickup: {pickup.address}</Text>
+          <View style={[styles.pickupStrip, { backgroundColor: `${theme.colors.success}18`, borderColor: `${theme.colors.success}35` }]}>
+            <Ionicons name="checkmark-circle" size={18} color={theme.colors.success} />
+            <AppText variant="small" bold style={{ color: theme.colors.success, marginLeft: 6, flex: 1 }} numberOfLines={1}>
+              Pickup: {pickup.address}
+            </AppText>
           </View>
         )}
       </View>
 
-      {/* Bottom card */}
-      <View style={styles.mapFooter}>
+      {/* Bottom Action Footer */}
+      <View style={[styles.mapFooter, { backgroundColor: theme.colors.surface }]}>
         <View style={styles.addressBox}>
-          <View style={[styles.addressBoxIcon, { backgroundColor: accentColor + '20' }]}>
-            <Feather name="map-pin" size={20} color={accentColor} />
+          <View style={[styles.addressBoxIcon, { backgroundColor: `${accentColor}18` }]}>
+            <Feather name="map-pin" size={22} color={accentColor} />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.addressBoxLabel}>{isPickup ? 'Pickup Location' : 'Drop Location'}</Text>
+            <AppText variant="label" color="muted">
+              {isPickup ? 'CONFIRM PICKUP POINT' : 'CONFIRM DROP POINT'}
+            </AppText>
             {loadingAddress ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
                 <ActivityIndicator size="small" color={accentColor} />
-                <Text style={{ color: '#94A3B8', fontSize: 13 }}>Finding address...</Text>
+                <AppText variant="small" color="muted">Pinpointing address...</AppText>
               </View>
             ) : (
-              <Text style={styles.addressBoxText} numberOfLines={2}>
-                {addressText || 'Move the pin to select a location'}
-              </Text>
+              <AppText variant="body" bold numberOfLines={2} style={{ marginTop: 2 }}>
+                {addressText || 'Move map to select location'}
+              </AppText>
             )}
           </View>
         </View>
 
-        <TouchableOpacity
-          style={[styles.confirmBtn, { backgroundColor: accentColor }, (!addressText && !loadingAddress) && { opacity: 0.5 }]}
+        <AppButton
           onPress={handleConfirmPoint}
+          variant="primary"
+          style={{ backgroundColor: accentColor }}
         >
-          <Text style={styles.confirmBtnText}>
-            {isPickup ? 'Confirm Pickup →' : 'Confirm Drop →'}
-          </Text>
-        </TouchableOpacity>
+          {isPickup ? 'Confirm Pickup Location →' : 'Confirm Drop Location →'}
+        </AppButton>
       </View>
     </View>
-  );
+  )
 }
 
 const styles = StyleSheet.create({
-  // ── Map Step ──
-  mapHeaderWrap: {
-    position: 'absolute', top: 0, left: 0, right: 0,
-    paddingHorizontal: 16, zIndex: 10,
-  },
-  stepRow: {
-    flexDirection: 'row', alignItems: 'center', marginBottom: 10,
-  },
-  mapBackBtn: {
-    width: 46, height: 46, borderRadius: 23, backgroundColor: '#FFF',
-    alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 6, elevation: 5, marginRight: 10,
-  },
-  stepBadge: {
-    borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4, marginRight: 8,
-  },
-  stepBadgeText: { color: '#FFF', fontSize: 12, fontWeight: '800' },
-  stepTitle: { fontSize: 16, fontWeight: '700', color: '#FFF', textShadowColor: 'rgba(0,0,0,0.3)', textShadowRadius: 4 },
-  mapSearchBox: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: '#FFF', borderRadius: 14, paddingHorizontal: 14, height: 48,
-    shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 6, elevation: 4,
-    marginBottom: 8,
-  },
-  mapSearchInput: { flex: 1, fontSize: 14, color: '#0F172A', fontWeight: '500', height: '100%' },
-  predictionsContainer: {
-    backgroundColor: '#FFF', borderRadius: 12,
-    maxHeight: 250, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 6, elevation: 5,
-    overflow: 'hidden', marginBottom: 8,
-  },
-  predictionItem: { flexDirection: 'row', padding: 14, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
-  predMainText: { fontSize: 14, fontWeight: '600', color: '#0F172A' },
-  predSubText: { fontSize: 12, color: '#64748B', marginTop: 2 },
-  pickupStrip: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#ECFDF5', borderRadius: 10, padding: 10,
-    borderWidth: 1, borderColor: '#6EE7B7',
-  },
-  pickupStripText: { fontSize: 12, fontWeight: '600', color: '#065F46', flex: 1 },
-
-  pinBubble: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8, marginBottom: 4 },
-  pinText: { color: '#FFF', fontSize: 13, fontWeight: '700' },
-  pinShadow: { width: 12, height: 4, backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: 2, marginTop: -4 },
-
-  mapFooter: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-    backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24,
-    padding: 20, paddingBottom: 32,
-    shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 12, elevation: 12,
-  },
-  addressBox: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 16, gap: 12 },
-  addressBoxIcon: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginTop: 2 },
-  addressBoxLabel: { fontSize: 12, color: '#94A3B8', fontWeight: '600', marginBottom: 4 },
-  addressBoxText: { fontSize: 14, color: '#0F172A', fontWeight: '500', lineHeight: 20 },
-  confirmBtn: { borderRadius: 16, paddingVertical: 16, alignItems: 'center' },
-  confirmBtnText: { color: '#FFF', fontSize: 16, fontWeight: '700' },
-
-  // ── Name Step / Details ──
-  detailsRoot: { flex: 1, backgroundColor: '#F8FAFC' },
+  detailsRoot: { flex: 1 },
   header: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 16, paddingVertical: 14,
-    backgroundColor: '#FFF', borderBottomWidth: 1, borderBottomColor: '#F1F5F9',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 18, fontWeight: '700', color: '#0F172A', marginLeft: 8 },
-
-  routeSummary: {
-    margin: 16, padding: 16, backgroundColor: '#FFF', borderRadius: 16,
-    shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, elevation: 3,
-    borderWidth: 1, borderColor: '#F1F5F9',
-  },
+  headerTitle: { flex: 1, textAlign: 'center' },
+  routeSummaryCard: { padding: 16, borderRadius: 16, marginBottom: 20 },
   routePoint: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  routeDot: { width: 14, height: 14, borderRadius: 7, marginTop: 4 },
-  routePointLabel: { fontSize: 10, fontWeight: '800', color: '#94A3B8', letterSpacing: 1, marginBottom: 2 },
-  routePointAddress: { fontSize: 13, color: '#0F172A', fontWeight: '500', lineHeight: 18 },
-  routeLine: { width: 2, height: 20, backgroundColor: '#E2E8F0', marginLeft: 6, marginVertical: 6 },
-
-  formSection: { paddingHorizontal: 20, paddingTop: 8 },
-  fieldLabel: { fontSize: 12, fontWeight: '700', color: '#64748B', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 },
-  routeNameInput: {
-    backgroundColor: '#FFF', borderWidth: 1.5, borderColor: '#E2E8F0',
-    borderRadius: 14, padding: 16, fontSize: 16, color: '#0F172A',
-    shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 6, elevation: 2,
+  routeDot: { width: 12, height: 12, borderRadius: 6, marginTop: 4 },
+  routeLine: { width: 2, height: 24, marginLeft: 5, marginVertical: 6 },
+  fieldLabel: { marginBottom: 8, letterSpacing: 0.5 },
+  input: {
+    height: 52,
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    fontSize: 16,
   },
-  hint: { fontSize: 12, color: '#94A3B8', marginTop: 8, lineHeight: 18 },
-
-  footer: { padding: 20, paddingBottom: 36, backgroundColor: '#FFF', borderTopWidth: 1, borderTopColor: '#F1F5F9', marginTop: 'auto' },
-  saveBtn: {
-    backgroundColor: '#2563EB', borderRadius: 16, paddingVertical: 16,
-    alignItems: 'center', flexDirection: 'row', justifyContent: 'center',
-    shadowColor: '#2563EB', shadowOpacity: 0.3, shadowRadius: 8, elevation: 4,
+  mapHeaderWrap: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 16,
+    zIndex: 10,
   },
-  saveBtnText: { color: '#FFF', fontSize: 16, fontWeight: '700' },
-});
+  stepRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  mapBackBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 4,
+    marginRight: 10,
+  },
+  stepBadge: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4, marginRight: 8 },
+  stepTitleShadow: { textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 4 },
+  mapSearchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    height: 46,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  mapSearchInput: { flex: 1, fontSize: 14, fontWeight: '500', height: '100%' },
+  predictionsContainer: {
+    borderRadius: 16,
+    marginTop: 8,
+    maxHeight: 220,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 5,
+    overflow: 'hidden',
+  },
+  predictionItem: { flexDirection: 'row', padding: 14, borderBottomWidth: StyleSheet.hairlineWidth },
+  pickupStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    marginTop: 8,
+  },
+  pinBubble: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, marginBottom: 4 },
+  pinShadow: { width: 12, height: 4, backgroundColor: 'rgba(0,0,0,0.25)', borderRadius: 2, marginTop: -4 },
+  mapFooter: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 34,
+    shadowColor: '#000',
+    shadowOpacity: 0.14,
+    shadowRadius: 12,
+    elevation: 12,
+  },
+  addressBox: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 16, gap: 12 },
+  addressBoxIcon: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+})

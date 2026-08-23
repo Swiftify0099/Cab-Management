@@ -11,7 +11,7 @@ from decimal import Decimal
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
 
-backend_root = r"C:\Users\panka\OneDrive\Desktop\CabBooking\backend"
+backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(backend_root)
 sys.path.insert(0, backend_root)
 sys.path.insert(0, os.path.join(backend_root, 'common'))
@@ -34,9 +34,7 @@ from app.services.communication_service import CommunicationService
 from app.services.ride_start_service import RideStartService
 from app.services.hazard_service import HazardService
 
-DB_URL = "postgresql+asyncpg://cabooking_user:cabooking_pass@127.0.0.1:5432/cabooking"
-test_engine = create_async_engine(DB_URL, poolclass=NullPool, echo=False)
-TestSession = async_sessionmaker(bind=test_engine, class_=AsyncSession, expire_on_commit=False)
+from common.database import async_session_maker
 
 
 async def run_full_regression():
@@ -44,7 +42,7 @@ async def run_full_regression():
     print("COMPLETE E2E REGRESSION SUITE: FEATURE 10 (DURING RIDE SYSTEM)", flush=True)
     print("=" * 80, flush=True)
 
-    async with TestSession() as db:
+    async with async_session_maker() as db:
         # 1. SETUP
         print("\n[STEP 1] Setting up driver, passenger, vehicle, and active ride...", flush=True)
         driver_user_id = uuid.uuid4()
@@ -278,7 +276,6 @@ async def run_full_regression():
         print("E2E REGRESSION SUITE PASSED — ALL 6 CRITICAL TESTS VERIFIED (100% SUCCESS)!", flush=True)
         print("=" * 80, flush=True)
 
-    await test_engine.dispose()
 
 if __name__ == '__main__':
     asyncio.run(run_full_regression())

@@ -69,10 +69,13 @@ class RideStartService:
         if not ride or ride.assigned_driver_id != driver.id:
             raise HTTPException(status_code=403, detail="Unauthorized for this ride")
 
-        # Customer details (sanitized)
-        c_res = await self.db.execute(select(User).where(User.id == ride.customer_id))
-        cust_user = c_res.scalar_one_or_none()
-        customer_name = (cust_user.email.split('@')[0].capitalize() if cust_user and cust_user.email else "Passenger")
+        # Customer / Actual Rider details (sanitized)
+        if getattr(ride, "is_booked_for_other", False) and getattr(ride, "rider_name", None):
+            customer_name = f"{ride.rider_name} ({ride.rider_type.replace('_', ' ').capitalize()})"
+        else:
+            c_res = await self.db.execute(select(User).where(User.id == ride.customer_id))
+            cust_user = c_res.scalar_one_or_none()
+            customer_name = (cust_user.email.split('@')[0].capitalize() if cust_user and cust_user.email else "Passenger")
 
         # Vehicle details
         v_res = await self.db.execute(select(Vehicle).where(Vehicle.driver_id == driver.id).limit(1))
