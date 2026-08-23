@@ -72,29 +72,8 @@ export default function PhoneScreen() {
     setLoading(true)
     const fullPhone = `+91${cleaned}`
     try {
-      const res = await authApi.sendOtp(fullPhone)
-      const data = res.data.data
-
-      if (data.is_existing && data.tokens) {
-        await login(
-          {
-            userId: data.tokens.user_id,
-            role: data.tokens.role,
-            phone: fullPhone,
-            isNewUser: data.tokens.is_new_user,
-            profileComplete: data.tokens.profile_complete,
-          },
-          data.tokens.access_token,
-          data.tokens.refresh_token
-        )
-        if (!data.tokens.profile_complete) {
-          router.replace('/auth/profile-setup')
-        } else {
-          router.replace('/(tabs)')
-        }
-      } else {
-        router.push({ pathname: '/auth/otp', params: { phone: fullPhone } })
-      }
+      await authApi.sendOtp(fullPhone)
+      router.push({ pathname: '/auth/otp', params: { phone: fullPhone } })
     } catch (err: any) {
       console.error('[SendOtp Error]', err?.message, err?.response?.data || err)
       const msg = err?.response?.data?.detail || err?.response?.data?.message || (err?.message ? `Network Error: ${err.message}` : 'Failed to send OTP. Please try again.')

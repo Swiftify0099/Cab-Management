@@ -63,76 +63,35 @@ async def send_otp(
 ):
     """
     Send OTP to the given phone number.
-    - Rate limited to 5 requests per phone per hour.
+    - Rate limited to 5 requests per phone per hour (in production).
     - In DEV mode, OTP is always 123456.
-    - No real SMS gateway  stub for production integration.
+    - Dispatches SMS via SMS gateway if configured.
     """
     phone = payload.phone.strip()
 
-    # Check if user already exists
-    result = await db.execute(select(User).where(User.phone == phone))
-    user = result.scalar_one_or_none()
-
-    if user and user.is_active:
-        # Existing active user → Bypass OTP and auto-verify.
-        # Honour the requested role: if the user is logging in via the driver
-        # app (role=driver) but was originally created as a customer, upgrade
-        # the role in DB before issuing the token.  Never allow upgrading to
-        # admin via this path.
-        requested_role = payload.role or UserRole.CUSTOMER
-        if requested_role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
-            if user.role != requested_role and user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
-                user.role = requested_role
-                await db.flush()
-                logger.info("User role updated on auto-verify", user_id=str(user.id), new_role=requested_role.value)
-
-        access_token, refresh_token = await issue_tokens(
-            db=db,
-            user=user,
-            device_id=None,
-            device_name=None,
-        )
-        logger.info("User auto-verified (OTP bypassed)", user_id=str(user.id), phone=phone)
-        
-        response_data = OTPSendResponse(
-            phone=phone,
-            expires_in_minutes=auth_settings.OTP_EXPIRE_MINUTES,
-            dev_otp=None,
-            is_existing=True,
-            tokens=TokenResponse(
-                access_token=access_token,
-                refresh_token=refresh_token,
-                token_type="bearer",
-                user_id=str(user.id),
-                role=user.role.value,
-                is_new_user=False,
-                profile_complete=user.is_profile_complete,
+    # Rate limit: 5 OTP requests per phone per hour (only enforced if not in dev mode)
+    if not auth_settings.OTP_DEV_MODE:
+        count = await increment_otp_requests(phone)
+        if count > auth_settings.OTP_MAX_REQUESTS_PER_HOUR:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many OTP requests. Try again after 1 hour.",
             )
-        )
-        return APIResponse(
-            message="Auto-verified existing user",
-            data=response_data,
-        )
 
-    # Rate limit: 5 OTP requests per phone per hour
-    count = await increment_otp_requests(phone)
-    if count > auth_settings.OTP_MAX_REQUESTS_PER_HOUR:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Too many OTP requests. Try again after 1 hour.",
-        )
-
-    # Generate OTP (always 123456 in dev)
+    # Generate OTP (always 123456 in dev mode)
     otp_code = generate_otp(6)
 
     # Store in Redis with expiry
-    await store_otp(
-        phone=phone,
-        otp=otp_code,
-        expire_seconds=auth_settings.OTP_EXPIRE_MINUTES * 60,
-    )
+    try:
+        await store_otp(
+            phone=phone,
+            otp=otp_code,
+            expire_seconds=auth_settings.OTP_EXPIRE_MINUTES * 60,
+        )
+    except Exception as redis_err:
+        logger.warning("Redis store_otp error, continuing in dev fallback", error=str(redis_err))
 
-    # Real Dove SMS Gateway Integration (Matched exactly to working PhoneAuth.java template)
+    # Real Dove SMS Gateway Integration
     try:
         import httpx
         cleaned = "".join(filter(str.isdigit, phone))[-10:]
@@ -157,12 +116,13 @@ async def send_otp(
     except Exception as sms_err:
         logger.warning("Dove SMS dispatch error in backend", error=str(sms_err))
 
-    logger.info("OTP sent", phone=phone, dev_mode=auth_settings.OTP_DEV_MODE)
+    logger.info("OTP sent", phone=phone, dev_mode=auth_settings.OTP_DEV_MODE, otp=otp_code)
 
     response_data = OTPSendResponse(
         phone=phone,
         expires_in_minutes=auth_settings.OTP_EXPIRE_MINUTES,
         dev_otp=otp_code if auth_settings.OTP_DEV_MODE else None,
+        is_existing=False,
     )
 
     return APIResponse(
@@ -191,12 +151,16 @@ async def verify_otp(
     """
     phone = payload.phone.strip()
 
-    # In DEV mode, allow "123456" as a universal OTP bypass
-    if auth_settings.OTP_DEV_MODE and payload.otp_code == "123456":
-        pass  # Bypass verification
-    else:
+    # In DEV mode, allow universal OTP 123456
+    is_dev_valid = auth_settings.OTP_DEV_MODE and (payload.otp_code == "123456" or payload.otp_code == auth_settings.OTP_DEFAULT_CODE)
+
+    if not is_dev_valid:
         # Get stored OTP from Redis
-        stored_otp = await get_otp(phone)
+        try:
+            stored_otp = await get_otp(phone)
+        except Exception:
+            stored_otp = None
+
         if not stored_otp:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -209,10 +173,13 @@ async def verify_otp(
                 detail="Invalid OTP. Please try again.",
             )
 
-        # OTP verified  delete from Redis
-        await delete_otp(phone)
+        # OTP verified - delete from Redis
+        try:
+            await delete_otp(phone)
+        except Exception:
+            pass
 
-    # Get or create user
+    # Get or create user (with requested role, e.g. driver or customer)
     user, is_new = await create_user_if_not_exists(
         db=db,
         phone=phone,
@@ -233,7 +200,7 @@ async def verify_otp(
         device_name=payload.device_name,
     )
 
-    logger.info("OTP verified  user authenticated", user_id=str(user.id), is_new=is_new)
+    logger.info("OTP verified - user authenticated", user_id=str(user.id), role=user.role.value, is_new=is_new)
 
     return APIResponse(
         message="Login successful",

@@ -213,9 +213,15 @@ export default function DriverOtpScreen() {
             </TouchableOpacity>
 
             {__DEV__ && (
-              <View style={styles.devBox}>
-                <Text style={styles.devText}>🔧 Dev Test OTP is 123456</Text>
-              </View>
+              <TouchableOpacity
+                style={styles.devBox}
+                activeOpacity={0.8}
+                onPress={() => {
+                  setOtp(['1', '2', '3', '4', '5', '6'])
+                }}
+              >
+                <Text style={styles.devText}>🔧 Dev Mode — Tap to auto-fill 123456</Text>
+              </TouchableOpacity>
             )}
 
           </View>

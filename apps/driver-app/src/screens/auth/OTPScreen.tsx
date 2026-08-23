@@ -135,9 +135,19 @@ export default function DriverOTPScreen() {
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
           {__DEV__ && (
-            <Text style={styles.devHint}>
-              Dev mode — OTP: 123456
-            </Text>
+            <TouchableOpacity
+              onPress={() => {
+                const devArr = ['1', '2', '3', '4', '5', '6']
+                setOtp(devArr)
+                setError('')
+                handleVerify('123456')
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.devHint}>
+                🔧 Dev mode — Tap to auto-fill & verify: 123456
+              </Text>
+            </TouchableOpacity>
           )}
 
           <TouchableOpacity

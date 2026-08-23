@@ -134,7 +134,18 @@ export default function OTPScreen() {
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
           {__DEV__ && (
-            <Text style={styles.devHint}>🔧 Dev mode — use OTP: 123456</Text>
+            <TouchableOpacity
+              onPress={() => {
+                const devArr = ['1', '2', '3', '4', '5', '6']
+                setOtp(devArr)
+                setError('')
+                handleVerify('123456')
+              }}
+              style={styles.devHintBtn}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.devHint}>🔧 Dev mode — Tap to auto-fill & verify: 123456</Text>
+            </TouchableOpacity>
           )}
 
           {/* Verify Button */}
@@ -187,6 +198,7 @@ const styles = StyleSheet.create({
   otpBoxFilled: { borderColor: '#2563EB', backgroundColor: '#EFF6FF', color: '#1D4ED8' },
   otpBoxError: { borderColor: '#F87171', backgroundColor: '#FEF2F2', color: '#0F172A' },
   errorText: { color: '#EF4444', fontSize: 14, textAlign: 'center', marginBottom: 16 },
+  devHintBtn: { marginBottom: 16 },
   devHint: {
     fontSize: 12, textAlign: 'center', color: '#D97706',
     backgroundColor: '#FFFBEB', borderRadius: 12, paddingVertical: 8, paddingHorizontal: 16, marginBottom: 16,
