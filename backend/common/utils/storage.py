@@ -80,11 +80,10 @@ async def save_upload(
             )
             return res.get("secure_url") or res.get("url") or res.get("public_id")
         except Exception as e:
-            # If Cloudinary fails in dev/offline, log and fall back to local disk
-            if not settings.is_production:
-                pass
-            else:
-                raise
+            # If Cloudinary upload fails, log warning and fall back to local disk
+            import structlog
+            structlog.get_logger(__name__).warning("cloudinary_save_upload_fallback", error=str(e))
+            pass
 
     # ── Local Disk Storage Fallback ──
     # Validate MIME type
