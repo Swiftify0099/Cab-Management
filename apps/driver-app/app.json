@@ -45,7 +45,9 @@
         "POST_NOTIFICATIONS",
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
-        "FOREGROUND_SERVICE"
+        "FOREGROUND_SERVICE",
+        "MODIFY_AUDIO_SETTINGS",
+        "WAKE_LOCK"
       ],
       "useNextNotificationsApi": true,
       "config": {
@@ -60,6 +62,7 @@
       "expo-secure-store",
       "expo-font",
       "expo-status-bar",
+      "expo-audio",
       [
         "expo-location",
         {
@@ -74,7 +77,8 @@
           "icon": "./assets/icon.png",
           "color": "#F59E0B",
           "sounds": [
-            "./assets/audio/siren.mp3"
+            "./assets/audio/siren.mp3",
+            "./assets/audio/drSiran.mp3"
           ]
         }
       ],

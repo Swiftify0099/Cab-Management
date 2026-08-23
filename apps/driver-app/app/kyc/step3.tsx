@@ -59,7 +59,11 @@ export default function Step3Screen() {
                 </View>
               </View>
 
-              <TouchableOpacity style={styles.uploadArea} activeOpacity={0.7}>
+              <TouchableOpacity 
+                style={styles.uploadArea} 
+                activeOpacity={0.7}
+                onPress={() => router.push({ pathname: '/kyc/documents' as any, params: { doc_type: 'puc' } })}
+              >
                 <View style={styles.cameraBox}>
                   <View style={styles.cameraDashedBorder} />
                   <MaterialCommunityIcons name="camera" size={36} color="#60A5FA" />
@@ -85,7 +89,11 @@ export default function Step3Screen() {
                 </View>
               </View>
 
-              <TouchableOpacity style={styles.uploadArea} activeOpacity={0.7}>
+              <TouchableOpacity 
+                style={styles.uploadArea} 
+                activeOpacity={0.7}
+                onPress={() => router.push({ pathname: '/kyc/documents' as any, params: { doc_type: 'permit' } })}
+              >
                 <View style={styles.cameraBox}>
                   <View style={styles.cameraDashedBorder} />
                   <MaterialCommunityIcons name="camera" size={36} color="#60A5FA" />

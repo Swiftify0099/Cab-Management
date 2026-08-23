@@ -35,7 +35,7 @@ export default function LiveSelfieScreen() {
       }
 
       const result = await ImagePicker.launchCameraAsync({
-        cameraType: ImagePicker.CameraType.front,
+        cameraType: (ImagePicker as any).CameraType?.front ?? 'front',
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.85,

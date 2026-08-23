@@ -107,20 +107,20 @@ export default function NotificationSettingsScreen() {
       ],
     },
     {
-      title: 'Device & Sound Settings',
+      title: 'Device Siren & Sound Settings',
       items: [
         {
           key: 'sound_enabled' as const,
-          label: 'Notification Sound',
-          desc: 'Play custom alert chime on incoming notifications.',
+          label: 'Incoming Request Siren (Loud)',
+          desc: 'Play dynamic driver siren sound when customer makes request.',
           icon: 'volume-2',
-          color: '#06B6D4',
+          color: '#EF4444',
           isMandatory: false,
         },
         {
           key: 'vibration_enabled' as const,
-          label: 'Haptic Vibration',
-          desc: 'Vibrate device for high-priority dispatches and alerts.',
+          label: 'Continuous Ringing Vibration',
+          desc: 'Vibrate device repeatedly on incoming customer bookings.',
           icon: 'smartphone',
           color: '#6366F1',
           isMandatory: false,

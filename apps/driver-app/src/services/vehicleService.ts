@@ -3,7 +3,7 @@
  * Handles Multi-Vehicle State, Document Lifecycle, Inspection Hub, Active Switching & Expiry Engine.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage'
-import { api } from '../api/client'
+import { api, kycApi, vehicleApi } from '../api/client'
 
 export type VehicleType =
   | 'hatchback'
@@ -803,6 +803,30 @@ export class VehicleService {
     vehicle.updated_at = new Date().toISOString()
     list[vIdx] = vehicle
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(list))
+
+    // Attempt remote upload to Cloudinary/backend if file is local
+    if (data.file_url && (data.file_url.startsWith('file://') || data.file_url.startsWith('content://') || data.file_url.startsWith('/'))) {
+      try {
+        const formData = new FormData()
+        const filename = data.file_url.split('/').pop() || `${docType}.jpg`
+        const match = /\.(\w+)$/.exec(filename)
+        const type = match ? `image/${match[1]}` : 'image/jpeg'
+        formData.append('file', {
+          uri: data.file_url,
+          name: filename,
+          type,
+        } as any)
+        if (data.document_number) formData.append('document_number', data.document_number)
+        if (data.expires_at) formData.append('expires_at', data.expires_at)
+        formData.append('vehicle_id', vehicleId)
+
+        await kycApi.uploadDocument(docType, formData).catch(() =>
+          vehicleApi.uploadVehicleDocument(vehicleId, docType, formData).catch(() => {})
+        )
+      } catch (uploadErr) {
+        console.warn('[VehicleService] Remote upload skipped:', uploadErr)
+      }
+    }
 
     return doc
   }

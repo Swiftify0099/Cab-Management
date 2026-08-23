@@ -4,7 +4,7 @@
 import axios from 'axios'
 import * as SecureStore from 'expo-secure-store'
 
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://10.189.118.102:8001/api/v1'
+const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://cab-management-1.onrender.com/api/v1'
 
 export const api = axios.create({
   baseURL: BASE_URL,
@@ -18,6 +18,10 @@ api.interceptors.request.use(async (config) => {
     const token = await SecureStore.getItemAsync('access_token')
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
+    }
+    if (config.data instanceof FormData) {
+      delete config.headers['Content-Type']
+      config.transformRequest = [(data) => data]
     }
   } catch {}
   return config
@@ -56,7 +60,7 @@ api.interceptors.response.use(
 // Auth API
 export const authApi = {
   sendOtp: (phone: string) =>
-    api.post('/auth/otp/send', { phone }),
+    api.post('/auth/otp/send', { phone: phone.trim(), role: 'customer' }),
 
   verifyOtp: (phone: string, otp_code: string, device_id?: string) =>
     api.post('/auth/otp/verify', { phone, otp_code, role: 'customer', device_id }),

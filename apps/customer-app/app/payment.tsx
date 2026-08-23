@@ -269,7 +269,7 @@ export default function PaymentScreen() {
         setActiveOrderId(order.order_id)
         setPaymentStatusText('Redirecting to payment gateway...')
 
-        const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://10.189.118.102:8001/api/v1'
+        const API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://cab-management-1.onrender.com/api/v1'
         const checkoutUrl = `${API_URL}/payments/checkout.html`
         const params = new URLSearchParams({
           key_id: order.key_id,
@@ -319,7 +319,7 @@ export default function PaymentScreen() {
     try {
       const res = await walletApi.topUp({ amount: amt })
       const order = res.data?.data
-      const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://10.189.118.102:8001/api/v1'
+      const API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://cab-management-1.onrender.com/api/v1'
       const checkoutUrl = `${API_URL}/payments/checkout.html`
       const params = new URLSearchParams({
         key_id: order.key_id,

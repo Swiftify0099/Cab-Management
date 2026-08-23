@@ -26,6 +26,7 @@ import { io, Socket } from 'socket.io-client'
 import * as SecureStore from 'expo-secure-store'
 import * as Location from 'expo-location'
 import * as Notifications from 'expo-notifications'
+import { DriverSoundService } from '../services/driverSoundService'
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -150,31 +151,28 @@ export function useDriverSocket(): UseDriverSocketReturn {
   const [corridorCustomers, setCorridorCustomers]   = useState<CorridorCustomerPayload[]>([])  // Phase 2
   const [arrivalAlert, setArrivalAlert]             = useState<ArrivalAlertPayload | null>(null)
 
-  // ─── Siren: vibration pattern (buzz-pause x3, mimics alert beeps) ──────────
+  // ─── Siren: Dynamic Driver Siren & Looping Vibration ───────────────────────
   const playSiren = useCallback(() => {
     try {
-      // Cancel any existing vibration first to prevent stacking
-      Vibration.cancel()
-      // Finite pattern: 200ms buzz, 100ms pause — 3 times (NOT repeating)
-      Vibration.vibrate([0, 200, 100, 200, 100, 200])
+      DriverSoundService.playIncomingAlert({ loop: true })
 
       Notifications.scheduleNotificationAsync({
         content: {
-          title: "New Ride Request! 🚕",
-          body: "A passenger needs a ride. Tap to view.",
-          sound: true,
-          priority: Notifications.AndroidNotificationPriority.HIGH,
+          title: "New Customer Request! 🚕",
+          body: "A customer needs a ride/delivery. Tap to view and accept.",
+          sound: 'drsiran.mp3',
+          priority: Notifications.AndroidNotificationPriority.MAX,
         },
         trigger: null,
-      })
+      }).catch(() => {})
     } catch (e) {
-      console.warn('[DriverSocket] Vibration failed:', e)
+      console.warn('[DriverSocket] Siren failed:', e)
     }
   }, [])
 
   const stopSiren = useCallback(() => {
     try {
-      Vibration.cancel()
+      DriverSoundService.stopIncomingAlert()
     } catch { /* ignore */ }
   }, [])
 
@@ -327,6 +325,87 @@ export function useDriverSocket(): UseDriverSocketReturn {
             fare:           data.fare || 0,
           },
           customer:    data.customer || { id: '' },
+          timeout_sec: data.timeout_sec || 180,
+        } as any
+        setIncomingRequest(normalized)
+        playSiren()
+      })
+
+      socket.on('PARCEL_REQUEST', (data: any) => {
+        console.log('[DriverSocket] PARCEL_REQUEST:', data.booking_id || data.offer_id)
+        const normalized: IncomingRequest = {
+          booking_id: data.booking_id || data.offer_id || `parcel-${Date.now()}`,
+          offer_id: data.offer_id,
+          driver_id: data.driver_id || driverIdRef.current,
+          service_type: 'parcel',
+          pickup: data.pickup || { address: data.pickup_address || 'Parcel Pickup Point', lat: 18.5204, lng: 73.8567 },
+          destination: data.destination || { address: data.destination_address || 'Parcel Delivery Point', lat: 18.5913, lng: 73.7389 },
+          trip: {
+            from: data.pickup_address || data.pickup?.address || 'Pickup Point',
+            to: data.destination_address || data.destination?.address || 'Delivery Destination',
+            departure_time: new Date().toISOString(),
+            distance_km: data.distance_km || data.pickup?.distance_km || 8.5,
+            seats: 0,
+            has_parcel: true,
+            fare: data.fare || data.trip?.fare || 180,
+            earning: data.earning || data.trip?.earning || 144,
+          },
+          category: { name: 'Parcel Express', icon: 'package' },
+          customer: data.customer || { id: '' },
+          timeout_sec: data.timeout_sec || 180,
+        } as any
+        setIncomingRequest(normalized)
+        playSiren()
+      })
+
+      socket.on('HOTEL_TRANSFER_REQUEST', (data: any) => {
+        console.log('[DriverSocket] HOTEL_TRANSFER_REQUEST:', data.booking_id || data.offer_id)
+        const normalized: IncomingRequest = {
+          booking_id: data.booking_id || data.offer_id || `hotel-${Date.now()}`,
+          offer_id: data.offer_id,
+          driver_id: data.driver_id || driverIdRef.current,
+          service_type: 'hotel',
+          pickup: data.pickup || { address: data.pickup_address || 'Hotel Lobby / Airport', lat: 18.5822, lng: 73.9197 },
+          destination: data.destination || { address: data.destination_address || 'Destination Hotel', lat: 18.5362, lng: 73.8939 },
+          trip: {
+            from: data.pickup_address || data.pickup?.address || 'Pickup Hub',
+            to: data.destination_address || data.destination?.address || 'Dropoff Point',
+            departure_time: new Date().toISOString(),
+            distance_km: data.distance_km || 15.2,
+            seats: data.seats || 2,
+            has_parcel: false,
+            fare: data.fare || 650,
+            earning: data.earning || 520,
+          },
+          category: { name: 'Hotel Transfer', icon: 'domain' },
+          customer: data.customer || { id: '' },
+          timeout_sec: data.timeout_sec || 180,
+        } as any
+        setIncomingRequest(normalized)
+        playSiren()
+      })
+
+      socket.on('TRANSPORT_REQUEST', (data: any) => {
+        console.log('[DriverSocket] TRANSPORT_REQUEST:', data.booking_id)
+        const normalized: IncomingRequest = {
+          booking_id: data.booking_id || `trans-${Date.now()}`,
+          offer_id: data.offer_id,
+          driver_id: data.driver_id || driverIdRef.current,
+          service_type: 'transport',
+          pickup: data.pickup || { address: data.pickup_address || 'Transport Hub', lat: 18.5204, lng: 73.8567 },
+          destination: data.destination || { address: data.destination_address || 'Intercity Destination', lat: 18.9220, lng: 72.8347 },
+          trip: {
+            from: data.pickup_address || 'Pickup City',
+            to: data.destination_address || 'Destination City',
+            departure_time: new Date().toISOString(),
+            distance_km: data.distance_km || 148,
+            seats: data.seats || 3,
+            has_parcel: false,
+            fare: data.fare || 1850,
+            earning: data.earning || 1480,
+          },
+          category: { name: 'Intercity Transport', icon: 'bus' },
+          customer: data.customer || { id: '' },
           timeout_sec: data.timeout_sec || 180,
         } as any
         setIncomingRequest(normalized)

@@ -84,8 +84,8 @@
       "typedRoutes": true
     },
     "extra": {
-      "apiUrl": "http://192.168.43.157:8001/api/v1",
-      "wsUrl": "http://192.168.43.157:8010"
+      "apiUrl": "https://cab-management-1.onrender.com/api/v1",
+      "wsUrl": "https://cab-management-1.onrender.com"
     }
   }
 }

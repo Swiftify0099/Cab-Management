@@ -21,6 +21,7 @@ interface AppBadgeProps {
   color?:    string
   bg?:       string
   size?:     'sm' | 'md'
+  style?:    any
 }
 
 export const AppBadge = memo(function AppBadge({
@@ -29,6 +30,7 @@ export const AppBadge = memo(function AppBadge({
   color,
   bg,
   size = 'md',
+  style,
 }: AppBadgeProps) {
   const { theme } = useTheme()
 
@@ -52,6 +54,7 @@ export const AppBadge = memo(function AppBadge({
           paddingHorizontal: size === 'sm' ? Spacing.sm : Spacing.md,
           paddingVertical:   size === 'sm' ? 3 : 5,
         },
+        style,
       ]}
     >
       <Text

@@ -18,7 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { router } from 'expo-router'
-import { kycApi } from '../../src/api/client'
+import { kycApi, driverApi } from '../../src/api/client'
 import { useTheme } from '../../src/theme'
 
 export default function BankAccountScreen() {
@@ -29,11 +29,11 @@ export default function BankAccountScreen() {
   const [existingBank, setExistingBank] = useState<any>(null)
 
   // Form
-  const [holderName, setHolderName] = useState('Rahul Sharma')
-  const [bankName, setBankName] = useState('HDFC Bank')
-  const [accountNumber, setAccountNumber] = useState('50100482194821')
-  const [confirmNumber, setConfirmNumber] = useState('50100482194821')
-  const [ifsc, setIfsc] = useState('HDFC0001234')
+  const [holderName, setHolderName] = useState('')
+  const [bankName, setBankName] = useState('')
+  const [accountNumber, setAccountNumber] = useState('')
+  const [confirmNumber, setConfirmNumber] = useState('')
+  const [ifsc, setIfsc] = useState('')
   const [accountType, setAccountType] = useState<'savings' | 'current'>('savings')
 
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -45,13 +45,24 @@ export default function BankAccountScreen() {
   const loadBank = async () => {
     try {
       setLoading(true)
-      const res = await kycApi.getBankAccount()
-      const data = res.data?.data
-      if (data && data.account_number_masked) {
-        setExistingBank(data)
-        setHolderName(data.account_holder_name || '')
-        setBankName(data.bank_name || '')
-        setIfsc(data.ifsc_code || '')
+      const [bankRes, profileRes] = await Promise.allSettled([
+        kycApi.getBankAccount(),
+        driverApi.getProfile(),
+      ])
+
+      if (profileRes.status === 'fulfilled' && profileRes.value.data?.data) {
+        const p = profileRes.value.data.data
+        if (p.full_name) setHolderName(p.full_name)
+      }
+
+      if (bankRes.status === 'fulfilled' && bankRes.value.data?.data) {
+        const data = bankRes.value.data.data
+        if (data && data.account_number_masked) {
+          setExistingBank(data)
+          if (data.account_holder_name) setHolderName(data.account_holder_name)
+          setBankName(data.bank_name || '')
+          setIfsc(data.ifsc_code || '')
+        }
       }
     } catch (e) {
       console.warn('[KYC Bank] Load warning:', e)

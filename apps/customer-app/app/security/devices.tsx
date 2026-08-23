@@ -237,7 +237,7 @@ export default function DevicesScreen() {
                   </View>
                   <View style={{ flex: 1, marginLeft: 12 }}>
                     <AppText variant="body" bold>
-                      {dev.device_model || `${dev.platform.title()} Phone`}
+                      {dev.device_model || `${(dev.platform || "Android").toUpperCase()} Phone`}
                     </AppText>
                     <AppText variant="small" color="muted" style={{ marginTop: 2 }}>
                       {dev.os_version || 'OS Active'} • Last active: {new Date(dev.last_active_at).toLocaleDateString()}

@@ -26,16 +26,45 @@ Notifications.setNotificationHandler({
   }),
 })
 
-// ── Android notification channel (required for Android 8+) ───────────────────
+// ── Android notification channels (required for Android 8+) ───────────────────
 async function ensureAndroidChannel() {
   if (Platform.OS !== 'android') return
   await Notifications.setNotificationChannelAsync('ride-requests', {
-    name: 'Ride Requests',
+    name: 'Cab Booking & Ride Requests',
     importance: Notifications.AndroidImportance.MAX,
-    vibrationPattern: [0, 250, 250, 250],
+    vibrationPattern: [0, 500, 250, 500, 250, 500],
     lightColor: '#22C55E',
     enableVibrate: true,
-    sound: 'siren.mp3',
+    enableLights: true,
+    sound: 'drsiran.mp3',
+    showBadge: true,
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+  })
+  await Notifications.setNotificationChannelAsync('parcel-requests', {
+    name: 'Parcel Delivery Requests',
+    importance: Notifications.AndroidImportance.MAX,
+    vibrationPattern: [0, 500, 250, 500],
+    lightColor: '#F59E0B',
+    enableVibrate: true,
+    enableLights: true,
+    sound: 'drsiran.mp3',
+    showBadge: true,
+  })
+  await Notifications.setNotificationChannelAsync('transport-requests', {
+    name: 'Intercity & Transport Requests',
+    importance: Notifications.AndroidImportance.MAX,
+    vibrationPattern: [0, 400, 200, 400, 200, 400],
+    lightColor: '#0EA5E9',
+    enableVibrate: true,
+    sound: 'drsiran.mp3',
+  })
+  await Notifications.setNotificationChannelAsync('hotel-transfers', {
+    name: 'Hotel & Airport Transfers',
+    importance: Notifications.AndroidImportance.MAX,
+    vibrationPattern: [0, 500, 250, 500],
+    lightColor: '#8B5CF6',
+    enableVibrate: true,
+    sound: 'drsiran.mp3',
   })
   await Notifications.setNotificationChannelAsync('trips', {
     name: 'Trip Updates',

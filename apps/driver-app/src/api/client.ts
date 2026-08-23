@@ -15,12 +15,16 @@ export const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
-// Request interceptor — attach real JWT Bearer token
+// Request interceptor — attach real JWT Bearer token and handle FormData boundary
 api.interceptors.request.use(async (config) => {
   try {
     const token = await SecureStore.getItemAsync('access_token')
     if (token && token !== 'demo_token') {
       config.headers.Authorization = `Bearer ${token}`
+    }
+    if (config.data instanceof FormData) {
+      delete config.headers['Content-Type']
+      config.transformRequest = [(data) => data]
     }
   } catch (err) {
     console.warn('[API Request Interceptor Error]', err)

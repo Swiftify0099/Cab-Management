@@ -4,7 +4,6 @@ import {
   StatusBar,
   StyleSheet,
   Platform,
-  Vibration,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { LinearGradient } from 'expo-linear-gradient'
@@ -14,6 +13,8 @@ import { useTheme } from '../src/theme'
 import { RideOfferPayload, RideRequestDisplayState } from '../src/types/rideRequest'
 import { RideRequestService } from '../src/services/rideRequestService'
 import { RideRequestCard } from '../src/components/ride/RideRequestCard'
+import { DriverSoundService } from '../src/services/driverSoundService'
+import { useDriverSiren } from '../src/hooks/useDriverSiren'
 
 interface Props {
   request: any
@@ -26,10 +27,9 @@ export default function IncomingRequestScreen({ request, onDismiss }: Props) {
   const [timeLeft, setTimeLeft] = useState(timeoutLimit)
   const [requestState, setRequestState] = useState<RideRequestDisplayState>('NEW_OFFER')
   const [mapError, setMapError] = useState(false)
+  const { isMuted, toggleMute, selectedSiren } = useDriverSiren()
 
   const mountedRef = useRef(true)
-  const soundRef = useRef<any>(null)
-  const vibrationTimerRef = useRef<any>(null)
 
   // Normalize offer data
   const normalizedOffer: RideOfferPayload = {
@@ -37,6 +37,7 @@ export default function IncomingRequestScreen({ request, onDismiss }: Props) {
     ride_request_id: request?.ride_request_id || request?.booking_id || '',
     booking_id: request?.booking_id,
     driver_id: request?.driver_id,
+    service_type: request?.service_type || (request?.trip?.has_parcel ? 'parcel' : 'cab'),
     pickup: {
       address: request?.pickup?.address || request?.pickup_address || request?.trip?.from || 'Pickup Location',
       lat: request?.pickup?.lat || request?.pickup_lat || 18.5204,
@@ -83,38 +84,12 @@ export default function IncomingRequestScreen({ request, onDismiss }: Props) {
 
   // ─── Sound Alert: Looping Alert Sound & Vibration Pattern ──────────────
   const stopAlerts = useCallback(() => {
-    soundRef.current?.stopAsync().catch(() => {})
-    soundRef.current?.unloadAsync().catch(() => {})
-    soundRef.current = null
-    if (vibrationTimerRef.current) {
-      clearInterval(vibrationTimerRef.current)
-      vibrationTimerRef.current = null
-    }
-    Vibration.cancel()
+    DriverSoundService.stopIncomingAlert()
   }, [])
 
   useEffect(() => {
-    let sound: any = null
-    const startAlerts = async () => {
-      try {
-        const expoAv: any = await (Function('return import("expo-av")')().catch(() => null))
-        if (expoAv?.Audio) {
-          const { Audio } = expoAv
-          await Audio.setAudioModeAsync({ playsInSilentModeIOS: true })
-          const { sound: s } = await Audio.Sound.createAsync(
-            { uri: 'https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg' },
-            { shouldPlay: true, isLooping: true, volume: 1.0 }
-          )
-          sound = s
-          soundRef.current = s
-        }
-      } catch {}
-
-      // Finite vibration loop (buzz 400ms, pause 200ms, buzz 400ms)
-      Vibration.vibrate([0, 400, 200, 400], true)
-    }
-
-    startAlerts()
+    // Start dynamic driver siren & continuous vibration ringing
+    DriverSoundService.playIncomingAlert({ loop: true })
 
     return () => {
       stopAlerts()
@@ -269,6 +244,9 @@ export default function IncomingRequestScreen({ request, onDismiss }: Props) {
           timeLeft={timeLeft}
           state={requestState}
           isDark={isDark}
+          isMuted={isMuted}
+          sirenName={selectedSiren?.name}
+          onToggleMute={toggleMute}
           onAccept={handleAccept}
           onReject={handleReject}
           onDismiss={onDismiss}

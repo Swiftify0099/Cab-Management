@@ -19,7 +19,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { router, useFocusEffect } from 'expo-router'
-import { kycApi } from '../../src/api/client'
+import { kycApi, driverApi } from '../../src/api/client'
 import { useTheme } from '../../src/theme'
 
 const { width } = Dimensions.get('window')
@@ -43,39 +43,39 @@ interface KYCSection {
   items: KYCItem[]
 }
 
-const DEFAULT_SECTIONS: KYCSection[] = [
+const INITIAL_SECTIONS: KYCSection[] = [
   {
     id: 'identity',
     title: 'Identity Documents',
     items: [
-      { key: 'aadhaar', name: 'Aadhaar Card', category: 'identity', doc_type: 'aadhaar', status: 'approved', status_label: 'Approved', date_label: 'Aug 23, 2024' },
-      { key: 'pan', name: 'PAN Card', category: 'identity', doc_type: 'pan', status: 'approved', status_label: 'Approved', date_label: 'Aug 23, 2024' },
-      { key: 'selfie', name: 'Live Selfie', category: 'identity', doc_type: 'selfie', status: 'under_review', status_label: 'Under Review', date_label: 'Aug 23, 2024' },
+      { key: 'aadhaar', name: 'Aadhaar Card', category: 'identity', doc_type: 'aadhaar', status: 'not_started', status_label: 'Not Uploaded', date_label: 'Required' },
+      { key: 'pan', name: 'PAN Card', category: 'identity', doc_type: 'pan', status: 'not_started', status_label: 'Not Uploaded', date_label: 'Required' },
+      { key: 'selfie', name: 'Live Selfie', category: 'identity', doc_type: 'selfie', status: 'not_started', status_label: 'Not Uploaded', date_label: 'Required' },
     ],
   },
   {
     id: 'driving',
     title: 'Driving & Background',
     items: [
-      { key: 'license', name: 'Driving Licence', category: 'driving', doc_type: 'license', status: 'approved', status_label: 'Approved', date_label: 'Aug 23, 2024' },
-      { key: 'police_verification', name: 'Police Background Check', category: 'driving', doc_type: 'police_verification', status: 'under_review', status_label: 'In Progress', date_label: 'Aug 23, 2024' },
+      { key: 'license', name: 'Driving Licence', category: 'driving', doc_type: 'license', status: 'not_started', status_label: 'Not Uploaded', date_label: 'Required' },
+      { key: 'police_verification', name: 'Police Background Check', category: 'driving', doc_type: 'police_verification', status: 'not_started', status_label: 'Not Uploaded', date_label: 'Required' },
     ],
   },
   {
     id: 'vehicle',
     title: 'Vehicle Documents',
     items: [
-      { key: 'rc_book', name: 'RC Book', category: 'vehicle', doc_type: 'rc_book', status: 'approved', status_label: 'Approved', date_label: 'Aug 23, 2024' },
-      { key: 'insurance', name: 'Vehicle Insurance', category: 'vehicle', doc_type: 'insurance', status: 'expiring_soon', status_label: 'Expiring Soon', date_label: 'Aug 23, 2023' },
-      { key: 'permit', name: 'Commercial Permit', category: 'vehicle', doc_type: 'permit', status: 'rejected', status_label: 'Action Required', date_label: 'Aug 27, 2024', rejection_reason: 'Blurry permit scan' },
-      { key: 'puc', name: 'PUC Certificate', category: 'vehicle', doc_type: 'puc', status: 'approved', status_label: 'Approved', date_label: 'Aug 23, 2023' },
+      { key: 'rc_book', name: 'RC Book', category: 'vehicle', doc_type: 'rc_book', status: 'not_started', status_label: 'Not Uploaded', date_label: 'Required' },
+      { key: 'insurance', name: 'Vehicle Insurance', category: 'vehicle', doc_type: 'insurance', status: 'not_started', status_label: 'Not Uploaded', date_label: 'Required' },
+      { key: 'permit', name: 'Commercial Permit', category: 'vehicle', doc_type: 'permit', status: 'not_started', status_label: 'Not Uploaded', date_label: 'Required' },
+      { key: 'puc', name: 'PUC Certificate', category: 'vehicle', doc_type: 'puc', status: 'not_started', status_label: 'Not Uploaded', date_label: 'Required' },
     ],
   },
   {
     id: 'payments',
     title: 'Payout Details',
     items: [
-      { key: 'bank_account', name: 'Bank Account', category: 'payments', doc_type: 'bank_account', status: 'approved', status_label: 'Verified', document_number: 'HDFC Bank •••• 4821', date_label: 'Aug 23, 2024' },
+      { key: 'bank_account', name: 'Bank Account', category: 'payments', doc_type: 'bank_account', status: 'not_started', status_label: 'Not Linked', date_label: 'Required' },
     ],
   },
 ]
@@ -84,17 +84,28 @@ export default function DocumentStatusScreen() {
   const { theme, isDark } = useTheme()
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
-  const [driverName, setDriverName] = useState('Rahul Sharma')
-  const [driverId, setDriverId] = useState('DRV-8942')
-  const [completionPct, setCompletionPct] = useState(72)
-  const [actionCount, setActionCount] = useState(1)
-  const [sections, setSections] = useState<KYCSection[]>(DEFAULT_SECTIONS)
+  const [driverName, setDriverName] = useState('Driver Partner')
+  const [driverId, setDriverId] = useState('DRV-SYNC')
+  const [completionPct, setCompletionPct] = useState(0)
+  const [actionCount, setActionCount] = useState(0)
+  const [sections, setSections] = useState<KYCSection[]>(INITIAL_SECTIONS)
 
   const fetchKYC = useCallback(async () => {
     try {
-      const res = await kycApi.getDashboard()
-      const data = res.data?.data
-      if (data) {
+      const [kycRes, profileRes] = await Promise.allSettled([
+        kycApi.getDashboard(),
+        driverApi.getProfile(),
+      ])
+
+      if (profileRes.status === 'fulfilled' && profileRes.value.data?.data) {
+        const p = profileRes.value.data.data
+        if (p.full_name) setDriverName(p.full_name)
+        else if (p.phone) setDriverName(`Driver (${p.phone})`)
+        if (p.id) setDriverId(`DRV-${String(p.id).replace(/-/g, '').slice(0, 4).toUpperCase()}`)
+      }
+
+      if (kycRes.status === 'fulfilled' && kycRes.value.data?.data) {
+        const data = kycRes.value.data.data
         if (data.driver_name) setDriverName(data.driver_name)
         if (data.driver_id_display) setDriverId(data.driver_id_display)
         if (data.completion_percentage !== undefined) setCompletionPct(data.completion_percentage)

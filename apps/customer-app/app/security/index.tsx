@@ -256,7 +256,7 @@ export default function SecurityCenterScreen() {
                 </AppText>
                 <AppBadge
                   label={data?.is_biometric_enabled ? 'Enabled' : 'Hardware Ready'}
-                  variant={data?.is_biometric_enabled ? 'success' : 'neutral'}
+                  variant={data?.is_biometric_enabled ? 'success' : 'default'}
                   size="sm"
                   style={{ marginTop: 4 }}
                 />

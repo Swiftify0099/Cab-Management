@@ -245,7 +245,7 @@ export default function HomeScreen() {
 
       // Process Multi-Service Journeys (Feature 28)
       if (journeysRes.status === 'fulfilled' && journeysRes.value.data) {
-        const jData = journeysRes.value.data?.data || journeysRes.value.data
+        const jData = (journeysRes.value.data as any)?.data || journeysRes.value.data
         const list = jData?.journeys || (Array.isArray(jData) ? jData : [])
         if (list.length > 0) {
           setActiveJourney(list[0])
@@ -469,7 +469,7 @@ export default function HomeScreen() {
                             {dest.title}
                           </AppText>
                           {dest.eta_minutes && (
-                            <AppBadge label={`${dest.eta_minutes}m`} variant="neutral" size="sm" />
+                            <AppBadge label={`${dest.eta_minutes}m`} variant="default" size="sm" />
                           )}
                         </View>
                         <AppText variant="small" color="muted" numberOfLines={1} style={{ maxWidth: 140 }}>

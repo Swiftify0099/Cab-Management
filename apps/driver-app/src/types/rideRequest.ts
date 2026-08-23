@@ -34,6 +34,7 @@ export interface RideTripDetails {
   fare: number
   earning: number
   seats?: number
+  has_parcel?: boolean
 }
 
 export interface SeatAllocationInfo {
@@ -54,6 +55,7 @@ export interface RideOfferPayload {
   ride_request_id: string
   booking_id?: string // for backward compatibility
   driver_id?: string
+  service_type?: 'cab' | 'parcel' | 'transport' | 'hotel' | string
   pickup: RideLocationPoint
   destination: RideLocationPoint
   trip: RideTripDetails

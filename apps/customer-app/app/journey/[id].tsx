@@ -34,7 +34,7 @@ export default function JourneyDetailScreen() {
     if (!id) return
     try {
       const res = await orchestrationApi.getJourneyDetail(id)
-      const data = res.data?.data || res.data
+      const data = (res.data as any)?.data || res.data
       if (data) {
         setJourney(data)
       }

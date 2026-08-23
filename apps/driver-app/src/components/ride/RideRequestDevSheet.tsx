@@ -1,6 +1,7 @@
 /**
  * Ride Request Developer Mode Simulation Panel — Feature 5
- * Complete suite of 14 edge simulators for testing production ride dispatch behaviors.
+ * Complete suite of edge simulators for testing production dispatch behaviors across:
+ * Cab Booking, Parcel Delivery, Intercity Transport, and Hotel/Airport Logistics.
  */
 import React from 'react'
 import {
@@ -13,6 +14,7 @@ import {
 } from 'react-native'
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
 import { RideOfferPayload } from '../../types/rideRequest'
+import { DriverSoundService } from '../../services/driverSoundService'
 
 interface Props {
   visible: boolean
@@ -29,11 +31,14 @@ export const RideRequestDevSheet: React.FC<Props> = ({
   onSimulateStateChange,
   onSimulateSocketToggle,
 }) => {
-  if (!__DEV__) return null;
+  if (!__DEV__) return null
+
+  // 🚖 1. Economy Cab Booking
   const triggerEconomySample = () => {
     const offer: RideOfferPayload = {
       offer_id: `sim-econ-${Date.now()}`,
       ride_request_id: `req-${Date.now()}`,
+      service_type: 'cab',
       pickup: {
         address: 'Koregaon Park, Pune (North Main Rd)',
         lat: 18.5362,
@@ -56,7 +61,7 @@ export const RideRequestDevSheet: React.FC<Props> = ({
         seats: 1,
       },
       category: {
-        name: 'Economy',
+        name: 'Economy Cab',
         icon: 'car',
       },
       seat_info: {
@@ -73,40 +78,177 @@ export const RideRequestDevSheet: React.FC<Props> = ({
     onClose()
   }
 
-  const triggerSuvSample = () => {
+  // ⚡ 2. Surge 2.2x Cab Booking
+  const triggerSurgeCabSample = () => {
     const offer: RideOfferPayload = {
-      offer_id: `sim-suv-${Date.now()}`,
-      ride_request_id: `req-suv-${Date.now()}`,
+      offer_id: `sim-surge-${Date.now()}`,
+      ride_request_id: `req-surge-${Date.now()}`,
+      service_type: 'cab',
       pickup: {
-        address: 'Pune Airport Terminal 2 Arrival Gate',
-        lat: 18.5822,
-        lng: 73.9197,
-        distance_km: 4.8,
-        eta_min: 12,
+        address: 'Viman Nagar, Phoenix Marketcity Gate 2',
+        lat: 18.5679,
+        lng: 73.9143,
+        distance_km: 1.8,
+        eta_min: 5,
       },
       destination: {
-        address: 'Magarpatta Cybercity, Tower 6',
-        lat: 18.5135,
-        lng: 73.9298,
+        address: 'Baner High Street, Pune',
+        lat: 18.5590,
+        lng: 73.7868,
       },
       trip: {
-        from: 'Pune Airport (PNQ)',
-        to: 'Magarpatta Cybercity',
-        distance_km: 14.5,
-        duration_min: 35,
-        fare: 750,
-        earning: 600,
-        seats: 4,
+        from: 'Viman Nagar (Phoenix Mall)',
+        to: 'Baner High Street',
+        distance_km: 18.4,
+        duration_min: 42,
+        fare: 620,
+        earning: 496,
+        seats: 2,
       },
       category: {
-        name: 'SUV',
-        icon: 'car-estate',
+        name: 'Prime Surge 2.2x',
+        icon: 'car-sport',
+      },
+      seat_info: {
+        total_seats: 4,
+        available_seats: 4,
+        available_labels: ['Front Window', 'Rear Left', 'Rear Right'],
+        requested_seats: 2,
+      },
+      expires_at: new Date(Date.now() + 180000).toISOString(),
+      timeout_sec: 180,
+      paid: true,
+    }
+    onSimulateOffer(offer)
+    onClose()
+  }
+
+  // 📦 3. Parcel Delivery Request
+  const triggerParcelSample = () => {
+    const offer: RideOfferPayload = {
+      offer_id: `sim-parcel-${Date.now()}`,
+      ride_request_id: `req-parcel-${Date.now()}`,
+      service_type: 'parcel',
+      pickup: {
+        address: 'FC Road, Deccan Gymkhana (Bookstore)',
+        lat: 18.5196,
+        lng: 73.8415,
+        distance_km: 3.2,
+        eta_min: 9,
+      },
+      destination: {
+        address: 'Kalyani Nagar, East Avenue Road',
+        lat: 18.5463,
+        lng: 73.9033,
+      },
+      trip: {
+        from: 'FC Road Deccan',
+        to: 'Kalyani Nagar',
+        distance_km: 9.6,
+        duration_min: 22,
+        fare: 210,
+        earning: 168,
+        seats: 0,
+      },
+      category: {
+        name: 'Parcel Express (15kg)',
+        icon: 'package',
+      },
+      seat_info: {
+        total_seats: 4,
+        available_seats: 4,
+        available_labels: ['Boot / Rear Seat'],
+        requested_seats: 0,
+      },
+      expires_at: new Date(Date.now() + 180000).toISOString(),
+      timeout_sec: 180,
+      paid: true,
+    }
+    onSimulateOffer(offer)
+    onClose()
+  }
+
+  // 🚌 4. Intercity Transport Route Match
+  const triggerTransportSample = () => {
+    const offer: RideOfferPayload = {
+      offer_id: `sim-trans-${Date.now()}`,
+      ride_request_id: `req-trans-${Date.now()}`,
+      service_type: 'transport',
+      pickup: {
+        address: 'Wakad Express Highway Toll Naka',
+        lat: 18.5987,
+        lng: 73.7689,
+        distance_km: 5.1,
+        eta_min: 14,
+      },
+      destination: {
+        address: 'Dadar TT Circle, Mumbai',
+        lat: 19.0178,
+        lng: 72.8478,
+      },
+      trip: {
+        from: 'Pune (Wakad Highway)',
+        to: 'Mumbai (Dadar TT)',
+        distance_km: 142.5,
+        duration_min: 160,
+        fare: 1450,
+        earning: 1160,
+        seats: 3,
+      },
+      category: {
+        name: 'Intercity Corridor',
+        icon: 'bus',
       },
       seat_info: {
         total_seats: 6,
         available_seats: 6,
-        available_labels: ['Front Window', 'Middle Left', 'Middle Right', 'Rear Left', 'Rear Right'],
-        requested_seats: 4,
+        available_labels: ['Front Window', 'Middle Left', 'Rear Window'],
+        requested_seats: 3,
+      },
+      expires_at: new Date(Date.now() + 180000).toISOString(),
+      timeout_sec: 180,
+      paid: true,
+    }
+    onSimulateOffer(offer)
+    onClose()
+  }
+
+  // 🏨 5. Hotel Logistics & Airport Transfer
+  const triggerHotelSample = () => {
+    const offer: RideOfferPayload = {
+      offer_id: `sim-hotel-${Date.now()}`,
+      ride_request_id: `req-hotel-${Date.now()}`,
+      service_type: 'hotel',
+      pickup: {
+        address: 'Pune Airport (PNQ) International Terminal',
+        lat: 18.5822,
+        lng: 73.9197,
+        distance_km: 4.5,
+        eta_min: 11,
+      },
+      destination: {
+        address: 'JW Marriott Hotel, Senapati Bapat Road',
+        lat: 18.5323,
+        lng: 73.8296,
+      },
+      trip: {
+        from: 'Pune International Airport',
+        to: 'JW Marriott Luxury Hotel',
+        distance_km: 15.8,
+        duration_min: 38,
+        fare: 890,
+        earning: 712,
+        seats: 2,
+      },
+      category: {
+        name: 'Hotel Transfer Partner',
+        icon: 'domain',
+      },
+      seat_info: {
+        total_seats: 4,
+        available_seats: 4,
+        available_labels: ['Front Window', 'Rear Left', 'Rear Right'],
+        requested_seats: 2,
       },
       expires_at: new Date(Date.now() + 180000).toISOString(),
       timeout_sec: 180,
@@ -123,7 +265,7 @@ export const RideRequestDevSheet: React.FC<Props> = ({
           <View style={styles.header}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <Ionicons name="hardware-chip" size={20} color="#F59E0B" />
-              <Text style={styles.title}>Feature 5 Edge Simulators</Text>
+              <Text style={styles.title}>Dispatch & Siren Edge Simulators</Text>
             </View>
             <TouchableOpacity onPress={onClose}>
               <Feather name="x" size={22} color="#64748B" />
@@ -131,14 +273,37 @@ export const RideRequestDevSheet: React.FC<Props> = ({
           </View>
 
           <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-            {/* Offer Injections */}
-            <Text style={styles.sectionHeader}>1. INCOMING OFFER INJECTION</Text>
-            <TouchableOpacity style={styles.btnPrimary} onPress={triggerEconomySample}>
-              <Text style={styles.btnPrimaryText}>🚕 Inject Economy Ride Request (180s Ringing)</Text>
+            {/* Direct Hardware Siren Ringing Verifier */}
+            <Text style={styles.sectionHeader}>🔊 HARDWARE SIREN & VIBRATION VERIFIER</Text>
+            <TouchableOpacity
+              style={[styles.btnPrimary, { backgroundColor: '#EF4444' }]}
+              onPress={async () => {
+                await DriverSoundService.testRinging()
+              }}
+            >
+              <Text style={styles.btnPrimaryText}>🔔 Fire Siren Sound & Continuous Vibration (5s Test)</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={[styles.btnPrimary, { backgroundColor: '#4338CA', marginTop: 8 }]} onPress={triggerSuvSample}>
-              <Text style={styles.btnPrimaryText}>🚙 Inject SUV Ride Request (6 Seats, ₹750 Fare)</Text>
+            {/* Offer Injections Across All Services */}
+            <Text style={[styles.sectionHeader, { marginTop: 18 }]}>1. MULTI-SERVICE DISPATCH INJECTIONS</Text>
+            <TouchableOpacity style={styles.btnPrimary} onPress={triggerEconomySample}>
+              <Text style={styles.btnPrimaryText}>🚕 1. Inject Cab Booking Request (₹285, 180s Siren Ringing)</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.btnPrimary, { backgroundColor: '#B45309', marginTop: 8 }]} onPress={triggerSurgeCabSample}>
+              <Text style={styles.btnPrimaryText}>⚡ 2. Inject Surge 2.2x Cab Booking (₹620, High Priority)</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.btnPrimary, { backgroundColor: '#D97706', marginTop: 8 }]} onPress={triggerParcelSample}>
+              <Text style={styles.btnPrimaryText}>📦 3. Inject Parcel Delivery Request (₹210, 15kg Express)</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.btnPrimary, { backgroundColor: '#4338CA', marginTop: 8 }]} onPress={triggerTransportSample}>
+              <Text style={styles.btnPrimaryText}>🚌 4. Inject Intercity Transport Match (₹1450, Pune → Mumbai)</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.btnPrimary, { backgroundColor: '#7C3AED', marginTop: 8 }]} onPress={triggerHotelSample}>
+              <Text style={styles.btnPrimaryText}>🏨 5. Inject Hotel & Airport Transfer (₹890, Luxury Chauffeur)</Text>
             </TouchableOpacity>
 
             {/* Lifecycle Edge States */}
@@ -256,7 +421,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 16,
     paddingBottom: 36,
-    maxHeight: '75%',
+    maxHeight: '80%',
   },
   header: {
     flexDirection: 'row',

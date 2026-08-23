@@ -51,22 +51,30 @@ export default function DocumentUploadScreen() {
   const screenTitle = DOC_TITLES[doc_type] || 'Document Verification'
 
   useEffect(() => {
-    // Populate defaults based on doc type
-    if (doc_type === 'license') {
-      setDocNumber('MH-02-2018-0094821')
-      setExpiryDate('14/08/2032')
-    } else if (doc_type === 'rc_book') {
-      setDocNumber('MH-02-CD-8942')
-      setExpiryDate('10/06/2035')
-    } else if (doc_type === 'insurance') {
-      setDocNumber('POL-HDFC-9948210')
-      setExpiryDate('23/08/2025')
-    } else if (doc_type === 'pan') {
-      setDocNumber('ABCDE1234F')
-    } else if (doc_type === 'permit') {
-      setDocNumber('MH-02-PMT-9482')
-      setExpiryDate('27/08/2028')
+    setDocNumber('')
+    setExpiryDate('')
+    setFrontUri(null)
+    setBackUri(null)
+
+    const loadExistingDoc = async () => {
+      try {
+        const res = await kycApi.getDocumentDetails(doc_type)
+        const doc = res.data?.data
+        if (doc) {
+          if (doc.document_number) setDocNumber(doc.document_number)
+          if (doc.expires_at) {
+            const parts = doc.expires_at.split('-')
+            if (parts.length === 3) setExpiryDate(`${parts[2]}/${parts[1]}/${parts[0]}`)
+          }
+          if (doc.file_path) {
+            setFrontUri(doc.file_path)
+          }
+        }
+      } catch {
+        // Clean initial state for driver's real input
+      }
     }
+    loadExistingDoc()
   }, [doc_type])
 
   const handlePickImage = async (useCamera: boolean) => {
@@ -83,12 +91,12 @@ export default function DocumentUploadScreen() {
 
       const result = useCamera
         ? await ImagePicker.launchCameraAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            mediaTypes: ['images'],
             allowsEditing: true,
             quality: 0.85,
           })
         : await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            mediaTypes: ['images'],
             allowsEditing: true,
             quality: 0.85,
           })

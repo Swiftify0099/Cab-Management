@@ -101,7 +101,7 @@ export default function AddVehicleScreen() {
   const pickDocImage = async (docType: string) => {
     try {
       const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsEditing: true,
         quality: 0.8,
       })

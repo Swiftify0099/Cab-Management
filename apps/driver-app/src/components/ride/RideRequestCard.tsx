@@ -20,6 +20,9 @@ interface Props {
   timeLeft: number
   state: RideRequestDisplayState
   isDark?: boolean
+  isMuted?: boolean
+  sirenName?: string
+  onToggleMute?: () => void
   onAccept: () => void
   onReject: () => void
   onDismiss: () => void
@@ -30,6 +33,9 @@ export const RideRequestCard: React.FC<Props> = ({
   timeLeft,
   state,
   isDark = false,
+  isMuted = false,
+  sirenName,
+  onToggleMute,
   onAccept,
   onReject,
   onDismiss,
@@ -39,6 +45,7 @@ export const RideRequestCard: React.FC<Props> = ({
   const trip = offer?.trip
   const seatInfo = offer?.seat_info
   const category = offer?.category || { name: 'Economy', icon: 'car' }
+  const serviceType = offer?.service_type || (trip?.has_parcel ? 'parcel' : 'cab')
 
   const isResponding = state === 'ACCEPTING' || state === 'REJECTING'
   const isAccepted = state === 'ACCEPTED'
@@ -53,18 +60,86 @@ export const RideRequestCard: React.FC<Props> = ({
   const borderCol = isDark ? '#334155' : '#E2E8F0'
   const infoBg = isDark ? '#0F172A' : '#F8FAFC'
 
+  const getServiceHeader = () => {
+    switch (serviceType) {
+      case 'parcel':
+        return { label: 'PARCEL DELIVERY REQUEST', icon: 'package', color: '#F59E0B' }
+      case 'transport':
+        return { label: 'INTERCITY TRANSPORT MATCH', icon: 'bus', color: '#0EA5E9' }
+      case 'hotel':
+        return { label: 'HOTEL LOGISTICS TRANSFER', icon: 'domain', color: '#8B5CF6' }
+      default:
+        return { label: 'NEW CAB BOOKING REQUEST', icon: 'car-side', color: '#10B981' }
+    }
+  }
+
+  const sHeader = getServiceHeader()
+
   return (
     <View style={[styles.card, { backgroundColor: bgCard, borderColor: borderCol }]}>
       {/* Top Handle */}
       <View style={[styles.handle, { backgroundColor: isDark ? '#475569' : '#CBD5E1' }]} />
+
+      {/* ─── Dynamic Siren Ringing & Mute Control Strip ─────────────── */}
+      {!isAccepted && !isExpired && !isCancelled && !isSuperseded && (
+        <View
+          style={[
+            styles.sirenStatusRow,
+            {
+              backgroundColor: isMuted
+                ? (isDark ? '#1E293B' : '#F1F5F9')
+                : (isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEF2F2'),
+              borderColor: isMuted ? borderCol : '#FCA5A5',
+            },
+          ]}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+            <MaterialCommunityIcons
+              name={isMuted ? 'volume-variant-off' : 'volume-high'}
+              size={18}
+              color={isMuted ? textSecondary : '#EF4444'}
+            />
+            <Text
+              style={[
+                styles.sirenStatusText,
+                { color: isMuted ? textSecondary : (isDark ? '#FCA5A5' : '#DC2626') },
+              ]}
+              numberOfLines={1}
+            >
+              {isMuted ? '🔊 Siren Muted' : `🔊 Ringing: ${sirenName || 'Driver Siren Alert'}`}
+            </Text>
+            {!isMuted && <View style={styles.soundWavePulse} />}
+          </View>
+
+          {onToggleMute && (
+            <TouchableOpacity
+              style={[
+                styles.muteToggleBtn,
+                { backgroundColor: isMuted ? '#0284C7' : 'rgba(239,68,68,0.2)' },
+              ]}
+              onPress={onToggleMute}
+              activeOpacity={0.7}
+            >
+              <Text
+                style={[
+                  styles.muteToggleBtnText,
+                  { color: isMuted ? '#FFFFFF' : (isDark ? '#FCA5A5' : '#DC2626') },
+                ]}
+              >
+                {isMuted ? 'UNMUTE' : 'MUTE'}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
 
       {/* ─── State Banner Overlays (Expired / Cancelled / Assigned) ─────── */}
       {isCancelled && (
         <View style={styles.cancelledBanner}>
           <Feather name="x-circle" size={18} color="#EF4444" />
           <View style={{ flex: 1, marginLeft: 8 }}>
-            <Text style={styles.cancelledTitle}>Customer Cancelled Ride</Text>
-            <Text style={styles.cancelledSub}>Don't worry — other requests are searching for you!</Text>
+            <Text style={styles.cancelledTitle}>Customer Cancelled Request</Text>
+            <Text style={styles.cancelledSub}>Don't worry — other customer requests are searching for you!</Text>
           </View>
           <TouchableOpacity style={styles.bannerDismissBtn} onPress={onDismiss}>
             <Text style={styles.bannerDismissText}>Got It</Text>
@@ -76,7 +151,7 @@ export const RideRequestCard: React.FC<Props> = ({
         <View style={styles.expiredBanner}>
           <Feather name="clock" size={18} color="#F59E0B" />
           <View style={{ flex: 1, marginLeft: 8 }}>
-            <Text style={styles.expiredTitle}>Offer Expired (180s)</Text>
+            <Text style={styles.expiredTitle}>Request Expired (180s)</Text>
             <Text style={styles.expiredSub}>You're still online and ready for new requests.</Text>
           </View>
           <TouchableOpacity style={styles.bannerDismissBtn} onPress={onDismiss}>
@@ -89,8 +164,8 @@ export const RideRequestCard: React.FC<Props> = ({
         <View style={styles.supersededBanner}>
           <Feather name="info" size={18} color="#3B82F6" />
           <View style={{ flex: 1, marginLeft: 8 }}>
-            <Text style={styles.supersededTitle}>Assigned to Another Driver</Text>
-            <Text style={styles.supersededSub}>Another driver accepted first.</Text>
+            <Text style={styles.supersededTitle}>Assigned to Another Partner</Text>
+            <Text style={styles.supersededSub}>Another nearby driver accepted first.</Text>
           </View>
           <TouchableOpacity style={styles.bannerDismissBtn} onPress={onDismiss}>
             <Text style={styles.bannerDismissText}>OK</Text>
@@ -102,8 +177,8 @@ export const RideRequestCard: React.FC<Props> = ({
         <View style={styles.acceptedBanner}>
           <Feather name="check-circle" size={24} color="#10B981" />
           <View style={{ flex: 1, marginLeft: 10 }}>
-            <Text style={styles.acceptedTitle}>Ride Confirmed! 🎉</Text>
-            <Text style={styles.acceptedSub}>Starting navigation to customer pickup point...</Text>
+            <Text style={styles.acceptedTitle}>Request Confirmed! 🎉</Text>
+            <Text style={styles.acceptedSub}>Starting live GPS route navigation to customer pickup point...</Text>
           </View>
         </View>
       )}
@@ -111,9 +186,9 @@ export const RideRequestCard: React.FC<Props> = ({
       {/* ─── Header: Title + Pulsing Indicator + 180s Timer ────────────── */}
       <View style={styles.headerRow}>
         <View style={styles.titleWrap}>
-          <View style={styles.pulseDot} />
+          <View style={[styles.pulseDot, { backgroundColor: sHeader.color }]} />
           <Text style={[styles.headerTitle, { color: textPrimary }]}>
-            NEW RIDE REQUEST
+            {sHeader.label}
           </Text>
         </View>
         <RideRequestTimer
@@ -558,5 +633,35 @@ const styles = StyleSheet.create({
   bannerDismissText: {
     fontSize: 12,
     fontWeight: '700',
+  },
+  sirenStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginBottom: 12,
+  },
+  sirenStatusText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  soundWavePulse: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#EF4444',
+  },
+  muteToggleBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  muteToggleBtnText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
   },
 })

@@ -57,7 +57,7 @@ export const SmartCompanionCard: React.FC<Props> = ({ companion, onDismiss }) =>
 
         <View style={{ flex: 1, marginLeft: 12 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <AppBadge label="Smart Suggestion" variant="accent" size="sm" />
+            <AppBadge label="Smart Suggestion" variant="info" size="sm" />
             {onDismiss && (
               <TouchableOpacity onPress={onDismiss} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 <Feather name="x" size={16} color={theme.colors.textMuted} />

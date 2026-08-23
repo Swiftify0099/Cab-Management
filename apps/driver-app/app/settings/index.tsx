@@ -27,6 +27,7 @@ import {
   DiagnosticsResult,
 } from '../../src/types/driverSettings';
 import { SettingsDevSheet } from '../../src/components/settings/SettingsDevSheet';
+import { useDriverSiren } from '../../src/hooks/useDriverSiren';
 
 export default function SettingsScreen() {
   const { theme, isDark } = useTheme();
@@ -35,9 +36,22 @@ export default function SettingsScreen() {
   const [loading, setLoading] = useState(true);
   const [savingKey, setSavingKey] = useState<string | null>(null);
 
+  // Siren Hook
+  const {
+    selectedSiren,
+    availableSirens,
+    selectSiren,
+    playPreview,
+    testRinging,
+    isPlaying: isSirenPlaying,
+    stopSound,
+  } = useDriverSiren();
+
   // Modals
   const [showLangModal, setShowLangModal] = useState(false);
   const [showNavModal, setShowNavModal] = useState(false);
+  const [showSirenModal, setShowSirenModal] = useState(false);
+  const [testingRinging, setTestingRinging] = useState(false);
   const [showDiagModal, setShowDiagModal] = useState(false);
   const [diagResult, setDiagResult] = useState<DiagnosticsResult | null>(null);
   const [diagLoading, setDiagLoading] = useState(false);
@@ -258,7 +272,7 @@ export default function SettingsScreen() {
         </View>
 
         {/* SECTION 3: AUDIO & ALERTS */}
-        <Text style={styles.sectionHeader}>Audio & Voice Alerts</Text>
+        <Text style={styles.sectionHeader}>Audio & Siren Alerts</Text>
         <View
           style={[
             styles.card,
@@ -268,30 +282,66 @@ export default function SettingsScreen() {
             },
           ]}
         >
-          {/* Voice Navigation */}
-          <View style={styles.rowItem}>
+          {/* Driver Siren Selector */}
+          <TouchableOpacity style={styles.rowItem} onPress={() => setShowSirenModal(true)}>
             <View style={styles.rowLeft}>
-              <Feather name="volume-2" size={18} color="#F59E0B" style={styles.rowIcon} />
-              <View>
-                <Text style={[styles.rowTitle, { color: theme.colors.text }]}>Voice Navigation</Text>
+              <Feather name="volume-2" size={18} color="#EF4444" style={styles.rowIcon} />
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={[styles.rowTitle, { color: theme.colors.text }]}>Incoming Request Siren</Text>
+                  <View style={styles.sirenChoiceBadge}>
+                    <Text style={styles.sirenChoiceBadgeText}>DYNAMIC</Text>
+                  </View>
+                </View>
                 <Text style={[styles.rowSub, { color: theme.colors.textSecondary }]}>
-                  Spoken turn-by-turn guidance prompts
+                  {selectedSiren?.name || 'Driver Siren Alert (drSiran)'}
                 </Text>
               </View>
             </View>
-            <Switch
-              value={settings?.voice_navigation_enabled ?? true}
-              onValueChange={(v) => handleUpdateToggle('voice_navigation_enabled', v)}
-              trackColor={{ false: '#CBD5E1', true: '#F59E0B' }}
-            />
+            <Feather name="chevron-right" size={18} color={theme.colors.textSecondary} />
+          </TouchableOpacity>
+
+          <View style={styles.divider} />
+
+          {/* Test Ringing & Vibration Hardware Verifier */}
+          <View style={styles.rowItem}>
+            <View style={styles.rowLeft}>
+              <MaterialCommunityIcons name="vibrate" size={18} color="#10B981" style={styles.rowIcon} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.rowTitle, { color: theme.colors.text }]}>Test Ringing & Vibration</Text>
+                <Text style={[styles.rowSub, { color: theme.colors.textSecondary }]}>
+                  Verify audio siren and vibration on device (5s test)
+                </Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              style={[
+                styles.testSirenBtn,
+                testingRinging && { backgroundColor: '#EF4444' },
+              ]}
+              onPress={async () => {
+                if (testingRinging || isSirenPlaying) {
+                  stopSound();
+                  setTestingRinging(false);
+                } else {
+                  setTestingRinging(true);
+                  await testRinging();
+                  setTimeout(() => setTestingRinging(false), 5100);
+                }
+              }}
+            >
+              <Text style={styles.testSirenBtnText}>
+                {testingRinging || isSirenPlaying ? 'STOP ⏹' : 'TEST 🔊'}
+              </Text>
+            </TouchableOpacity>
           </View>
 
           <View style={styles.divider} />
 
-          {/* Loud Offer Sound */}
+          {/* Loud Offer Sound Toggle */}
           <View style={styles.rowItem}>
             <View style={styles.rowLeft}>
-              <Feather name="bell" size={18} color="#EF4444" style={styles.rowIcon} />
+              <Feather name="bell" size={18} color="#F59E0B" style={styles.rowIcon} />
               <View>
                 <Text style={[styles.rowTitle, { color: theme.colors.text }]}>Loud Ride Offer Alert</Text>
                 <Text style={[styles.rowSub, { color: theme.colors.textSecondary }]}>
@@ -302,7 +352,27 @@ export default function SettingsScreen() {
             <Switch
               value={settings?.sound_alerts_enabled ?? true}
               onValueChange={(v) => handleUpdateToggle('sound_alerts_enabled', v)}
-              trackColor={{ false: '#CBD5E1', true: '#EF4444' }}
+              trackColor={{ false: '#CBD5E1', true: '#F59E0B' }}
+            />
+          </View>
+
+          <View style={styles.divider} />
+
+          {/* Voice Navigation */}
+          <View style={styles.rowItem}>
+            <View style={styles.rowLeft}>
+              <Feather name="navigation" size={18} color="#0EA5E9" style={styles.rowIcon} />
+              <View>
+                <Text style={[styles.rowTitle, { color: theme.colors.text }]}>Voice Navigation</Text>
+                <Text style={[styles.rowSub, { color: theme.colors.textSecondary }]}>
+                  Spoken turn-by-turn guidance prompts
+                </Text>
+              </View>
+            </View>
+            <Switch
+              value={settings?.voice_navigation_enabled ?? true}
+              onValueChange={(v) => handleUpdateToggle('voice_navigation_enabled', v)}
+              trackColor={{ false: '#CBD5E1', true: '#0EA5E9' }}
             />
           </View>
 
@@ -536,6 +606,92 @@ export default function SettingsScreen() {
             ))}
             <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setShowNavModal(false)}>
               <Text style={styles.modalCloseText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* DRIVER SIREN SELECTION MODAL */}
+      <Modal visible={showSirenModal} transparent animationType="fade" onRequestClose={() => { stopSound(); setShowSirenModal(false); }}>
+        <View style={styles.modalOverlay}>
+          <View
+            style={[
+              styles.modalDialog,
+              {
+                backgroundColor: isDark ? '#0F172A' : '#FFFFFF',
+                borderColor: isDark ? '#1E293B' : '#E2E8F0',
+                maxHeight: '80%',
+              },
+            ]}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <Feather name="volume-2" size={20} color="#EF4444" />
+              <Text style={[styles.modalTitle, { color: theme.colors.text, marginBottom: 0 }]}>
+                Choose Incoming Siren
+              </Text>
+            </View>
+            <Text style={{ fontSize: 11, color: theme.colors.textSecondary, marginBottom: 14 }}>
+              Select the audio tone that rings continuously when a customer books a ride or delivery.
+            </Text>
+
+            {availableSirens.map((siren) => {
+              const isSelected = selectedSiren?.id === siren.id;
+              return (
+                <View
+                  key={siren.id}
+                  style={[
+                    styles.sirenOptionRow,
+                    isSelected && styles.sirenOptionRowActive,
+                    { borderColor: isDark ? '#334155' : '#E2E8F0' },
+                  ]}
+                >
+                  <TouchableOpacity
+                    style={{ flex: 1 }}
+                    onPress={async () => {
+                      await selectSiren(siren.id);
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text
+                        style={[
+                          styles.sirenOptionName,
+                          { color: isSelected ? '#EF4444' : theme.colors.text },
+                        ]}
+                      >
+                        {siren.name}
+                      </Text>
+                      {isSelected && (
+                        <View style={styles.selectedBadge}>
+                          <Text style={styles.selectedBadgeText}>SELECTED</Text>
+                        </View>
+                      )}
+                    </View>
+                    <Text style={[styles.sirenOptionSub, { color: theme.colors.textSecondary }]}>
+                      {siren.subtitle}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Preview Button */}
+                  <TouchableOpacity
+                    style={[styles.previewToneBtn, { backgroundColor: isDark ? '#1E293B' : '#F1F5F9' }]}
+                    onPress={() => playPreview(siren.id)}
+                    activeOpacity={0.7}
+                  >
+                    <Feather name="play" size={14} color="#0284C7" />
+                    <Text style={styles.previewToneBtnText}>Preview</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+
+            <TouchableOpacity
+              style={styles.modalCloseBtn}
+              onPress={() => {
+                stopSound();
+                setShowSirenModal(false);
+              }}
+            >
+              <Text style={styles.modalCloseText}>Done</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -798,4 +954,50 @@ const styles = StyleSheet.create({
     backgroundColor: '#EF4444',
   },
   confirmDeactText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
+  sirenChoiceBadge: {
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  sirenChoiceBadgeText: { color: '#EF4444', fontSize: 9, fontWeight: '800' },
+  testSirenBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#10B981',
+  },
+  testSirenBtnText: { color: '#FFFFFF', fontSize: 11, fontWeight: '800' },
+  sirenOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginBottom: 8,
+  },
+  sirenOptionRowActive: {
+    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+    borderColor: '#EF4444',
+  },
+  sirenOptionName: { fontSize: 13, fontWeight: '700' },
+  sirenOptionSub: { fontSize: 11, marginTop: 2 },
+  selectedBadge: {
+    backgroundColor: '#EF4444',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  selectedBadgeText: { color: '#FFFFFF', fontSize: 8, fontWeight: '800' },
+  previewToneBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  previewToneBtnText: { color: '#0284C7', fontSize: 11, fontWeight: '700' },
 });
