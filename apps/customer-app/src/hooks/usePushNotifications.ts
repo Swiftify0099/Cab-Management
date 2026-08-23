@@ -36,7 +36,7 @@ export function usePushNotifications() {
   const [notification, setNotification] = useState<NotificationsType.Notification | undefined>();
   const notificationListener = useRef<NotificationsType.Subscription | null>(null);
   const responseListener = useRef<NotificationsType.Subscription | null>(null);
-  const authToken = useAuthStore((s) => s.token);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
 
   useEffect(() => {
     if (!Notifications) return;
@@ -56,7 +56,7 @@ export function usePushNotifications() {
         console.log('');
 
         // ── Send FCM token to backend ──
-        if (authToken) {
+        if (isAuthenticated) {
           api.post('/auth/device-token', { token, platform: Platform.OS })
             .then(() => console.log('[PushNotif] FCM token registered with backend ✅'))
             .catch((err) => console.warn('[PushNotif] Backend token registration failed:', err?.response?.data || err?.message));
@@ -78,7 +78,7 @@ export function usePushNotifications() {
       if (notificationListener.current) notificationListener.current.remove();
       if (responseListener.current) responseListener.current.remove();
     };
-  }, [authToken]);
+  }, [isAuthenticated]);
 
   return { fcmToken, notification };
 }

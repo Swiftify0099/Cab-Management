@@ -129,7 +129,7 @@ export default function PaymentScreen() {
 
       const result = await WebBrowser.openBrowserAsync(`${checkoutUrl}?${params}`)
 
-      if (result.type === 'dismiss' || result.type === 'success') {
+      if (result.type === 'dismiss' || (result.type as string) === 'success') {
         const verifyRes = await api.get(`/payments/status/${order.order_id}`)
         if (verifyRes.data?.data?.status === 'captured') {
           Alert.alert('✅ Payment Successful!', 'Your booking is confirmed.', [
@@ -168,7 +168,7 @@ export default function PaymentScreen() {
       
       const result = await WebBrowser.openBrowserAsync(`${checkoutUrl}?${params}`)
       
-      if (result.type === 'dismiss' || result.type === 'success') {
+      if (result.type === 'dismiss' || (result.type as string) === 'success') {
         const verifyRes = await api.get(`/payments/status/${order.order_id}`)
         if (verifyRes.data?.data?.status === 'captured') {
           const res = await api.get('/wallet')

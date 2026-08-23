@@ -285,7 +285,7 @@ export default function RoutePickerScreen() {
       <MapView
         ref={mapRef}
         provider={PROVIDER_GOOGLE}
-        style={StyleSheet.absoluteFillObject}
+        style={StyleSheet.absoluteFill}
         region={region}
         onRegionChangeComplete={onRegionChangeComplete}
         showsUserLocation={permGranted}
@@ -299,7 +299,7 @@ export default function RoutePickerScreen() {
 
       {/* Center Pin */}
       <View
-        style={{ ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', paddingBottom: 40 }}
+        style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center', paddingBottom: 40 }]}
         pointerEvents="none"
       >
         <View style={[styles.pinBubble, { backgroundColor: accentColor }]}>

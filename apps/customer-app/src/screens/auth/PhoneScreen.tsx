@@ -20,6 +20,8 @@ import { useAuthStore } from '../../store/auth.store'
 
 WebBrowser.maybeCompleteAuthSession()
 
+const DEFAULT_GOOGLE_CLIENT_ID = '514560559715-ffbetgaeamcv7lq4soj0opug5tgbh1kj.apps.googleusercontent.com'
+
 export default function PhoneScreen() {
   const [phone, setPhone] = useState('')
   const [loading, setLoading] = useState(false)
@@ -29,10 +31,14 @@ export default function PhoneScreen() {
   const login = useAuthStore((s) => s.login)
 
   // Google OAuth via expo-auth-session
+  const webClientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || DEFAULT_GOOGLE_CLIENT_ID
+  const androidClientId = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || DEFAULT_GOOGLE_CLIENT_ID
+  const iosClientId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || DEFAULT_GOOGLE_CLIENT_ID
+
   const [request, response, promptAsync] = Google.useAuthRequest({
-    webClientId:     process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
-    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
-    iosClientId:     process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
+    webClientId,
+    androidClientId,
+    iosClientId,
   })
 
   // Handle Google auth response
@@ -90,7 +96,8 @@ export default function PhoneScreen() {
         router.push({ pathname: '/auth/otp', params: { phone: fullPhone } })
       }
     } catch (err: any) {
-      const msg = err?.response?.data?.detail || 'Failed to send OTP. Please try again.'
+      console.error('[SendOtp Error]', err?.message, err?.response?.data || err)
+      const msg = err?.response?.data?.detail || err?.response?.data?.message || (err?.message ? `Network Error: ${err.message}` : 'Failed to send OTP. Please try again.')
       setError(msg)
       shake()
     } finally {
@@ -99,7 +106,7 @@ export default function PhoneScreen() {
   }
 
   const handleGoogleSignIn = async () => {
-    if (!process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID) {
+    if (!webClientId) {
       Alert.alert(
         'Google Sign-In Not Configured',
         'Add EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID to your .env file to enable Google login.',
@@ -109,11 +116,14 @@ export default function PhoneScreen() {
     }
     setGoogleLoading(true)
     try {
+      if (!promptAsync) {
+        throw new Error('Google Sign-In is not initialized.')
+      }
       await promptAsync()
       // Response handled in useEffect above
-    } catch {
+    } catch (err: any) {
       setGoogleLoading(false)
-      Alert.alert('Error', 'Could not open Google Sign-In.')
+      Alert.alert('Error', err?.message || 'Could not open Google Sign-In.')
     }
   }
 
