@@ -104,3 +104,71 @@ export const getRoutePolyline = async (
     { latitude: end.lat, longitude: end.lon },
   ]
 }
+
+/**
+ * Reverse Geocode coordinate → human readable address.
+ * Uses expo-location first, then Google Maps Geocoding API.
+ */
+export const reverseGeocodeCoordinate = async (
+  latitude: number,
+  longitude: number
+): Promise<string> => {
+  try {
+    const Location = require('expo-location')
+    const [addressObj] = await Location.reverseGeocodeAsync({ latitude, longitude })
+    if (addressObj) {
+      const parts = [
+        addressObj.name,
+        addressObj.street,
+        addressObj.subregion || addressObj.district,
+        addressObj.city,
+        addressObj.region,
+      ].filter(Boolean)
+      if (parts.length > 0) {
+        return parts.join(', ')
+      }
+    }
+  } catch (err) {
+    console.warn('[ReverseGeocode] expo-location failed:', err)
+  }
+
+  // Google Maps Geocoding Fallback
+  if (GOOGLE_API_KEY) {
+    try {
+      const res = await axios.get(
+        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GOOGLE_API_KEY}`,
+        { timeout: 8000 }
+      )
+      if (res.data?.status === 'OK' && res.data.results?.length > 0) {
+        return res.data.results[0].formatted_address
+      }
+    } catch (e) {
+      console.warn('[ReverseGeocode] Google API error:', e)
+    }
+  }
+
+  return `Lat: ${latitude.toFixed(4)}, Lng: ${longitude.toFixed(4)}`
+}
+
+/**
+ * Haversine distance in km between two coordinates.
+ */
+export const haversineDistance = (
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number => {
+  const R = 6371.0
+  const dLat = ((lat2 - lat1) * Math.PI) / 180.0
+  const dLon = ((lon2 - lon1) * Math.PI) / 180.0
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180.0) *
+      Math.cos((lat2 * Math.PI) / 180.0) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return Math.round(R * c * 10) / 10
+}
+

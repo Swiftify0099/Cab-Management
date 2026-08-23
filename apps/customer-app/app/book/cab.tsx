@@ -26,8 +26,9 @@ import { DateTimePickerAndroid } from '@react-native-community/datetimepicker'
 
 import { useTheme } from '../../src/contexts/ThemeContext'
 import { useTranslation } from '../../src/i18n'
+import { useAuthStore } from '../../src/store/auth.store'
 import { rideApi, fareApi, familyApi, scheduleApi, smartApi } from '../../src/api/client'
-import { getRoutePolyline } from '../../src/utils/maps'
+import { getRoutePolyline, reverseGeocodeCoordinate, haversineDistance, geocodeCity } from '../../src/utils/maps'
 import {
   AppText,
   AppButton,
@@ -75,6 +76,9 @@ export default function CabBookingScreen() {
   const { theme, isDark } = useTheme()
   const { t } = useTranslation()
 
+  const { user } = useAuthStore()
+  const mapRef = useRef<MapView>(null)
+
   const params = useLocalSearchParams<{
     pickupAddress?: string
     pickupLat?: string
@@ -82,6 +86,9 @@ export default function CabBookingScreen() {
     dropAddress?: string
     dropLat?: string
     dropLng?: string
+    riderName?: string
+    riderPhone?: string
+    riderType?: string
   }>()
 
   // ── Mode Switchers ──
@@ -141,10 +148,25 @@ export default function CabBookingScreen() {
 
   // ── Booking Participant Contract (Feature 1) ──
   const [riderType, setRiderType] = useState<'SELF' | 'FAMILY_MEMBER' | 'GUEST'>('SELF')
-  const [riderName, setRiderName] = useState<string>('Pankaj Patil')
-  const [riderPhone, setRiderPhone] = useState<string>('+919876543210')
+  const [riderName, setRiderName] = useState<string>(user?.name || 'Pankaj Patil')
+  const [riderPhone, setRiderPhone] = useState<string>(user?.phone || '+919876543210')
   const [familyMembers, setFamilyMembers] = useState<any[]>([])
   const [participantModalVisible, setParticipantModalVisible] = useState<boolean>(false)
+
+  // Sync return params from rider selection or search
+  useEffect(() => {
+    if (params.riderName) setRiderName(params.riderName)
+    if (params.riderPhone) setRiderPhone(params.riderPhone)
+    if (params.riderType) setRiderType(params.riderType as any)
+    if (params.pickupAddress) setPickupAddress(params.pickupAddress)
+    if (params.dropAddress) setDropAddress(params.dropAddress)
+    if (params.pickupLat && params.pickupLng) {
+      setPickupCoord({ latitude: parseFloat(params.pickupLat), longitude: parseFloat(params.pickupLng) })
+    }
+    if (params.dropLat && params.dropLng) {
+      setDropCoord({ latitude: parseFloat(params.dropLat), longitude: parseFloat(params.dropLng) })
+    }
+  }, [params.riderName, params.riderPhone, params.riderType, params.pickupAddress, params.dropAddress, params.pickupLat, params.pickupLng, params.dropLat, params.dropLng])
 
   // ── Preferences & Payment ──
   const [seats, setSeats] = useState<number>(1)
@@ -214,6 +236,31 @@ export default function CabBookingScreen() {
 
   // ── 2. Route & Polyline Computation ──
   const computeRouteAndFare = useCallback(async () => {
+    // 1. Calculate Real Spatial Distance
+    let totalDist = haversineDistance(
+      pickupCoord.latitude,
+      pickupCoord.longitude,
+      dropCoord.latitude,
+      dropCoord.longitude
+    )
+    if (stops.length > 0) {
+      let pLat = pickupCoord.latitude
+      let pLng = pickupCoord.longitude
+      let stopsDist = 0
+      for (const s of stops) {
+        stopsDist += haversineDistance(pLat, pLng, s.lat, s.lng)
+        pLat = s.lat
+        pLng = s.lng
+      }
+      stopsDist += haversineDistance(pLat, pLng, dropCoord.latitude, dropCoord.longitude)
+      totalDist = Math.max(totalDist, stopsDist)
+    }
+
+    const calculatedDist = Math.max(totalDist, 2.0)
+    const calculatedDur = Math.max(Math.round((calculatedDist / 35.0) * 60), 10)
+    setRouteDistanceKm(calculatedDist)
+    setRouteDurationMin(calculatedDur)
+
     try {
       const coords = await getRoutePolyline(
         { lat: pickupCoord.latitude, lon: pickupCoord.longitude },
@@ -224,9 +271,17 @@ export default function CabBookingScreen() {
       }
     } catch {}
 
+    // Auto-fit map to coordinates
+    try {
+      mapRef.current?.fitToCoordinates(
+        [pickupCoord, ...stops.map((s) => ({ latitude: s.lat, longitude: s.lng })), dropCoord],
+        { edgePadding: { top: 50, right: 50, bottom: 50, left: 50 }, animated: true }
+      )
+    } catch {}
+
     // Compute Authoritative Dynamic Fare
-    const dist = routeDistanceKm || 148
-    const dur = routeDurationMin || 180
+    const dist = calculatedDist
+    const dur = calculatedDur
     const cat = selectedCategory || DEFAULT_CATEGORIES[1]
 
     const base = cat.base_fare || 75
@@ -257,7 +312,7 @@ export default function CabBookingScreen() {
 
     // Update default suggested custom offer to ~90% of total
     setCustomOffer(Math.round((total * 0.9) / 50) * 50)
-  }, [pickupCoord, dropCoord, selectedCategory, routeDistanceKm, routeDurationMin, appliedCoupon])
+  }, [pickupCoord, dropCoord, stops, selectedCategory, appliedCoupon])
 
   useEffect(() => {
     computeRouteAndFare()
@@ -284,16 +339,35 @@ export default function CabBookingScreen() {
   }
 
   // ── 4. Use Current Location GPS ──
+  const [gpsLoading, setGpsLoading] = useState(false)
   const handleUseCurrentLocation = async () => {
     try {
+      setGpsLoading(true)
       const { status } = await Location.requestForegroundPermissionsAsync()
-      if (status === 'granted') {
-        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
-        setPickupCoord({ latitude: loc.coords.latitude, longitude: loc.coords.longitude })
-        setPickupAddress('Current GPS Location (Pune Central)')
+      if (status !== 'granted') {
+        Alert.alert('Location Permission', 'Please allow location permission to use current GPS location.')
+        return
       }
-    } catch {
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High })
+      const lat = loc.coords.latitude
+      const lng = loc.coords.longitude
+      setPickupCoord({ latitude: lat, longitude: lng })
+      const resolvedAddress = await reverseGeocodeCoordinate(lat, lng)
+      setPickupAddress(resolvedAddress)
+
+      mapRef.current?.animateToRegion(
+        {
+          latitude: lat,
+          longitude: lng,
+          latitudeDelta: 0.05,
+          longitudeDelta: 0.05,
+        },
+        1000
+      )
+    } catch (err: any) {
       Alert.alert('GPS Error', 'Unable to retrieve current coordinates.')
+    } finally {
+      setGpsLoading(false)
     }
   }
 
@@ -724,6 +798,7 @@ export default function CabBookingScreen() {
           {/* ── Route Map Preview ── */}
           <View style={styles.mapContainer}>
             <MapView
+              ref={mapRef}
               style={styles.map}
               provider={PROVIDER_GOOGLE}
               initialRegion={{

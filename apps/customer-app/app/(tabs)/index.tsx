@@ -297,13 +297,29 @@ export default function HomeScreen() {
       setComingSoonModal(service)
       return
     }
+    if (service.route === '/book/cab') {
+      router.push({
+        pathname: '/book/cab',
+        params: {
+          pickupAddress: currentAddress || undefined,
+          pickupLat: coords?.lat ? coords.lat.toString() : undefined,
+          pickupLng: coords?.lng ? coords.lng.toString() : undefined,
+        },
+      } as any)
+      return
+    }
     router.push(service.route as any)
   }
 
   const handleSavedPlacePress = (place: any) => {
     router.push({
       pathname: '/book/cab',
-      params: { destination: place.full_address || place.address || place.label },
+      params: {
+        pickupAddress: currentAddress || undefined,
+        pickupLat: coords?.lat ? coords.lat.toString() : undefined,
+        pickupLng: coords?.lng ? coords.lng.toString() : undefined,
+        dropAddress: place.full_address || place.address || place.label,
+      },
     } as any)
   }
 
@@ -411,7 +427,16 @@ export default function HomeScreen() {
           <View style={{ marginHorizontal: 20, marginBottom: 12 }}>
             <AppSearchBar
               placeholder={t('home.where_to', 'Where are you heading today?')}
-              onPress={() => router.push('/book/cab' as any)}
+              onPress={() =>
+                router.push({
+                  pathname: '/book/cab',
+                  params: {
+                    pickupAddress: currentAddress || undefined,
+                    pickupLat: coords?.lat ? coords.lat.toString() : undefined,
+                    pickupLng: coords?.lng ? coords.lng.toString() : undefined,
+                  },
+                } as any)
+              }
             />
           </View>
 

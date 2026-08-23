@@ -120,7 +120,16 @@ export default function RiderSelectionScreen() {
   }
 
   const handleConfirm = () => {
-    router.back()
+    const selected = participants.find((p) => p.id === selectedId) || participants[0]
+    router.replace({
+      pathname: '/book/cab',
+      params: {
+        ...params,
+        riderName: selected ? selected.name : 'Myself',
+        riderPhone: selected ? selected.phone : '',
+        riderType: selected ? selected.participant_type : 'SELF',
+      },
+    } as any)
   }
 
   const getIcon = (type: string) => {
