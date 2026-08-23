@@ -27,6 +27,27 @@ from app.services.notification_center_service import NotificationCenterService
 from app.services.scheduled_ride_service import ScheduledRideService
 from app.services.trip_history_service import TripHistoryService
 from app.services.driver_settings_service import DriverSettingsService
+from app.services.destination_mode_service import DestinationModeService
+from app.services.back_to_back_service import BackToBackService
+from app.services.during_ride_service import DuringRideService
+from app.services.multi_stop_service import MultiStopService
+from app.services.driver_safety_service import DriverSafetyService
+from app.services.communication_service import CommunicationService
+from app.services.navigation_service import NavigationService
+from app.services.ride_start_service import RideStartService
+from app.services.trip_completion_service import TripCompletionService
+from app.services.waiting_service import WaitingService
+from app.services.cancellation_service import CancellationService
+from app.services.hazard_service import HazardService
+from app.services.driver_earnings_service import DriverEarningsService
+from app.services.driver_performance_service import DriverPerformanceService
+from app.services.driver_wallet_service import DriverWalletService
+from app.services.safety_sos_service import SafetySOSService
+from app.services.smart_radar import SmartRadarService
+from app.services.spatial_resolver import SpatialResolverService
+from app.services.route_cache import RouteCacheService
+from app.services.atomic_matching import AtomicMatchingEngine
+from app.services.ride_dispatch import RideDispatchService
 
 router = APIRouter()
 
@@ -2845,7 +2866,6 @@ async def set_destination_mode(
     db: AsyncSession = Depends(get_db),
     current_user: AuthenticatedUser = Depends(get_current_active_driver),
 ):
-    from app.services.destination_mode_service import DestinationModeService
     from common.models.all_models import Driver
     d_res = await db.execute(select(Driver).where(Driver.user_id == current_user.id))
     driver = d_res.scalar_one_or_none()
@@ -2874,7 +2894,6 @@ async def get_destination_status(
     db: AsyncSession = Depends(get_db),
     current_user: AuthenticatedUser = Depends(get_current_active_driver),
 ):
-    from app.services.destination_mode_service import DestinationModeService
     from common.models.all_models import Driver
     d_res = await db.execute(select(Driver).where(Driver.user_id == current_user.id))
     driver = d_res.scalar_one_or_none()
@@ -2896,7 +2915,6 @@ async def check_destination_progress(
     db: AsyncSession = Depends(get_db),
     current_user: AuthenticatedUser = Depends(get_current_active_driver),
 ):
-    from app.services.destination_mode_service import DestinationModeService
     from common.models.all_models import Driver
     d_res = await db.execute(select(Driver).where(Driver.user_id == current_user.id))
     driver = d_res.scalar_one_or_none()

@@ -21,6 +21,8 @@ from common.models.all_models import (
     DriverPointWallet, DriverPointTransaction, RideEventLog
 )
 from app.services.ride_fare_engine import haversine_distance_km
+from app.services.destination_mode_service import DestinationModeService
+from app.services.back_to_back_service import BackToBackService
 
 DESTINATION_PROXIMITY_RADIUS_M = 100.0
 DEFAULT_PLATFORM_COMMISSION_PCT = 0.20  # 20% commission

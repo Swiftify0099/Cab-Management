@@ -38,6 +38,8 @@ from common.models.all_models import (
     MediaOwnerType,
     MediaType,
     Vehicle,
+    User,
+    UserRole,
 )
 from common.schemas.response import APIResponse, MessageResponse
 from common.utils.cloudinary_service import CloudinaryService
@@ -1065,8 +1067,141 @@ async def delete_driver_fuel_expense(
 
 
 # ============================================================
-# DRIVER VEHICLE ACTIVE SWITCH
+# DRIVER VEHICLES (LIST, REGISTER, ACTIVATE, GET, DELETE)
 # ============================================================
+
+@router.get("/vehicles", response_model=APIResponse[List[dict]], summary="List driver vehicles")
+@router.get("/my-vehicles", response_model=APIResponse[List[dict]], summary="List driver vehicles")
+async def list_driver_vehicles(
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+    db: AsyncSession = Depends(get_db),
+):
+    driver_res = await db.execute(select(Driver).where(Driver.user_id == current_user.id))
+    driver = driver_res.scalar_one_or_none()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver not found")
+
+    v_res = await db.execute(select(Vehicle).where(Vehicle.driver_id == driver.id))
+    vehicles = v_res.scalars().all()
+
+    data = [
+        {
+            "id": str(v.id),
+            "vehicle_type": v.vehicle_type.value if hasattr(v.vehicle_type, "value") else str(v.vehicle_type),
+            "make": v.make,
+            "model": v.model,
+            "year": v.year,
+            "color": v.color,
+            "registration_number": v.registration_number,
+            "seat_capacity": v.seat_capacity,
+            "is_active": getattr(v, "is_active", True),
+            "is_verified": getattr(v, "is_verified", False),
+            "photos": [get_file_url(p) for p in (v.photos or [])],
+        }
+        for v in vehicles
+    ]
+    return APIResponse(message="Vehicles fetched", data=data)
+
+
+@router.post("/vehicles", response_model=APIResponse[VehicleResponse], status_code=status.HTTP_201_CREATED, summary="Register vehicle")
+async def create_vehicle_alias(
+    data: VehicleCreate,
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Driver).where(Driver.user_id == current_user.id))
+    profile = result.scalar_one_or_none()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Please complete driver profile setup first")
+
+    vehicle = await add_driver_vehicle(db=db, driver=profile, data=data)
+    await db.commit()
+
+    return APIResponse(
+        message="Vehicle registered",
+        data=VehicleResponse(
+            id=vehicle.id,
+            vehicle_type=vehicle.vehicle_type.value,
+            make=vehicle.make,
+            model=vehicle.model,
+            year=vehicle.year,
+            color=vehicle.color,
+            registration_number=vehicle.registration_number,
+            seat_capacity=vehicle.seat_capacity,
+            parcel_capable=vehicle.parcel_capable,
+            parcel_capacity_kg=vehicle.parcel_capacity_kg,
+            has_ac=vehicle.has_ac,
+            insurance_expiry=vehicle.insurance_expiry,
+            pollution_expiry=vehicle.pollution_expiry,
+            photos=[get_file_url(p) for p in (vehicle.photos or [])],
+        ),
+    )
+
+
+@router.get("/vehicles/{vehicle_id}", response_model=APIResponse[dict], summary="Get vehicle details")
+async def get_driver_vehicle(
+    vehicle_id: str,
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+    db: AsyncSession = Depends(get_db),
+):
+    driver_res = await db.execute(select(Driver).where(Driver.user_id == current_user.id))
+    driver = driver_res.scalar_one_or_none()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver not found")
+
+    try:
+        v_uuid = uuid.UUID(vehicle_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid vehicle ID format")
+
+    v_res = await db.execute(select(Vehicle).where(Vehicle.id == v_uuid, Vehicle.driver_id == driver.id))
+    vehicle = v_res.scalar_one_or_none()
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vehicle not found")
+
+    return APIResponse(
+        message="Vehicle details fetched",
+        data={
+            "id": str(vehicle.id),
+            "vehicle_type": vehicle.vehicle_type.value if hasattr(vehicle.vehicle_type, "value") else str(vehicle.vehicle_type),
+            "make": vehicle.make,
+            "model": vehicle.model,
+            "year": vehicle.year,
+            "color": vehicle.color,
+            "registration_number": vehicle.registration_number,
+            "seat_capacity": vehicle.seat_capacity,
+            "is_active": getattr(vehicle, "is_active", True),
+            "is_verified": getattr(vehicle, "is_verified", False),
+            "photos": [get_file_url(p) for p in (vehicle.photos or [])],
+        },
+    )
+
+
+@router.delete("/vehicles/{vehicle_id}", response_model=APIResponse[dict], summary="Delete vehicle")
+async def delete_driver_vehicle(
+    vehicle_id: str,
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+    db: AsyncSession = Depends(get_db),
+):
+    driver_res = await db.execute(select(Driver).where(Driver.user_id == current_user.id))
+    driver = driver_res.scalar_one_or_none()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver not found")
+
+    try:
+        v_uuid = uuid.UUID(vehicle_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid vehicle ID format")
+
+    v_res = await db.execute(select(Vehicle).where(Vehicle.id == v_uuid, Vehicle.driver_id == driver.id))
+    vehicle = v_res.scalar_one_or_none()
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vehicle not found")
+
+    await db.delete(vehicle)
+    await db.commit()
+    return APIResponse(message="Vehicle deleted successfully", data={"deleted": True})
+
 
 @router.post("/vehicles/{vehicle_id}/activate", response_model=APIResponse[dict], summary="Set active vehicle for driver")
 async def activate_driver_vehicle(

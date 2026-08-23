@@ -334,21 +334,21 @@ for k in list(sys.modules.keys()):
 sys.path.remove(_notification_path)
 
 # Restore all sub-service modules
-sys.path.insert(0, _auth_path)
-sys.modules.update(_auth_mods)
-sys.modules.update(_booking_mods)
-sys.modules.update(_matching_mods)
-sys.modules.update(_payment_mods)
-sys.modules.update(_admin_mods)
-sys.modules.update(_analytics_mods)
-sys.modules.update(_parcel_mods)
-sys.modules.update(_hotel_mods)
-sys.modules.update(_transport_mods)
-sys.modules.update(_airport_mods)
-sys.modules.update(_rental_mods)
-sys.modules.update(_outstation_mods)
-sys.modules.update(_corporate_mods)
-sys.modules.update(_notification_mods)
+all_service_mod_dicts = [
+    _auth_mods, _booking_mods, _matching_mods, _payment_mods,
+    _admin_mods, _analytics_mods, _parcel_mods, _hotel_mods,
+    _transport_mods, _airport_mods, _rental_mods, _outstation_mods,
+    _corporate_mods, _notification_mods,
+]
+for mod_dict in all_service_mod_dicts:
+    sys.modules.update(mod_dict)
+
+# Unify all submodules onto app.services and app.core to prevent collision/shadowing
+_services_mod = sys.modules.get('app.services')
+if _services_mod:
+    for k, v in list(sys.modules.items()):
+        if k.startswith('app.services.') and len(k.split('.')) == 3:
+            setattr(_services_mod, k.split('.')[2], v)
 
 # Fix module attribute collisions across merged microservices
 _cfg = sys.modules.get('app.core.config')
