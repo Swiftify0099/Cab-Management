@@ -478,17 +478,23 @@ class RideDispatchService:
         Customer cancels a ride request while MATCHING or ASSIGNED.
         Marks ride CANCELLED, invalidates pending offers, and removes request from all driver radars.
         """
+        try:
+            req_uuid = uuid.UUID(str(ride_request_id))
+            cust_uuid = uuid.UUID(str(customer_user_id))
+        except (ValueError, TypeError, AttributeError):
+            return {"success": False, "message": "Invalid or mock ride request ID"}
+
         req_res = await self.db.execute(
             select(RideRequest).where(
                 and_(
-                    RideRequest.id == uuid.UUID(ride_request_id),
-                    RideRequest.customer_id == uuid.UUID(customer_user_id),
+                    RideRequest.id == req_uuid,
+                    RideRequest.customer_id == cust_uuid,
                 )
             )
         )
         ride_req = req_res.scalar_one_or_none()
         if not ride_req:
-            raise ValueError("Ride request not found")
+            return {"success": False, "message": "Ride request not found"}
 
         if ride_req.status in (RideRequestStatus.COMPLETED, RideRequestStatus.CANCELLED):
             return {"success": False, "message": f"Cannot cancel ride in {ride_req.status.value} status"}

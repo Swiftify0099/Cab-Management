@@ -1084,6 +1084,76 @@ async def get_ride_categories(
     return SuccessResponse(success=True, message="Ride categories", data=data)
 
 
+class EstimateRideFareSchema(BaseModel):
+    pickup_lat: float
+    pickup_lng: float
+    dest_lat: float
+    dest_lng: float
+    category_name: Optional[str] = None
+    stops: Optional[List[Dict[str, Any]]] = None
+
+
+@router.post(
+    "/rides/estimate",
+    response_model=SuccessResponse,
+    summary="Estimate fare for on-demand ride",
+)
+async def estimate_ride_fare_endpoint(
+    request: EstimateRideFareSchema,
+    db: AsyncSession = Depends(get_db),
+):
+    from common.models.all_models import RideCategory
+    from app.services.ride_fare_engine import haversine_distance_km, estimate_ride_fare
+
+    dist_km = haversine_distance_km(
+        request.pickup_lat, request.pickup_lng,
+        request.dest_lat, request.dest_lng,
+        min_km=1.0,
+    )
+    if request.stops:
+        prev_lat, prev_lng = request.pickup_lat, request.pickup_lng
+        total_d = 0.0
+        for s in request.stops:
+            s_lat = s.get("lat") or s.get("latitude")
+            s_lng = s.get("lng") or s.get("longitude")
+            if s_lat and s_lng:
+                total_d += haversine_distance_km(prev_lat, prev_lng, float(s_lat), float(s_lng))
+                prev_lat, prev_lng = float(s_lat), float(s_lng)
+        total_d += haversine_distance_km(prev_lat, prev_lng, request.dest_lat, request.dest_lng)
+        dist_km = max(total_d, dist_km)
+
+    cat_res = await db.execute(
+        select(RideCategory).where(RideCategory.name.ilike(request.category_name or "Economy"))
+    )
+    category = cat_res.scalar_one_or_none()
+
+    est = estimate_ride_fare(distance_km=dist_km, category=category)
+    return SuccessResponse(
+        success=True,
+        message="Fare estimated successfully",
+        data=est.to_dict(),
+    )
+
+
+@router.get(
+    "/rides/schedule-config",
+    response_model=SuccessResponse,
+    summary="Get configuration for scheduling advance rides",
+)
+async def get_schedule_config():
+    return SuccessResponse(
+        success=True,
+        message="Schedule configuration",
+        data={
+            "min_lead_time_minutes": 30,
+            "max_advance_booking_days": 7,
+            "operating_hours_start": "00:00",
+            "operating_hours_end": "23:59",
+            "cancellation_window_minutes": 15,
+        },
+    )
+
+
 # ============================================================
 # SMART RIDE SELECTION & RADAR ENDPOINTS (Feature 6)
 # ============================================================

@@ -9,7 +9,7 @@ class SmartRadarServiceClass {
   public async getCandidates(filterType: SmartRadarFilterType = 'all'): Promise<SmartRadarCandidate[]> {
     try {
       const res = await api.get(`/matching/radar/candidates?filter_type=${filterType}`)
-      const candidates = res.data?.data?.candidates || []
+      const candidates = res.data?.data?.candidates || res.data?.data?.rides || []
       return candidates
     } catch (err: any) {
       console.warn('[SmartRadarService] getCandidates API error, using fallback:', err.message)

@@ -409,6 +409,7 @@ if _booking_ok:
 
 if _matching_ok:
     app.include_router(matching_router, prefix="/api/v1/matching", tags=["Matching"])
+    app.include_router(matching_router, prefix="/api/v1", tags=["Matching (Rides)"])
 
 if _payment_ok:
     app.include_router(payment_router, prefix="/api/v1", tags=["Payment"])
