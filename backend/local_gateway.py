@@ -89,10 +89,10 @@ sys.path.insert(0, os.path.join(_ROOT, "common"))
 sys.path.insert(0, _ROOT)
 
 try:
-    from app.api.v1 import auth_router, admin_auth_router, profile_router, driver_router, family_router, emergency_router, customer_settings_router, customer_home_router, services_router, customer_security_router, smart_router, orchestration_router
+    from app.api.v1 import auth_router, admin_auth_router, profile_router, driver_router, kyc_router, family_router, emergency_router, customer_settings_router, customer_home_router, services_router, customer_security_router, smart_router, orchestration_router
     from app.api.v1.riders import router as riders_router
     _auth_ok = True
-    print("[AUTH]    [OK] auth / profile / driver / riders / security / smart / orchestration")
+    print("[AUTH]    [OK] auth / profile / driver / kyc / riders / security / smart / orchestration")
 except Exception as _e:
     _auth_ok = False
     print(f"[AUTH]    [ERR] {_e}")
@@ -389,6 +389,8 @@ if _auth_ok:
     app.include_router(admin_auth_router, prefix="/api/v1/admin/auth", tags=["Admin Auth"])
     app.include_router(profile_router,    prefix="/api/v1/profile",    tags=["Profile"])
     app.include_router(driver_router,     prefix="/api/v1/driver",     tags=["Driver"])
+    app.include_router(kyc_router,        prefix="/api/v1/driver/kyc", tags=["Driver KYC"])
+    app.include_router(kyc_router,        prefix="/api/v1/driver",     tags=["Driver KYC"])
     app.include_router(family_router,     prefix="/api/v1/family",     tags=["Family"])
     app.include_router(riders_router,     prefix="/api/v1/customer/riders", tags=["Saved Riders & Participants"])
     app.include_router(emergency_router,  prefix="/api/v1/customer/emergency-contacts", tags=["Emergency Contacts"])

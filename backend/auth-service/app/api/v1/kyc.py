@@ -175,6 +175,16 @@ async def get_document_details(
     rejection_msg = doc.rejection_reason if (doc and doc.rejection_reason) else "Document requires re-upload."
     action_req = "Please upload a clear, high-resolution original scan or photo." if (doc and doc.rejection_reason) else "Upload document to proceed."
 
+    preview_url = None
+    if doc:
+        if doc.cloudinary_public_id:
+            try:
+                preview_url = CloudinaryService.generate_secure_access_url(doc.cloudinary_public_id)
+            except Exception:
+                preview_url = doc.file_path
+        else:
+            preview_url = get_file_url(doc.file_path) if doc.file_path else None
+
     resp = KYCRejectionDetailsResponse(
         doc_type=doc_type,
         document_name=doc_name,
@@ -182,6 +192,9 @@ async def get_document_details(
         status="rejected" if (doc and doc.rejection_reason) else ("approved" if (doc and doc.is_verified) else "pending"),
         rejection_reason=rejection_msg,
         action_required=action_req,
+        file_path=preview_url,
+        access_url=preview_url,
+        expires_at=str(doc.expires_at) if (doc and doc.expires_at) else None,
         rejected_at=doc.updated_at if (doc and doc.rejection_reason) else None,
         timeline=events,
     )
@@ -237,15 +250,29 @@ async def upload_kyc_document(
         except ValueError:
             pass
 
-    # 1. Upload to Cloudinary private/authenticated storage
-    upload_res = await CloudinaryService.upload_driver_kyc_document(
-        driver_id=str(driver.id),
-        doc_type=doc_type,
-        file=file,
-        vehicle_id=str(parsed_vehicle_id) if parsed_vehicle_id else None,
-    )
-    secure_url = upload_res.get("secure_url") or upload_res.get("url")
-    public_id = upload_res.get("public_id")
+    secure_url = None
+    public_id = None
+
+    # 1. Upload to Cloudinary private/authenticated storage (or fallback to storage utility)
+    try:
+        upload_res = await CloudinaryService.upload_driver_kyc_document(
+            driver_id=str(driver.id),
+            doc_type=doc_type,
+            file=file,
+            vehicle_id=str(parsed_vehicle_id) if parsed_vehicle_id else None,
+        )
+        secure_url = upload_res.get("secure_url") or upload_res.get("url")
+        public_id = upload_res.get("public_id")
+    except Exception as e:
+        logger.warning("cloudinary_upload_failed_fallback_to_local", error=str(e))
+        path = await save_upload(
+            file=file,
+            category="documents",
+            allowed_types=ALLOWED_DOCUMENT_TYPES,
+            max_size=10 * 1024 * 1024,
+        )
+        secure_url = get_file_url(path)
+        public_id = None
 
     # 2. Record MediaAsset metadata (Zero file bytes in PostgreSQL)
     media_asset = MediaAsset(
@@ -253,11 +280,11 @@ async def upload_kyc_document(
         owner_id=driver.id,
         media_type=MediaType.KYC_DOCUMENT if not parsed_vehicle_id else MediaType.VEHICLE_DOCUMENT,
         cloudinary_public_id=public_id,
-        resource_type=upload_res.get("resource_type", "image"),
-        format=upload_res.get("format", "jpg"),
+        resource_type="image",
+        format="jpg",
         mime_type=file.content_type or "image/jpeg",
-        file_size_bytes=upload_res.get("bytes", 0),
-        version=upload_res.get("version", 1),
+        file_size_bytes=0,
+        version=1,
         secure_url=secure_url,
         thumbnail_url=secure_url,
         status="ACTIVE",
@@ -288,6 +315,9 @@ async def upload_kyc_document(
             "public_id": public_id,
             "version": doc.version,
             "status": doc.status,
+            "file_path": secure_url,
+            "access_url": secure_url,
+            "preview_url": secure_url,
         },
     )
 

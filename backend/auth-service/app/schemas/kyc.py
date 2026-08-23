@@ -68,6 +68,9 @@ class KYCRejectionDetailsResponse(BaseModel):
     status: str = "rejected"
     rejection_reason: str
     action_required: str
+    file_path: Optional[str] = None
+    access_url: Optional[str] = None
+    expires_at: Optional[str] = None
     rejected_at: Optional[datetime] = None
     timeline: List[AuditTimelineEvent]
 

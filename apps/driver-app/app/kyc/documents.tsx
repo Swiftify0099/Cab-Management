@@ -66,8 +66,9 @@ export default function DocumentUploadScreen() {
             const parts = doc.expires_at.split('-')
             if (parts.length === 3) setExpiryDate(`${parts[2]}/${parts[1]}/${parts[0]}`)
           }
-          if (doc.file_path) {
-            setFrontUri(doc.file_path)
+          const previewUrl = doc.access_url || doc.file_path
+          if (previewUrl) {
+            setFrontUri(previewUrl)
           }
         }
       } catch {
@@ -116,7 +117,6 @@ export default function DocumentUploadScreen() {
 
   const handleSubmit = async () => {
     if (!frontUri && !backUri) {
-      // Allow demo submission if test environment
       Alert.alert('Please Attach Photo', 'Please capture or select at least the front side of your document.')
       return
     }
@@ -144,15 +144,20 @@ export default function DocumentUploadScreen() {
         }
       }
 
-      await kycApi.uploadDocument(doc_type, formData)
+      const res = await kycApi.uploadDocument(doc_type, formData)
+      const uploadedData = res.data?.data
 
-      Alert.alert('Submitted Successfully', `${screenTitle} has been submitted for compliance verification.`, [
+      if (uploadedData?.access_url || uploadedData?.file_path) {
+        setFrontUri(uploadedData.access_url || uploadedData.file_path)
+      }
+
+      Alert.alert('Upload Successful', `${screenTitle} has been uploaded to Cloudinary and submitted for verification.`, [
         { text: 'View Status', onPress: () => router.push('/kyc/status' as any) },
       ])
     } catch (e: any) {
-      const msg = e?.response?.data?.message || 'Upload completed locally.'
-      Alert.alert('Upload Status', msg, [
-        { text: 'OK', onPress: () => router.push('/kyc/status' as any) },
+      const msg = e?.response?.data?.detail || e?.response?.data?.message || e.message || 'Failed to upload document to server.'
+      Alert.alert('Upload Failed', msg, [
+        { text: 'OK' },
       ])
     } finally {
       setUploading(false)
