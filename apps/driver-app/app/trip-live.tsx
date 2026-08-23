@@ -184,7 +184,7 @@ export default function TripLiveScreen() {
     pendingCustomers.forEach(pc => addPendingCustomerDot(pc))
   }, [pendingCustomers])
 
-  // ─── Load scan results from API with automatic corridor customer generation ──
+  // ─── Load scan results from API ──────────────────────────────────────────
   const loadScanResults = useCallback(async () => {
     try {
       const res = await api.get(`/matching/scan`, {
@@ -193,71 +193,11 @@ export default function TripLiveScreen() {
       const customers: PendingCustomer[] = res.data?.data || []
       if (customers.length > 0) {
         customers.forEach(pc => addPendingCustomerDot(pc))
-      } else {
-        generateDefaultCorridorRequests()
       }
     } catch (e) {
       console.warn('[TripLive] Scan load notice:', e)
-      generateDefaultCorridorRequests()
     }
   }, [tripId, from, to])
-
-  const generateDefaultCorridorRequests = useCallback(() => {
-    const mockCorridor: PendingCustomer[] = [
-      {
-        booking_id: 'corridor_req_1',
-        customer_name: 'Sneha Patil',
-        pickup_address: `${from} City Center / Swargate`,
-        destination_address: `${to} Central / Dadar TT`,
-        seats_required: 1,
-        from_time: '10:30 AM',
-        to_time: '12:30 PM',
-        parcel: false,
-        pickup_lat: 18.5204,
-        pickup_lng: 73.8567,
-        destination_lat: 19.0178,
-        destination_lng: 72.8478,
-        women_only: false,
-        pickup_distance_km: 1.8,
-        destination_distance_km: 142.0,
-      },
-      {
-        booking_id: 'corridor_req_2',
-        customer_name: 'Amit Deshmukh',
-        pickup_address: `${from} Express Toll Plaza`,
-        destination_address: `${to} BKC / Vashi Flyover`,
-        seats_required: 2,
-        from_time: '10:45 AM',
-        to_time: '01:00 PM',
-        parcel: true,
-        pickup_lat: 18.5304,
-        pickup_lng: 73.8667,
-        destination_lat: 19.0600,
-        destination_lng: 72.8700,
-        women_only: false,
-        pickup_distance_km: 3.4,
-        destination_distance_km: 138.0,
-      },
-      {
-        booking_id: 'corridor_req_3',
-        customer_name: 'Kunal Joshi',
-        pickup_address: `${from} Tech Park Gate 1`,
-        destination_address: `${to} International Airport Road`,
-        seats_required: 1,
-        from_time: '11:00 AM',
-        to_time: '01:30 PM',
-        parcel: false,
-        pickup_lat: 18.5912,
-        pickup_lng: 73.7389,
-        destination_lat: 19.0896,
-        destination_lng: 72.8656,
-        women_only: false,
-        pickup_distance_km: 5.2,
-        destination_distance_km: 130.0,
-      },
-    ]
-    mockCorridor.forEach(pc => addPendingCustomerDot(pc))
-  }, [from, to])
 
   // ─── Add a PendingCustomer as a radar dot ─────────────────────────────────
   const addPendingCustomerDot = useCallback((pc: PendingCustomer) => {
@@ -669,13 +609,17 @@ export default function TripLiveScreen() {
                 {seatsUsed >= totalSeats
                   ? '🎉 All Seats Booked!'
                   : dots.length === 0
-                  ? 'Scanning for passengers...'
-                  : `${dots.length} Passenger Requests Available`}
+                  ? 'Scanning for Route Requests...'
+                  : `${dots.length} Route Ride Request${dots.length > 1 ? 's' : ''} Available`}
               </Text>
               <Text style={styles.glassCardSub}>
                 {seatsUsed >= totalSeats
-                  ? 'Vehicle full. Tap Start Trip below to begin departure.'
-                  : `${seatsUsed}/${totalSeats} seats booked • Tap any glowing radar node to accept`}
+                  ? `Vehicle full (${totalSeats}/${totalSeats}). Ready for departure.`
+                  : seatsUsed > 0
+                  ? `${seatsUsed}/${totalSeats} seats confirmed • Tap radar nodes to accept more passengers`
+                  : dots.length > 0
+                  ? 'Tap any glowing radar node to review and accept passenger requests'
+                  : `Route: ${from} → ${to} • Passenger requests along route will appear here`}
               </Text>
             </View>
           </View>
@@ -687,7 +631,7 @@ export default function TripLiveScreen() {
             style={{
               borderRadius: 16,
               overflow: 'hidden',
-              shadowColor: seatsUsed >= totalSeats ? '#10B981' : '#0284C7',
+              shadowColor: seatsUsed >= totalSeats ? '#10B981' : seatsUsed > 0 ? '#0284C7' : '#64748B',
               shadowOffset: { width: 0, height: 4 },
               shadowOpacity: 0.35,
               shadowRadius: 10,
@@ -700,7 +644,9 @@ export default function TripLiveScreen() {
               colors={
                 seatsUsed >= totalSeats
                   ? ['#10B981', '#059669']
-                  : ['#0284C7', '#2563EB', '#4F46E5']
+                  : seatsUsed > 0
+                  ? ['#0284C7', '#2563EB', '#4F46E5']
+                  : ['#475569', '#334155']
               }
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
@@ -713,11 +659,13 @@ export default function TripLiveScreen() {
                 gap: 10,
               }}
             >
-              <Ionicons name="navigate" size={20} color="#FFFFFF" />
+              <Ionicons name={seatsUsed > 0 ? "navigate" : "radio-outline"} size={20} color="#FFFFFF" />
               <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.4 }}>
                 {seatsUsed >= totalSeats
                   ? `Seats Full (${seatsUsed}/${totalSeats}) • Start Trip Now`
-                  : `Start Trip (${seatsUsed}/${totalSeats} Booked)`}
+                  : seatsUsed > 0
+                  ? `Depart with ${seatsUsed}/${totalSeats} Booked`
+                  : `Scanning Route (${dots.length} Requests)`}
               </Text>
               <Feather name="arrow-right" size={18} color="#FFFFFF" />
             </LinearGradient>

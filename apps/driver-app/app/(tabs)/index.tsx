@@ -27,6 +27,7 @@ import {
   BlockingReason,
 } from '../../src/services/availabilityService'
 import { VehicleService, DriverVehicle } from '../../src/services/vehicleService'
+import { CoverageService } from '../../src/services/coverageService'
 import { AvailabilityToggle } from '../../src/components/availability/AvailabilityToggle'
 import { AvailabilityStatusBanner } from '../../src/components/availability/AvailabilityStatusBanner'
 import { OnlineBlockedModal } from '../../src/components/availability/OnlineBlockedModal'
@@ -101,6 +102,9 @@ export default function DriverHomeScreen() {
     earningsToday: 0,
   })
 
+  const [radarCount, setRadarCount] = useState<number>(0)
+  const [coverageLabel, setCoverageLabel] = useState<string>('All City Mode')
+
   const { connected, incomingRequest, setIncomingRequest, clearRequest } = useDriverSocket()
 
   // Subscribe to reactive availability store
@@ -114,12 +118,14 @@ export default function DriverHomeScreen() {
   const loadData = useCallback(async () => {
     try {
       setLoading(true)
-      const [tripsRes, statsRes, vehList, destRes, aiRes] = await Promise.allSettled([
+      const [tripsRes, statsRes, vehList, destRes, aiRes, radarCntRes, covRes] = await Promise.allSettled([
         api.get('/trips/my-trips'),
         api.get('/driver/stats'),
         VehicleService.getVehicles(),
         DestinationModeService.getStatus(),
         AISmartDriverService.getDriverAIInsights(),
+        CoverageService.getRadarCount(),
+        CoverageService.getDriverCoverage(),
       ])
 
       if (tripsRes.status === 'fulfilled') {
@@ -146,6 +152,22 @@ export default function DriverHomeScreen() {
 
       if (aiRes.status === 'fulfilled') {
         setAiInsights(aiRes.value)
+      }
+
+      if (radarCntRes.status === 'fulfilled') {
+        setRadarCount(radarCntRes.value)
+      }
+
+      if (covRes.status === 'fulfilled') {
+        const cov = covRes.value
+        if (cov.visibility_mode === 'all_city') {
+          setCoverageLabel('All City Coverage')
+        } else if (cov.visibility_mode === 'specific_city') {
+          const selected = cov.covered_cities.filter(c => c.is_selected).map(c => c.name).join(', ')
+          setCoverageLabel(`Specific City: ${selected || 'Selected Cities'}`)
+        } else if (cov.visibility_mode === 'specific_hex') {
+          setCoverageLabel('Specific Hex / Zone')
+        }
       }
     } finally {
       setLoading(false)
@@ -330,16 +352,16 @@ export default function DriverHomeScreen() {
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                   <Text style={[styles.radarTitle, { color: theme.colors.text }]}>
-                    Smart Ride Radar Active
+                    {radarCount > 0 ? `${radarCount} Ride Request${radarCount > 1 ? 's' : ''} Available` : 'Smart Ride Radar Active'}
                   </Text>
                   <View style={styles.livePulseDot} />
                 </View>
                 <Text style={[styles.radarSub, { color: theme.colors.textSecondary }]}>
-                  {availabilityData.currentZone || 'Pune Central • Zone 1'} • Tap to explore trips
+                  {coverageLabel} • {availabilityData.currentZone || 'Live Radar'} • Tap to match
                 </Text>
               </View>
               <View style={styles.openRadarBtn}>
-                <Text style={styles.openRadarBtnText}>OPEN</Text>
+                <Text style={styles.openRadarBtnText}>RADAR</Text>
                 <Feather name="chevron-right" size={14} color="#0284C7" />
               </View>
             </TouchableOpacity>

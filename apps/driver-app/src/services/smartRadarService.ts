@@ -12,8 +12,8 @@ class SmartRadarServiceClass {
       const candidates = res.data?.data?.candidates || res.data?.data?.rides || []
       return candidates
     } catch (err: any) {
-      console.warn('[SmartRadarService] getCandidates API error, using fallback:', err.message)
-      return this.getFallbackCandidates(filterType)
+      console.warn('[SmartRadarService] getCandidates API error:', err.message)
+      return []
     }
   }
 

@@ -241,8 +241,8 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* SECTION 2: RIDE DISPATCHING */}
-        <Text style={styles.sectionHeader}>Ride Dispatching</Text>
+        {/* SECTION 2: RIDE DISPATCHING & RADAR COVERAGE */}
+        <Text style={styles.sectionHeader}>Ride Dispatching & Coverage</Text>
         <View
           style={[
             styles.card,
@@ -252,6 +252,43 @@ export default function SettingsScreen() {
             },
           ]}
         >
+          {/* Request Visibility & Coverage (All City, Specific City, Specific Hex) */}
+          <TouchableOpacity style={styles.rowItem} onPress={() => router.push('/settings/coverage' as any)}>
+            <View style={styles.rowLeft}>
+              <Feather name="map" size={18} color="#0284C7" style={styles.rowIcon} />
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={[styles.rowTitle, { color: theme.colors.text }]}>Request Coverage Mode</Text>
+                  <View style={{ backgroundColor: '#D1FAE5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
+                    <Text style={{ fontSize: 10, fontWeight: '800', color: '#065F46' }}>RADAR SCOPE</Text>
+                  </View>
+                </View>
+                <Text style={[styles.rowSub, { color: theme.colors.textSecondary }]}>
+                  All City, Specific City & Hex/Zone visibility
+                </Text>
+              </View>
+            </View>
+            <Feather name="chevron-right" size={18} color={theme.colors.textSecondary} />
+          </TouchableOpacity>
+
+          <View style={styles.divider} />
+
+          {/* Ride Preferences & Filters */}
+          <TouchableOpacity style={styles.rowItem} onPress={() => router.push('/settings/preferences' as any)}>
+            <View style={styles.rowLeft}>
+              <Feather name="sliders" size={18} color="#8B5CF6" style={styles.rowIcon} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.rowTitle, { color: theme.colors.text }]}>Ride Matching Preferences</Text>
+                <Text style={[styles.rowSub, { color: theme.colors.textSecondary }]}>
+                  Radius, Airport, Outstation & Earning cutoffs
+                </Text>
+              </View>
+            </View>
+            <Feather name="chevron-right" size={18} color={theme.colors.textSecondary} />
+          </TouchableOpacity>
+
+          <View style={styles.divider} />
+
           {/* Auto-Accept Toggle */}
           <View style={styles.rowItem}>
             <View style={styles.rowLeft}>
