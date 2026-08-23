@@ -99,6 +99,30 @@ export default function DriverRidePreferencesScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {/* Request Coverage (All City / Specific City / Hex) */}
+        <TouchableOpacity
+          style={[styles.card, { backgroundColor: isDark ? '#0C4A6E' : '#E0F2FE', borderColor: '#0284C7', marginBottom: 16 }]}
+          onPress={() => router.push('/settings/coverage' as any)}
+          activeOpacity={0.8}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
+              <View style={{ width: 42, height: 42, borderRadius: 10, backgroundColor: '#0284C7', justifyContent: 'center', alignItems: 'center' }}>
+                <Feather name="map" size={22} color="#FFFFFF" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: isDark ? '#F8FAFC' : '#0F172A' }}>
+                  Request Coverage
+                </Text>
+                <Text style={{ fontSize: 12, color: isDark ? '#BAE6FD' : '#0369A1', marginTop: 2 }}>
+                  Configure All City, Specific City, or Zone/Hex preferences
+                </Text>
+              </View>
+            </View>
+            <Feather name="chevron-right" size={20} color="#0284C7" />
+          </View>
+        </TouchableOpacity>
+
         {/* Section 1: Driving Focus Mode */}
         <View style={[styles.card, { backgroundColor: bgCard, borderColor: borderCol }]}>
           <Text style={[styles.sectionTitle, { color: textPrimary }]}>

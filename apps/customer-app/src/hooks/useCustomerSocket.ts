@@ -485,6 +485,19 @@ export function useCustomerSocket(): UseCustomerSocketReturn {
         setTripAccepted(data)
       })
 
+      // On-demand ride assigned to driver
+      socket.on('RIDE_ASSIGNED', (data: any) => {
+        console.log('[CustomerSocket] RIDE_ASSIGNED ride_request_id:', data.ride_request_id)
+        setTripAccepted({
+          event: 'TRIP_ACCEPTED',
+          booking_id: data.ride_request_id,
+          trip_id: data.ride_request_id,
+          driver: data.driver,
+          vehicle: data.vehicle,
+          pickup_eta_minutes: data.driver?.eta_min || 5,
+        } as any)
+      })
+
       // Driver rejected (customer stays in search pool)
       socket.on('TRIP_REJECTED', (data: TripRejectedPayload) => {
         console.log('[CustomerSocket] TRIP_REJECTED:', data.message)

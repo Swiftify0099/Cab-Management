@@ -276,6 +276,7 @@ class PropertyStatus(str, PyEnum):
 class RideRequestStatus(str, PyEnum):
     CREATED = "created"
     DISPATCHING = "dispatching"
+    MATCHING = "matching"  # Fanout: broadcast to eligible drivers, awaiting first accept
     OFFERED = "offered"
     ASSIGNED = "assigned"
     PICKUP = "pickup"
@@ -350,6 +351,14 @@ class RideOfferStatus(str, PyEnum):
     EXPIRED = "expired"
     CANCELLED = "cancelled"
     SUPERSEDED = "superseded"
+    REMOVED = "removed"  # Another driver accepted — offer invalidated
+
+
+class DriverVisibilityMode(str, PyEnum):
+    """Driver request visibility preference — controls which geographic scope of requests the driver sees."""
+    ALL_CITY = "all_city"          # All requests from any of the driver's covered cities
+    SPECIFIC_CITY = "specific_city"  # Only requests from explicitly selected cities
+    SPECIFIC_HEX = "specific_hex"    # Only requests from explicitly selected H3 hex cells/zones
 
 # ============================================================
 # USER & AUTH
@@ -2055,6 +2064,17 @@ class RideRequest(Base, UUIDMixin, TimestampMixin):
     # Expiry
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Spatial resolution (PostGIS-derived from pickup coordinates)
+    pickup_city_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("service_cities.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    pickup_zone_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("service_zones.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    pickup_hex_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("service_hexes.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     # Dispatch metadata
     dispatch_attempts: Mapped[int] = mapped_column(Integer, default=0)
     max_dispatch_attempts: Mapped[int] = mapped_column(Integer, default=5)
@@ -2196,6 +2216,11 @@ class DriverPreference(Base, UUIDMixin, TimestampMixin):
         unique=True, index=True, nullable=False
     )
     mode: Mapped[str] = mapped_column(String(30), default="balanced", nullable=False)  # balanced, earnings_focus, nearby_focus, short_trips, long_trips, airport_focus
+
+    # Driver Request Visibility Mode (Coverage preference)
+    visibility_mode: Mapped[str] = mapped_column(
+        String(30), default="all_city", nullable=False
+    )  # all_city, specific_city, specific_hex
     allow_local: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     allow_airport: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     allow_outstation: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -4599,3 +4624,151 @@ class ProcessedEventRecord(Base, UUIDMixin, TimestampMixin):
     processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now(), nullable=False)
     status: Mapped[str] = mapped_column(String(30), default="PROCESSED", nullable=False)  # PROCESSED, FAILED, IGNORED
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+# ============================================================
+# SPATIAL HIERARCHY — Service Cities, Zones, Hexes (PostGIS + H3)
+# ============================================================
+
+class ServiceCity(Base, UUIDMixin, TimestampMixin):
+    """
+    Master table of cities where the platform operates.
+    Boundary is a PostGIS POLYGON/MULTIPOLYGON for precise spatial matching.
+    Center + radius is a fallback for development/seed bootstrapping.
+    """
+    __tablename__ = "service_cities"
+
+    name: Mapped[str] = mapped_column(String(150), nullable=False, unique=True)
+    state: Mapped[str] = mapped_column(String(100), nullable=False)
+    country: Mapped[str] = mapped_column(String(100), default="India", nullable=False)
+    center_location: Mapped[Optional[object]] = mapped_column(
+        Geography(geometry_type="POINT", srid=4326), nullable=True
+    )
+    center_lat: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    center_lng: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    radius_km: Mapped[float] = mapped_column(Float, default=25.0, nullable=False)  # Fallback radius
+    boundary: Mapped[Optional[object]] = mapped_column(
+        Geography(geometry_type="POLYGON", srid=4326), nullable=True
+    )  # Actual city polygon boundary — production use
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    timezone: Mapped[str] = mapped_column(String(50), default="Asia/Kolkata", nullable=False)
+    # Dispatch policy per city
+    max_pickup_radius_km: Mapped[float] = mapped_column(Float, default=15.0, nullable=False)
+    max_pickup_eta_min: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
+
+
+class ServiceZone(Base, UUIDMixin, TimestampMixin):
+    """
+    Subdivisions within a service city (e.g., South Sangli, Airport Zone).
+    Used for operational grouping and zone-level service configuration.
+    """
+    __tablename__ = "service_zones"
+
+    city_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("service_cities.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(150), nullable=False)
+    boundary: Mapped[Optional[object]] = mapped_column(
+        Geography(geometry_type="POLYGON", srid=4326), nullable=True
+    )
+    center_location: Mapped[Optional[object]] = mapped_column(
+        Geography(geometry_type="POINT", srid=4326), nullable=True
+    )
+    center_lat: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    center_lng: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Relationships
+    city: Mapped["ServiceCity"] = orm_relationship("ServiceCity", foreign_keys=[city_id])
+
+    __table_args__ = (
+        UniqueConstraint("city_id", "name", name="uq_service_zone_city_name"),
+    )
+
+
+class ServiceHex(Base, UUIDMixin, TimestampMixin):
+    """
+    H3 hexagonal grid cells mapped to service zones/cities.
+    Used for fine-grained driver coverage preference (SPECIFIC_HEX mode).
+    h3_index stores the H3 cell index string for fast coordinate → cell lookups.
+    """
+    __tablename__ = "service_hexes"
+
+    city_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("service_cities.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    zone_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("service_zones.id", ondelete="SET NULL"),
+        nullable=True, index=True
+    )
+    h3_index: Mapped[str] = mapped_column(String(20), nullable=False, unique=True, index=True)  # H3 cell index
+    resolution: Mapped[int] = mapped_column(Integer, default=7, nullable=False)  # H3 resolution level
+    display_name: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)  # Human-readable name
+    center_lat: Mapped[float] = mapped_column(Float, nullable=False)
+    center_lng: Mapped[float] = mapped_column(Float, nullable=False)
+    boundary: Mapped[Optional[object]] = mapped_column(
+        Geography(geometry_type="POLYGON", srid=4326), nullable=True
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Relationships
+    city: Mapped["ServiceCity"] = orm_relationship("ServiceCity", foreign_keys=[city_id])
+    zone: Mapped[Optional["ServiceZone"]] = orm_relationship("ServiceZone", foreign_keys=[zone_id])
+
+
+# ============================================================
+# DRIVER COVERAGE — City & Hex Coverage Preferences
+# ============================================================
+
+class DriverCityCoverage(Base, UUIDMixin, TimestampMixin):
+    """
+    Junction table: which cities a driver covers.
+    In ALL_CITY mode, all of a driver's city coverages are used.
+    In SPECIFIC_CITY mode, only is_selected=True cities are used.
+    """
+    __tablename__ = "driver_city_coverage"
+    __table_args__ = (
+        UniqueConstraint("driver_id", "city_id", name="uq_driver_city_coverage"),
+    )
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    city_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("service_cities.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_selected: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)  # For SPECIFIC_CITY filtering
+
+    # Relationships
+    driver: Mapped["Driver"] = orm_relationship("Driver", foreign_keys=[driver_id])
+    city: Mapped["ServiceCity"] = orm_relationship("ServiceCity", foreign_keys=[city_id])
+
+
+class DriverHexCoverage(Base, UUIDMixin, TimestampMixin):
+    """
+    Junction table: which H3 hex cells a driver covers.
+    Used only when visibility_mode = SPECIFIC_HEX.
+    """
+    __tablename__ = "driver_hex_coverage"
+    __table_args__ = (
+        UniqueConstraint("driver_id", "hex_id", name="uq_driver_hex_coverage"),
+    )
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    hex_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("service_hexes.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Relationships
+    driver: Mapped["Driver"] = orm_relationship("Driver", foreign_keys=[driver_id])
+    hex_cell: Mapped["ServiceHex"] = orm_relationship("ServiceHex", foreign_keys=[hex_id])

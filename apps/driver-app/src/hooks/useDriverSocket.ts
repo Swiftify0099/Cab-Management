@@ -282,6 +282,12 @@ export function useDriverSocket(): UseDriverSocketReturn {
         stopSiren()
       })
 
+      socket.on('RIDE_REQUEST_REMOVED', (data: any) => {
+        console.log('[DriverSocket] RIDE_REQUEST_REMOVED (Assigned to other or cancelled):', data.ride_request_id)
+        setIncomingRequest(null)
+        stopSiren()
+      })
+
       socket.on('RIDE_ASSIGNED', (data: any) => {
         console.log('[DriverSocket] RIDE_ASSIGNED:', data.ride_request_id)
       })

@@ -189,11 +189,22 @@ export default function MatchingWaitingScreen() {
         {
           text: 'Cancel Ride',
           style: 'destructive',
-          onPress: () => {
+          onPress: async () => {
             setCancelling(true)
-            setTimeout(() => {
+            try {
+              const rId = rideRequestId || bookingId
+              if (rId) {
+                const { api } = await import('../src/api/client')
+                await api.post('/matching/rides/cancel', {
+                  ride_request_id: rId,
+                  reason: 'Customer cancelled from matching screen',
+                })
+              }
+            } catch (err) {
+              console.warn('[MatchingWaiting] cancel failed:', err)
+            } finally {
               router.replace('/(tabs)/' as any)
-            }, 400)
+            }
           },
         },
       ]

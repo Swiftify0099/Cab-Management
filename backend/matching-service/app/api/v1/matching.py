@@ -714,8 +714,221 @@ async def respond_to_ride_offer_endpoint(
             message=result["message"],
             data=result,
         )
+class UpdateDriverCoverageSchema(BaseModel):
+    visibility_mode: str = Field(..., description="all_city, specific_city, specific_hex")
+    city_ids: Optional[List[str]] = Field(default=None, description="List of city UUIDs for ALL_CITY / SPECIFIC_CITY")
+    hex_ids: Optional[List[str]] = Field(default=None, description="List of hex UUIDs for SPECIFIC_HEX")
+
+
+@router.post(
+    "/rides/cancel",
+    response_model=SuccessResponse,
+    summary="Customer: Cancel a ride request",
+)
+async def cancel_ride_request_endpoint(
+    request: CancelRideSchema,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Customer cancels an active/matching ride request.
+    Invalidates pending offers and broadcasts RIDE_REQUEST_REMOVED to drivers.
+    """
+    service = RideDispatchService(db)
+    try:
+        res = await service.cancel_ride_request(
+            customer_user_id=current_user.user_id_str,
+            ride_request_id=request.ride_request_id,
+            reason=request.reason,
+        )
+        return SuccessResponse(
+            success=res["success"],
+            message=res["message"],
+            data=res,
+        )
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
+
+
+# ── DRIVER COVERAGE & SPATIAL HIERARCHY ENDPOINTS ──
+
+@router.get(
+    "/rides/coverage/cities",
+    response_model=SuccessResponse,
+    summary="Driver / Admin: List all available service cities",
+)
+async def list_service_cities(
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    from app.services.spatial_resolver import SpatialResolverService
+    service = SpatialResolverService(db)
+    cities = await service.get_all_service_cities()
+    return SuccessResponse(
+        success=True,
+        message="Service cities fetched",
+        data={"cities": cities},
+    )
+
+
+@router.get(
+    "/rides/coverage/zones/{city_id}",
+    response_model=SuccessResponse,
+    summary="Driver / Admin: List zones in a service city",
+)
+async def list_service_zones(
+    city_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    from app.services.spatial_resolver import SpatialResolverService
+    service = SpatialResolverService(db)
+    zones = await service.get_zones_for_city(uuid.UUID(city_id))
+    return SuccessResponse(
+        success=True,
+        message="Service zones fetched",
+        data={"zones": zones},
+    )
+
+
+@router.get(
+    "/rides/coverage/hexes/{zone_id}",
+    response_model=SuccessResponse,
+    summary="Driver / Admin: List H3 hex cells in a zone",
+)
+async def list_service_hexes(
+    zone_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    from app.services.spatial_resolver import SpatialResolverService
+    service = SpatialResolverService(db)
+    hexes = await service.get_hexes_for_zone(uuid.UUID(zone_id))
+    return SuccessResponse(
+        success=True,
+        message="Service hexes fetched",
+        data={"hexes": hexes},
+    )
+
+
+@router.get(
+    "/rides/coverage",
+    response_model=SuccessResponse,
+    summary="Driver: Get current request visibility preference and covered areas",
+)
+async def get_driver_coverage(
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    from common.models.all_models import Driver, DriverPreference
+    from app.services.spatial_resolver import SpatialResolverService
+
+    d_res = await db.execute(select(Driver).where(Driver.user_id == current_user.id))
+    driver = d_res.scalar_one_or_none()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver profile not found")
+
+    pref_res = await db.execute(select(DriverPreference).where(DriverPreference.driver_id == driver.id))
+    pref = pref_res.scalar_one_or_none()
+    visibility_mode = pref.visibility_mode if pref else "all_city"
+
+    spatial = SpatialResolverService(db)
+    covered_cities = await spatial.get_cities_for_driver(driver.id)
+    covered_hexes = await spatial.get_hexes_for_driver(driver.id)
+
+    return SuccessResponse(
+        success=True,
+        message="Driver coverage configuration fetched",
+        data={
+            "visibility_mode": visibility_mode,
+            "covered_cities": covered_cities,
+            "covered_hexes": covered_hexes,
+        },
+    )
+
+
+@router.put(
+    "/rides/coverage",
+    response_model=SuccessResponse,
+    summary="Driver: Update request visibility preference and covered areas",
+)
+async def update_driver_coverage(
+    request: UpdateDriverCoverageSchema,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    from common.models.all_models import Driver
+    from app.services.spatial_resolver import SpatialResolverService
+    from common.utils.redis_client import publish_event
+
+    d_res = await db.execute(select(Driver).where(Driver.user_id == current_user.id))
+    driver = d_res.scalar_one_or_none()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver profile not found")
+
+    spatial = SpatialResolverService(db)
+    updated = await spatial.update_driver_visibility(
+        driver_id=driver.id,
+        visibility_mode=request.visibility_mode,
+        city_ids=request.city_ids,
+        hex_ids=request.hex_ids,
+    )
+
+    # Publish coverage update to trigger WebSocket room recalculations
+    await publish_event(f"driver:{current_user.user_id_str}:events", {
+        "event": "COVERAGE_UPDATED",
+        "visibility_mode": request.visibility_mode,
+        "city_ids": request.city_ids or [],
+    })
+
+    return SuccessResponse(
+        success=True,
+        message="Driver coverage configuration updated successfully",
+        data=updated,
+    )
+
+
+@router.get(
+    "/rides/radar",
+    response_model=SuccessResponse,
+    summary="Driver: Get current eligible ride requests for Radar",
+)
+async def get_rides_radar(
+    filter_type: str = Query("all", description="all, recommended, best_earnings, closest, airport"),
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    service = SmartRadarService(db)
+    rides = await service.get_smart_radar_rides(
+        driver_user_id=current_user.user_id_str,
+        filter_type=filter_type,
+    )
+    return SuccessResponse(
+        success=True,
+        message=f"{len(rides)} requests available on your radar",
+        data={
+            "rides": rides,
+            "count": len(rides),
+        },
+    )
+
+
+@router.get(
+    "/rides/radar/count",
+    response_model=SuccessResponse,
+    summary="Driver: Get real-time count of eligible pending requests for Radar badge",
+)
+async def get_radar_count(
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    service = SmartRadarService(db)
+    count = await service.get_smart_radar_count(driver_user_id=current_user.user_id_str)
+    return SuccessResponse(
+        success=True,
+        message="Radar count fetched",
+        data={"count": count},
+    )
 
 
 @router.get(

@@ -61,6 +61,7 @@ async def _redis_listener():
         "driver:*:events",
         "customer:*:events",
         "trip:*:events",
+        "city:*:events",
         "driver_scan:*",
         # Corridor matching events
         "corridor:*",
@@ -79,6 +80,7 @@ async def _redis_listener():
             # driver:DRIVER_ID:events  room "driver:DRIVER_ID"
             # customer:CUSTOMER_ID:events  room "user:CUSTOMER_ID"
             # trip:TRIP_ID:events  room "trip:TRIP_ID"
+            # city:CITY_ID:events  room "city:CITY_ID"
             # driver_scan:TRIP_ID  room "driver_scan:TRIP_ID"  ← only 2 parts
             parts = channel.split(":")
 
@@ -97,7 +99,7 @@ async def _redis_listener():
                 continue
 
             if len(parts) >= 3:
-                entity = parts[0]   # driver, customer, trip
+                entity = parts[0]   # driver, customer, trip, city
                 entity_id = parts[1]
 
                 if entity == "driver":
@@ -106,6 +108,8 @@ async def _redis_listener():
                     room = f"user:{entity_id}"
                 elif entity == "trip":
                     room = f"trip:{entity_id}"
+                elif entity == "city":
+                    room = f"city:{entity_id}"
                 else:
                     continue
 
