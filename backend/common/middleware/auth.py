@@ -117,6 +117,28 @@ async def get_current_user(
     return AuthenticatedUser(user=user, payload=payload)
 
 
+async def get_current_user_optional(
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    db: AsyncSession = Depends(get_db),
+) -> Optional[AuthenticatedUser]:
+    """Optional auth dependency — returns AuthenticatedUser if valid token present, otherwise None."""
+    if not credentials or not credentials.credentials:
+        return None
+    try:
+        payload = decode_token(credentials.credentials, expected_type="access")
+        user_id_str = payload.get("sub")
+        if not user_id_str:
+            return None
+        user_id = uuid.UUID(user_id_str)
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if not user or not user.is_active:
+            return None
+        return AuthenticatedUser(user=user, payload=payload)
+    except Exception:
+        return None
+
+
 async def get_current_active_customer(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> AuthenticatedUser:

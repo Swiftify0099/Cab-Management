@@ -462,7 +462,20 @@ except Exception as _e:
     print(f"[JOBS]     [ERR] {_e}")
 
 
+@app.get("/")
+@app.head("/")
+async def root():
+    return {
+        "status": "online",
+        "service": "CabBooking Unified Gateway",
+        "version": "1.0.0",
+        "health": "/health",
+        "docs": "/docs",
+    }
+
+
 @app.get("/health")
+@app.head("/health")
 async def health():
     return {
         "status":      "healthy",

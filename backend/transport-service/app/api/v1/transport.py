@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.database import get_db
-from common.auth import get_current_user_optional, get_current_user
+from common.middleware.auth import get_current_user_optional, get_current_user, AuthenticatedUser
 from app.services.transport_service import TransportService
 
 router = APIRouter(prefix="", tags=["Transport & Commercial Logistics"])
