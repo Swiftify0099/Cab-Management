@@ -714,6 +714,10 @@ async def respond_to_ride_offer_endpoint(
             message=result["message"],
             data=result,
         )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+
+
 class UpdateDriverCoverageSchema(BaseModel):
     visibility_mode: str = Field(..., description="all_city, specific_city, specific_hex")
     city_ids: Optional[List[str]] = Field(default=None, description="List of city UUIDs for ALL_CITY / SPECIFIC_CITY")
