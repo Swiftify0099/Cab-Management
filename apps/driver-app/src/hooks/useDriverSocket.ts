@@ -151,28 +151,33 @@ export function useDriverSocket(): UseDriverSocketReturn {
   const [corridorCustomers, setCorridorCustomers]   = useState<CorridorCustomerPayload[]>([])  // Phase 2
   const [arrivalAlert, setArrivalAlert]             = useState<ArrivalAlertPayload | null>(null)
 
-  // ─── Siren: Dynamic Driver Siren & Looping Vibration ───────────────────────
-  const playSiren = useCallback(() => {
+  // ─── Siren: Dynamic Driver Siren, Looping Vibration & Actionable Push ───
+  const playSiren = useCallback((requestDetails?: {
+    title?: string
+    body?: string
+    isParcel?: boolean
+    data?: any
+  }) => {
     try {
       DriverSoundService.playIncomingAlert({ loop: true })
 
-      Notifications.scheduleNotificationAsync({
-        content: {
-          title: "New Customer Request! 🚕",
-          body: "A customer needs a ride/delivery. Tap to view and accept.",
-          sound: 'drsiran.mp3',
-          priority: Notifications.AndroidNotificationPriority.MAX,
-        },
-        trigger: null,
-      }).catch(() => {})
+      const { triggerActionableRideNotification } = require('./useDriverNotifications')
+      triggerActionableRideNotification({
+        title: requestDetails?.title || '🚨 New Ride Request!',
+        body: requestDetails?.body || 'New customer ride request. Tap to Accept or Reject.',
+        isParcel: requestDetails?.isParcel,
+        data: requestDetails?.data || {},
+      })
     } catch (e) {
-      console.warn('[DriverSocket] Siren failed:', e)
+      console.warn('[DriverSocket] Siren / notification failed:', e)
     }
   }, [])
 
   const stopSiren = useCallback(() => {
     try {
       DriverSoundService.stopIncomingAlert()
+      Vibration.cancel()
+      Notifications.dismissAllNotificationsAsync().catch(() => {})
     } catch { /* ignore */ }
   }, [])
 
@@ -267,7 +272,17 @@ export function useDriverSocket(): UseDriverSocketReturn {
         } as any
 
         setIncomingRequest(normalized)
-        playSiren()
+        playSiren({
+          title: `🚖 New Ride Request: ₹${normalized.trip?.fare || 0}!`,
+          body: `Pickup: ${normalized.trip?.from || 'Pickup point'} → ${normalized.trip?.to || 'Drop point'}`,
+          isParcel: false,
+          data: {
+            offer_id: normalized.offer_id,
+            ride_request_id: normalized.ride_request_id,
+            booking_id: normalized.booking_id,
+            fare: normalized.trip?.fare,
+          },
+        })
       })
 
       socket.on('RIDE_REQUEST_EXPIRED', (data: any) => {
@@ -294,7 +309,6 @@ export function useDriverSocket(): UseDriverSocketReturn {
 
       socket.on('INCOMING_TRIP_REQUEST', (data: any) => {
         console.log('[DriverSocket] Incoming request:', data.booking_id)
-        // Normalize: backend may send nested {trip:{from,to,...}} or flat fields
         const normalized: IncomingRequest = {
           booking_id: data.booking_id,
           driver_id:  data.driver_id || '',
@@ -312,7 +326,15 @@ export function useDriverSocket(): UseDriverSocketReturn {
           paid:        data.paid || false,
         } as any
         setIncomingRequest(normalized)
-        playSiren()
+        playSiren({
+          title: `🚖 New Trip Request: ₹${normalized.trip?.fare || 0}!`,
+          body: `From: ${normalized.trip?.from} → To: ${normalized.trip?.to}`,
+          isParcel: false,
+          data: {
+            booking_id: normalized.booking_id,
+            fare: normalized.trip?.fare,
+          },
+        })
       })
 
       // New events
@@ -334,7 +356,12 @@ export function useDriverSocket(): UseDriverSocketReturn {
           timeout_sec: data.timeout_sec || 180,
         } as any
         setIncomingRequest(normalized)
-        playSiren()
+        playSiren({
+          title: `🚖 Customer Trip Request: ₹${normalized.trip?.fare || 0}!`,
+          body: `${normalized.trip?.from} → ${normalized.trip?.to}`,
+          isParcel: false,
+          data: { booking_id: normalized.booking_id },
+        })
       })
 
       socket.on('PARCEL_REQUEST', (data: any) => {
@@ -361,7 +388,16 @@ export function useDriverSocket(): UseDriverSocketReturn {
           timeout_sec: data.timeout_sec || 180,
         } as any
         setIncomingRequest(normalized)
-        playSiren()
+        playSiren({
+          title: `📦 New Parcel Delivery Request: ₹${normalized.trip?.fare || 0}!`,
+          body: `Pickup: ${normalized.trip?.from} → Drop: ${normalized.trip?.to}`,
+          isParcel: true,
+          data: {
+            offer_id: normalized.offer_id,
+            booking_id: normalized.booking_id,
+            fare: normalized.trip?.fare,
+          },
+        })
       })
 
       socket.on('HOTEL_TRANSFER_REQUEST', (data: any) => {
@@ -374,21 +410,29 @@ export function useDriverSocket(): UseDriverSocketReturn {
           pickup: data.pickup || { address: data.pickup_address || 'Hotel Lobby / Airport', lat: 18.5822, lng: 73.9197 },
           destination: data.destination || { address: data.destination_address || 'Destination Hotel', lat: 18.5362, lng: 73.8939 },
           trip: {
-            from: data.pickup_address || data.pickup?.address || 'Pickup Hub',
-            to: data.destination_address || data.destination?.address || 'Dropoff Point',
+            from: data.pickup_address || data.pickup?.address || 'Pickup Point',
+            to: data.destination_address || data.destination?.address || 'Hotel / Airport',
             departure_time: new Date().toISOString(),
-            distance_km: data.distance_km || 15.2,
-            seats: data.seats || 2,
+            distance_km: data.distance_km || 12.0,
+            seats: 2,
             has_parcel: false,
             fare: data.fare || 650,
             earning: data.earning || 520,
           },
-          category: { name: 'Hotel Transfer', icon: 'domain' },
+          category: { name: 'Airport Transfer', icon: 'airplane' },
           customer: data.customer || { id: '' },
           timeout_sec: data.timeout_sec || 180,
         } as any
         setIncomingRequest(normalized)
-        playSiren()
+        playSiren({
+          title: `✈️ Airport / Hotel Transfer Request: ₹${normalized.trip?.fare || 0}!`,
+          body: `${normalized.trip?.from} → ${normalized.trip?.to}`,
+          isParcel: false,
+          data: {
+            offer_id: normalized.offer_id,
+            booking_id: normalized.booking_id,
+          },
+        })
       })
 
       socket.on('TRANSPORT_REQUEST', (data: any) => {
@@ -415,7 +459,15 @@ export function useDriverSocket(): UseDriverSocketReturn {
           timeout_sec: data.timeout_sec || 180,
         } as any
         setIncomingRequest(normalized)
-        playSiren()
+        playSiren({
+          title: `🚌 Intercity Transport Request: ₹${normalized.trip?.fare || 0}!`,
+          body: `${normalized.trip?.from} → ${normalized.trip?.to}`,
+          isParcel: false,
+          data: {
+            offer_id: normalized.offer_id,
+            booking_id: normalized.booking_id,
+          },
+        })
       })
 
       socket.on('NEW_PENDING_CUSTOMER', (data: PendingCustomer) => {

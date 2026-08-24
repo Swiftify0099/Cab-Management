@@ -51,11 +51,20 @@ class RideRequestServiceClass {
     ride_request_id?: string
   }> {
     try {
-      const res = await api.post('/matching/rides/respond', {
-        offer_id: payload.offer_id,
-        accepted: payload.accepted,
-        rejection_reason: payload.rejection_reason || null,
-      })
+      let res: any
+      try {
+        res = await api.post('/matching/rides/respond', {
+          offer_id: payload.offer_id,
+          accepted: payload.accepted,
+          rejection_reason: payload.rejection_reason || null,
+        })
+      } catch {
+        res = await api.post('/rides/respond', {
+          offer_id: payload.offer_id,
+          accepted: payload.accepted,
+          rejection_reason: payload.rejection_reason || null,
+        })
+      }
       this.activeOffer = null
       return res.data?.data || res.data || { success: true, message: 'Response recorded', status: payload.accepted ? 'accepted' : 'rejected' }
     } catch (err: any) {

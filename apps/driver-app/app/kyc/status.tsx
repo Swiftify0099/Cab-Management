@@ -148,15 +148,14 @@ export default function DocumentStatusScreen() {
         }
       }
 
+      let data: any = null
       if (kycRes.status === 'fulfilled' && kycRes.value.data?.data) {
-        const data = kycRes.value.data.data
+        data = kycRes.value.data.data
         if (data.driver_name) setDriverName(data.driver_name)
         if (data.driver_id_display) setDriverId(data.driver_id_display)
         if (data.profile_photo_url) setDriverPhoto(data.profile_photo_url)
         if (data.action_required_count !== undefined) setActionCount(data.action_required_count)
-        if (data.sections && data.sections.length > 0) {
-          setSections(data.sections)
-        }
+      }
 
       const isFullyVerified =
         verifiedFromProfile ||

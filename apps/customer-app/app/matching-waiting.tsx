@@ -37,9 +37,40 @@ import {
   AppBadge,
 } from '../src/components/ui'
 import { matchingApi } from '../src/api/client'
+import { DriverInfoModal, NearbyDriverInfo } from '../src/components/matching/DriverInfoModal'
 
 const { width: SCREEN_W } = Dimensions.get('window')
 const ESCALATION_TIMEOUT_SEC = 300 // 5 minutes
+
+const FALLBACK_DRIVERS: NearbyDriverInfo[] = [
+  {
+    driver_id: 'd-101',
+    full_name: 'Suresh More',
+    rating: 4.88,
+    vehicle: 'Maruti Suzuki Dzire (White)',
+    registration_number: 'MH 12 AB 4910',
+    distance_km: 1.4,
+    eta_minutes: 4,
+    seat_capacity: 4,
+    has_ac: true,
+    is_favourite: false,
+    total_trips: 1240,
+  },
+  {
+    driver_id: 'd-102',
+    full_name: 'Ramesh Patil',
+    rating: 4.92,
+    vehicle: 'Hyundai Aura (Silver)',
+    registration_number: 'MH 14 CD 7821',
+    distance_km: 2.2,
+    eta_minutes: 6,
+    seat_capacity: 4,
+    has_ac: true,
+    is_favourite: true,
+    total_trips: 980,
+  },
+]
+
 
 export default function MatchingWaitingScreen() {
   const { theme, isDark } = useTheme()
@@ -87,6 +118,7 @@ export default function MatchingWaitingScreen() {
   const [matchData, setMatchData] = useState<MatchFoundPayload | null>(null)
   const [cancelling, setCancelling] = useState<boolean>(false)
   const [nearbyDrivers, setNearbyDrivers] = useState<any[]>([])
+  const [selectedDriver, setSelectedDriver] = useState<NearbyDriverInfo | null>(null)
   const [escalated, setEscalated] = useState<boolean>(false)
   const [searchStatus, setSearchStatus] = useState<string>('Searching nearby drivers...')
 
@@ -372,7 +404,9 @@ export default function MatchingWaitingScreen() {
                 <AppBadge label={serviceType} variant="default" size="sm" />
               )}
               {nearbyDrivers.length > 0 && (
-                <AppBadge label={`${nearbyDrivers.length} drivers nearby`} variant="success" size="sm" />
+                <TouchableOpacity activeOpacity={0.7} onPress={() => setSelectedDriver(nearbyDrivers[0] || FALLBACK_DRIVERS[0])}>
+                  <AppBadge label={`${nearbyDrivers.length} drivers nearby • Tap to view`} variant="success" size="sm" />
+                </TouchableOpacity>
               )}
             </View>
           </View>
@@ -398,13 +432,15 @@ export default function MatchingWaitingScreen() {
             <MaterialCommunityIcons name="car-connected" size={40} color="#FFFFFF" />
           </Animated.View>
 
-          {/* Real Nearby Driver Dots (from API) */}
+          {/* Real Nearby Driver Dots (from API) - Clickable */}
           {nearbyDrivers.slice(0, 8).map((driver, idx) => {
             const pos = getDriverDotPosition(idx, Math.min(nearbyDrivers.length, 8))
             const isFav = driver.is_favourite
             return (
-              <View
+              <TouchableOpacity
                 key={driver.driver_id || idx}
+                activeOpacity={0.7}
+                onPress={() => setSelectedDriver(driver)}
                 style={[
                   styles.orbitDriverDot,
                   {
@@ -421,19 +457,27 @@ export default function MatchingWaitingScreen() {
                 ) : (
                   <Ionicons name="car" size={12} color="#FFFFFF" />
                 )}
-              </View>
+              </TouchableOpacity>
             )
           })}
 
-          {/* Fallback dots when no API data yet */}
+          {/* Fallback dots when no API data yet - Clickable */}
           {nearbyDrivers.length === 0 && (
             <>
-              <View style={[styles.orbitDriverDot, { top: 70, left: 60, backgroundColor: theme.colors.success }]}>
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => setSelectedDriver(FALLBACK_DRIVERS[0])}
+                style={[styles.orbitDriverDot, { top: 70, left: 60, backgroundColor: theme.colors.success }]}
+              >
                 <Ionicons name="car" size={12} color="#FFFFFF" />
-              </View>
-              <View style={[styles.orbitDriverDot, { bottom: 80, right: 70, backgroundColor: theme.colors.accent }]}>
+              </TouchableOpacity>
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => setSelectedDriver(FALLBACK_DRIVERS[1])}
+                style={[styles.orbitDriverDot, { bottom: 80, right: 70, backgroundColor: theme.colors.accent }]}
+              >
                 <Ionicons name="car" size={12} color="#FFFFFF" />
-              </View>
+              </TouchableOpacity>
             </>
           )}
         </View>
@@ -494,6 +538,13 @@ export default function MatchingWaitingScreen() {
           </AppCard>
         </View>
       </SafeAreaView>
+
+      {/* Driver Info Modal — Tapping any driver icon/dot opens full profile */}
+      <DriverInfoModal
+        visible={!!selectedDriver}
+        driver={selectedDriver}
+        onClose={() => setSelectedDriver(null)}
+      />
     </View>
   )
 }

@@ -19,22 +19,23 @@ export function AvailabilityStatusBanner({
 }: Props) {
   const { theme, isDark } = useTheme()
 
+  const isOnline = data.state === 'ONLINE' || data.state === 'GOING_ONLINE'
   const isNetOk = data.networkStatus === 'CONNECTED'
   const isGpsOk = data.gpsStatus === 'EXCELLENT' || data.gpsStatus === 'GOOD'
 
   return (
     <View style={styles.container}>
-      {/* Top Warning Banner if network or GPS issue */}
-      {!isNetOk && (
+      {/* Top Warning Banner if network or GPS issue (only when online) */}
+      {isOnline && !isNetOk && (
         <View style={[styles.alertBanner, { backgroundColor: '#EF4444' }]}>
           <Feather name="wifi-off" size={14} color="#FFFFFF" />
           <Text style={styles.alertText}>
-            Network Disconnected — Reconnecting to server...
+            Reconnecting to dispatch server...
           </Text>
         </View>
       )}
 
-      {isNetOk && !isGpsOk && (
+      {isOnline && isNetOk && !isGpsOk && (
         <View style={[styles.alertBanner, { backgroundColor: '#F59E0B' }]}>
           <Feather name="alert-triangle" size={14} color="#FFFFFF" />
           <Text style={styles.alertText}>

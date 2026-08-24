@@ -46,6 +46,7 @@ import { BestZonesListModal } from '../../src/components/ai/BestZonesListModal'
 import { DriverFatigueBanner } from '../../src/components/ai/DriverFatigueBanner'
 import { AIDevSheet } from '../../src/components/ai/AIDevSheet'
 import { AICopilotModal } from '../../src/components/ai/AICopilotModal'
+import { PendingRequestsModal } from '../../src/components/matching/PendingRequestsModal'
 import { AISmartDriverService } from '../../src/services/aiSmartDriverService'
 import { DriverAIInsights } from '../../src/types/aiSmartDriver'
 
@@ -88,6 +89,7 @@ export default function DriverHomeScreen() {
   const [showBestZonesModal, setShowBestZonesModal] = useState(false)
   const [showAIDevSheet, setShowAIDevSheet] = useState(false)
   const [showAICopilotModal, setShowAICopilotModal] = useState(false)
+  const [showPendingModal, setShowPendingModal] = useState(false)
 
   const [trips, setTrips] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
@@ -332,40 +334,37 @@ export default function DriverHomeScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Looking for ride requests nearby... Live Radar Card (When ONLINE) */}
-          {availabilityData.state === 'ONLINE' && (
-            <TouchableOpacity
-              style={[
-                styles.radarCard,
-                {
-                  backgroundColor: isDark ? '#111827' : '#FFFFFF',
-                  borderColor: isDark ? 'rgba(16,185,129,0.3)' : 'rgba(16,185,129,0.25)',
-                },
-              ]}
-              onPress={() => router.push('/smart-radar' as any)}
-              activeOpacity={0.8}
-            >
-              <View style={styles.radarIconWrap}>
-                <View style={styles.radarPulseOuter} />
-                <MaterialCommunityIcons name="radar" size={24} color="#10B981" />
-              </View>
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={[styles.radarTitle, { color: theme.colors.text }]}>
-                    {radarCount > 0 ? `${radarCount} Ride Request${radarCount > 1 ? 's' : ''} Available` : 'Smart Ride Radar Active'}
-                  </Text>
-                  <View style={styles.livePulseDot} />
-                </View>
-                <Text style={[styles.radarSub, { color: theme.colors.textSecondary }]}>
-                  {coverageLabel} • {availabilityData.currentZone || 'Live Radar'} • Tap to match
+          {/* Pending Requests in My Area Button & Card */}
+          <TouchableOpacity
+            style={[
+              styles.radarCard,
+              {
+                backgroundColor: isDark ? '#111827' : '#FFFFFF',
+                borderColor: isDark ? 'rgba(2,132,199,0.4)' : 'rgba(2,132,199,0.25)',
+              },
+            ]}
+            onPress={() => setShowPendingModal(true)}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.radarIconWrap, { backgroundColor: '#E0F2FE' }]}>
+              <Ionicons name="people" size={24} color="#0284C7" />
+            </View>
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={[styles.radarTitle, { color: theme.colors.text }]}>
+                  Pending Requests in My Area
                 </Text>
+                <View style={[styles.livePulseDot, { backgroundColor: '#0284C7' }]} />
               </View>
-              <View style={styles.openRadarBtn}>
-                <Text style={styles.openRadarBtnText}>RADAR</Text>
-                <Feather name="chevron-right" size={14} color="#0284C7" />
-              </View>
-            </TouchableOpacity>
-          )}
+              <Text style={[styles.radarSub, { color: theme.colors.textSecondary }]}>
+                {availabilityData.currentZone || 'My Area'} • Unassigned riders (>5m) • Tap to Accept
+              </Text>
+            </View>
+            <View style={[styles.openRadarBtn, { backgroundColor: '#E0F2FE' }]}>
+              <Text style={[styles.openRadarBtnText, { color: '#0284C7' }]}>VIEW POOL</Text>
+              <Feather name="chevron-right" size={14} color="#0284C7" />
+            </View>
+          </TouchableOpacity>
 
           {/* Daily Earnings & Key Metrics Card */}
           <View
@@ -412,141 +411,121 @@ export default function DriverHomeScreen() {
             </View>
           </View>
 
-          {/* AI Opportunity & Driver Assistant Card */}
-          {aiInsights && (
-            <View style={{ marginBottom: 16 }}>
-              <AIOpportunityBanner
-                insights={aiInsights}
-                onPressViewZones={() => setShowBestZonesModal(true)}
-                onPressDevSim={() => setShowAICopilotModal(true)}
-              />
-            </View>
-          )}
-
-          {/* AI Fatigue Warning Banner */}
-          {aiInsights?.fatigue_summary && aiInsights.fatigue_summary.needs_break && (
-            <View style={{ marginBottom: 16 }}>
-              <DriverFatigueBanner
-                fatigue={aiInsights.fatigue_summary}
-                onAcknowledgeBreak={async () => {
-                  await AISmartDriverService.acknowledgeBreak()
-                  await loadData()
-                }}
-              />
-            </View>
-          )}
-
           {/* Active / Published Trip Banner */}
-          {activeTrips.length > 0 && (
-            <View style={styles.requestCardWrapper}>
-              <LinearGradient
-                colors={
-                  activeTrips[0].status === 'published'
-                    ? ['#059669', '#0284C7', '#6366F1']
-                    : ['#06B6D4', '#3B82F6', '#8B5CF6']
-                }
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFill}
-              />
-              <View
-                style={[
-                  styles.requestCardInner,
-                  { backgroundColor: isDark ? '#111827' : '#FFFFFF' },
-                ]}
-              >
-                <View style={styles.requestDetails}>
-                  {/* Header Row */}
-                  <View style={styles.activeTripHeader}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <MaterialCommunityIcons
-                        name={activeTrips[0].status === 'published' ? 'radar' : 'car-connected'}
-                        size={18}
-                        color={activeTrips[0].status === 'published' ? '#10B981' : '#0EA5E9'}
-                      />
-                      <Text style={[styles.requestTitle, { color: theme.colors.text }]}>
-                        {activeTrips[0].status === 'published'
-                          ? '📡 Published Route — Live Monitor'
-                          : `Active Ride #${activeTrips[0].id?.slice(0, 6)}`}
-                      </Text>
+          {activeTrips.length > 0 && (() => {
+            const currentTrip = activeTrips[0]
+            const isPub = currentTrip.status === 'published'
+            const totalSeats = currentTrip.total_seats || 7
+            const bookedSeats = currentTrip.booked_seats || currentTrip.accepted_members || 0
+            const isFull = bookedSeats >= totalSeats
+
+            return (
+              <View style={styles.requestCardWrapper}>
+                <LinearGradient
+                  colors={
+                    isPub
+                      ? ['#059669', '#0284C7', '#6366F1']
+                      : ['#06B6D4', '#3B82F6', '#8B5CF6']
+                  }
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={StyleSheet.absoluteFill}
+                />
+                <View
+                  style={[
+                    styles.requestCardInner,
+                    { backgroundColor: isDark ? '#111827' : '#FFFFFF' },
+                  ]}
+                >
+                  <View style={styles.requestDetails}>
+                    {/* Header Row */}
+                    <View style={styles.activeTripHeader}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <MaterialCommunityIcons
+                          name={isPub ? 'car-clock' : 'car-connected'}
+                          size={18}
+                          color={isPub ? '#10B981' : '#0EA5E9'}
+                        />
+                        <Text style={[styles.requestTitle, { color: theme.colors.text }]}>
+                          {isPub
+                            ? '🚕 Latest Created Trip'
+                            : `Active Transit #${currentTrip.id?.slice(0, 6)}`}
+                        </Text>
+                      </View>
+                      <View style={styles.livePulseDot} />
                     </View>
-                    <View style={styles.livePulseDot} />
-                  </View>
 
-                  {/* Route & Corridor details */}
-                  <Text style={[styles.requestMeta, { color: theme.colors.textSecondary, marginTop: 4 }]}>
-                    Route: <Text style={{ color: theme.colors.text, fontWeight: '700' }}>{activeTrips[0].pickup_city} → {activeTrips[0].destination_city}</Text>
-                  </Text>
-
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
-                    <Text style={[styles.requestMeta, { color: theme.colors.textSecondary }]}>
-                      Fare: <Text style={{ color: '#10B981', fontWeight: '800' }}>₹{activeTrips[0].base_fare}/seat</Text>
+                    {/* Route */}
+                    <Text style={[styles.requestMeta, { color: theme.colors.textSecondary, marginTop: 4 }]}>
+                      Route: <Text style={{ color: theme.colors.text, fontWeight: '700' }}>{currentTrip.pickup_city || 'Origin'} → {currentTrip.destination_city || 'Destination'}</Text>
                     </Text>
-                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#6366F1' }}>
-                      {activeTrips[0].status === 'published' ? '🟢 Live Broadcasting' : '🟡 In Transit'}
-                    </Text>
-                  </View>
 
-                  {/* Action Buttons */}
-                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
-                    {activeTrips[0].status === 'published' ? (
-                      <>
-                        <TouchableOpacity
-                          style={[styles.requestAcceptBtn, { flex: 1.2, backgroundColor: '#0284C7' }]}
-                          onPress={() => router.push({
-                            pathname: '/trip-live',
-                            params: {
-                              tripId: activeTrips[0].id,
-                              from: activeTrips[0].pickup_city,
-                              to: activeTrips[0].destination_city,
-                              totalSeats: (activeTrips[0].total_seats || 4).toString(),
-                            },
-                          })}
-                          activeOpacity={0.85}
-                        >
-                          <Text style={styles.requestAcceptText}>📡 Live Route Monitor</Text>
-                        </TouchableOpacity>
+                    {/* Member Occupancy Badge */}
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                      <Text style={[styles.requestMeta, { color: theme.colors.textSecondary }]}>
+                        Fare: <Text style={{ color: '#10B981', fontWeight: '800' }}>₹{currentTrip.base_fare}/seat</Text>
+                      </Text>
+                      <View style={{
+                        paddingHorizontal: 8,
+                        paddingVertical: 3,
+                        borderRadius: 8,
+                        backgroundColor: isFull ? '#FEE2E2' : '#DCFCE7',
+                      }}>
+                        <Text style={{
+                          fontSize: 11,
+                          fontWeight: '800',
+                          color: isFull ? '#DC2626' : '#15803D',
+                        }}>
+                          {bookedSeats}/{totalSeats} Members {isFull ? '(🔴 Cab Full)' : '(🟢 Seats Open)'}
+                        </Text>
+                      </View>
+                    </View>
 
-                        <TouchableOpacity
-                          style={[styles.requestAcceptBtn, { flex: 0.9, backgroundColor: '#10B981' }]}
-                          onPress={() => doTripAction(activeTrips[0].id, 'start')}
-                          activeOpacity={0.85}
-                        >
-                          {actionLoading === activeTrips[0].id + 'start' ? (
-                            <ActivityIndicator size="small" color="#FFFFFF" />
-                          ) : (
-                            <Text style={styles.requestAcceptText}>▶ Start Trip</Text>
-                          )}
-                        </TouchableOpacity>
-                      </>
-                    ) : (
-                      <>
-                        <TouchableOpacity
-                          style={[styles.requestAcceptBtn, { flex: 1, backgroundColor: '#0EA5E9' }]}
-                          onPress={() => router.push({ pathname: '/active-trip', params: { bookingId: activeTrips[0].id } })}
-                          activeOpacity={0.85}
-                        >
-                          <Text style={styles.requestAcceptText}>🗺️ Open Map</Text>
-                        </TouchableOpacity>
+                    {/* Action Buttons */}
+                    <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                      {isPub ? (
+                        <>
+                          <TouchableOpacity
+                            style={[styles.requestAcceptBtn, { flex: 1, backgroundColor: '#10B981' }]}
+                            onPress={() => doTripAction(currentTrip.id, 'start')}
+                            activeOpacity={0.85}
+                          >
+                            {actionLoading === currentTrip.id + 'start' ? (
+                              <ActivityIndicator size="small" color="#FFFFFF" />
+                            ) : (
+                              <Text style={styles.requestAcceptText}>▶ Start Trip</Text>
+                            )}
+                          </TouchableOpacity>
+                        </>
+                      ) : (
+                        <>
+                          <TouchableOpacity
+                            style={[styles.requestAcceptBtn, { flex: 1, backgroundColor: '#0EA5E9' }]}
+                            onPress={() => router.push({ pathname: '/active-trip', params: { bookingId: currentTrip.id } })}
+                            activeOpacity={0.85}
+                          >
+                            <Text style={styles.requestAcceptText}>🗺️ Open Map</Text>
+                          </TouchableOpacity>
 
-                        <TouchableOpacity
-                          style={[styles.requestAcceptBtn, { flex: 1, backgroundColor: '#6D28D9' }]}
-                          onPress={() => doTripAction(activeTrips[0].id, 'complete')}
-                          activeOpacity={0.85}
-                        >
-                          {actionLoading === activeTrips[0].id + 'complete' ? (
-                            <ActivityIndicator size="small" color="#FFFFFF" />
-                          ) : (
-                            <Text style={styles.requestAcceptText}>✅ Complete</Text>
-                          )}
-                        </TouchableOpacity>
-                      </>
-                    )}
+                          <TouchableOpacity
+                            style={[styles.requestAcceptBtn, { flex: 1, backgroundColor: '#6D28D9' }]}
+                            onPress={() => doTripAction(currentTrip.id, 'complete')}
+                            activeOpacity={0.85}
+                          >
+                            {actionLoading === currentTrip.id + 'complete' ? (
+                              <ActivityIndicator size="small" color="#FFFFFF" />
+                            ) : (
+                              <Text style={styles.requestAcceptText}>✅ Complete</Text>
+                            )}
+                          </TouchableOpacity>
+                        </>
+                      )}
+                    </View>
                   </View>
                 </View>
               </View>
-            </View>
-          )}
+            )
+          })()}
 
           {/* Create Intercity Trip CTA */}
           <TouchableOpacity
@@ -763,8 +742,16 @@ export default function DriverHomeScreen() {
           rating: stats.rating,
           trips_today: stats.tripsToday,
           earnings_today: stats.earningsToday,
-          city: availabilityData.currentZone || 'Pune',
+          city: availabilityData.currentCity || availabilityData.currentZone || 'Pune',
         }}
+      />
+
+      {/* Feature: Pending Requests in My Area Modal */}
+      <PendingRequestsModal
+        visible={showPendingModal}
+        onClose={() => setShowPendingModal(false)}
+        driverLat={availabilityData.lat || 18.5204}
+        driverLng={availabilityData.lng || 73.8567}
       />
     </View>
   )
