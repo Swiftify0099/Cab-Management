@@ -52,7 +52,7 @@ class AdminDashboardService:
         # Total completed trips
         completed_trips = await self._count(Trip, Trip.status == TripStatus.COMPLETED)
         # Pending KYC
-        pending_kyc = await self._count(KYCDocument, KYCDocument.status == KYCStatus.PENDING)
+        pending_kyc = await self._count(DriverDocument, DriverDocument.is_verified == False)
         # Open complaints
         open_complaints = await self._count(Complaint, Complaint.status == ComplaintStatus.OPEN)
 
@@ -118,21 +118,22 @@ class AdminDashboardService:
     async def get_kyc_queue(self, page: int = 1, page_size: int = 20) -> list[dict]:
         """Pending KYC documents for review."""
         result = await self.db.execute(
-            select(KYCDocument, Driver)
-            .join(Driver, Driver.id == KYCDocument.driver_id)
-            .where(KYCDocument.status == KYCStatus.PENDING)
-            .order_by(KYCDocument.created_at.asc())
+            select(DriverDocument, Driver)
+            .join(Driver, Driver.id == DriverDocument.driver_id)
+            .where(DriverDocument.is_verified == False)
+            .order_by(DriverDocument.created_at.asc())
             .offset((page - 1) * page_size)
             .limit(page_size)
         )
         return [
             {
-                "id": str(row.KYCDocument.id),
-                "driver_id": str(row.KYCDocument.driver_id),
-                "driver_name": row.Driver.full_name,
-                "document_type": row.KYCDocument.document_type,
-                "file_url": row.KYCDocument.file_url,
-                "submitted_at": row.KYCDocument.created_at.isoformat(),
+                "id": str(row.DriverDocument.id),
+                "driver_id": str(row.DriverDocument.driver_id),
+                "driver_name": row.Driver.full_name or "Driver Partner",
+                "document_type": row.DriverDocument.doc_type.value if hasattr(row.DriverDocument.doc_type, "value") else str(row.DriverDocument.doc_type),
+                "document_number": row.DriverDocument.document_number,
+                "file_url": row.DriverDocument.file_path,
+                "submitted_at": row.DriverDocument.created_at.isoformat() if row.DriverDocument.created_at else datetime.utcnow().isoformat(),
             }
             for row in result.all()
         ]
@@ -140,18 +141,19 @@ class AdminDashboardService:
     async def approve_kyc(self, doc_id: str, approved: bool, admin_notes: str = "") -> dict:
         """Approve or reject a KYC document."""
         result = await self.db.execute(
-            select(KYCDocument).where(KYCDocument.id == UUID(doc_id))
+            select(DriverDocument).where(DriverDocument.id == UUID(doc_id))
         )
         doc = result.scalar_one_or_none()
         if not doc:
             raise ValueError("Document not found")
 
-        doc.status = KYCStatus.APPROVED if approved else KYCStatus.REJECTED
-        doc.admin_notes = admin_notes
-        doc.reviewed_at = datetime.utcnow()
+        doc.is_verified = approved
+        doc.status = "approved" if approved else "rejected"
+        doc.rejection_reason = None if approved else admin_notes
+        doc.verified_at = datetime.utcnow()
         await self.db.commit()
 
-        return {"id": doc_id, "status": doc.status.value, "action": "approved" if approved else "rejected"}
+        return {"id": doc_id, "status": doc.status, "action": "approved" if approved else "rejected"}
 
     async def get_complaints(self, status: Optional[str] = None, page: int = 1) -> list[dict]:
         """Get support complaints with optional status filter."""
