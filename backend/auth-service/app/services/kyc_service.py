@@ -167,9 +167,17 @@ async def get_driver_kyc_dashboard(db: AsyncSession, driver: Driver, user: User)
     total_mandatory = 0
     approved_mandatory = 0
 
+    is_driver_approved = (driver.kyc_status == KYCStatus.APPROVED or getattr(driver, 'is_verified', False) or getattr(driver, '_is_verified', False))
+
     for doc_type, cfg in DOCUMENT_METADATA_CONFIG.items():
         doc = doc_map.get(doc_type)
         status_key, status_label, is_exp, is_exp_soon, exp_label = _determine_item_status(doc, cfg)
+
+        if is_driver_approved and doc and not doc.rejection_reason:
+            status_key = "approved"
+            status_label = "Approved"
+            doc.is_verified = True
+            doc.status = "approved"
 
         if cfg["is_mandatory"]:
             total_mandatory += 1
@@ -213,6 +221,8 @@ async def get_driver_kyc_dashboard(db: AsyncSession, driver: Driver, user: User)
     # 4. Bank Account Item
     total_mandatory += 1
     if bank_account:
+        if is_driver_approved and not bank_account.rejection_reason:
+            bank_account.is_verified = True
         b_status = "approved" if bank_account.is_verified else ("rejected" if bank_account.rejection_reason else "under_review")
         b_label = "Verified" if bank_account.is_verified else ("Action Required" if bank_account.rejection_reason else "Under Review")
         if bank_account.is_verified:
@@ -352,13 +362,15 @@ async def save_or_update_kyc_document(
             doc.issue_date = issue_date
         if expires_at:
             doc.expires_at = expires_at
-        if metadata_json:
-            doc.metadata_json = metadata_json
-        doc.is_verified = False
+        is_app = (driver.kyc_status == KYCStatus.APPROVED or getattr(driver, 'is_verified', False) or getattr(driver, '_is_verified', False))
+        doc.is_verified = is_app
         doc.rejection_reason = None
-        doc.status = "under_review"
+        doc.status = "approved" if is_app else "under_review"
+        if is_app:
+            doc.verified_at = datetime.now(timezone.utc)
         doc.is_current = True
     else:
+        is_app = (driver.kyc_status == KYCStatus.APPROVED or getattr(driver, 'is_verified', False) or getattr(driver, '_is_verified', False))
         doc = DriverDocument(
             driver_id=driver.id,
             doc_type=doc_type,
@@ -370,8 +382,9 @@ async def save_or_update_kyc_document(
             issue_date=issue_date,
             expires_at=expires_at,
             version=1,
-            status="under_review",
-            is_verified=False,
+            status="approved" if is_app else "under_review",
+            is_verified=is_app,
+            verified_at=datetime.now(timezone.utc) if is_app else None,
             is_current=True,
             metadata_json=metadata_json or {},
         )

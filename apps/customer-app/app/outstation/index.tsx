@@ -22,6 +22,7 @@ import { useTheme } from '../../src/contexts/ThemeContext'
 import { useTranslation } from '../../src/i18n'
 import { AppText, AppButton, AppCard, AppBadge, AppDivider } from '../../src/components/ui'
 import { outstationApi } from '../../src/api/client'
+import { geocodeCity } from '../../src/utils/maps'
 
 const VEHICLE_TIERS = [
   { id: 'sedan', name: 'Sedan (Dzire / Etios)', seats: 4, per_km: 14, icon: 'car-side', desc: 'AC • 4 Seats • 2 Bags' },
@@ -50,12 +51,38 @@ export default function OutstationBookingScreen() {
   const tollEstimate = 180
   const totalEstimatedFare = baseFare + driverAllowance + tollEstimate
 
-  const handleBookOutstation = () => {
+  const handleBookOutstation = async () => {
+    setLoading(true)
+    let pickupLat = 18.5204
+    let pickupLng = 73.8567
+    let dropLat = 17.9307
+    let dropLng = 73.6477
+
+    try {
+      const [originGeo, destGeo] = await Promise.all([
+        geocodeCity(originAddress),
+        geocodeCity(destinationAddress),
+      ])
+      if (originGeo) {
+        pickupLat = originGeo.lat
+        pickupLng = originGeo.lon
+      }
+      if (destGeo) {
+        dropLat = destGeo.lat
+        dropLng = destGeo.lon
+      }
+    } catch {}
+    setLoading(false)
+
     router.push({
       pathname: '/book/cab',
       params: {
         pickupAddress: originAddress,
         dropAddress: destinationAddress,
+        pickupLat: pickupLat.toString(),
+        pickupLng: pickupLng.toString(),
+        dropLat: dropLat.toString(),
+        dropLng: dropLng.toString(),
         serviceType: 'outstation',
       },
     } as any)

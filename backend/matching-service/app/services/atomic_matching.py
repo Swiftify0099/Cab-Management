@@ -44,7 +44,7 @@ class AtomicMatchingEngine:
             select(Driver).where(Driver.user_id == uuid.UUID(driver_user_id))
         )
         driver = d_res.scalar_one_or_none()
-        if not driver or driver.status != DriverStatus.ONLINE:
+        if not driver or driver.status not in (DriverStatus.ONLINE, "online", "ONLINE"):
             return {"success": False, "message": "Driver not eligible or offline", "matched_ride_id": None}
 
         now = datetime.utcnow()
@@ -63,7 +63,16 @@ class AtomicMatchingEngine:
             )
             ride_req = req_lock.scalar_one_or_none()
 
-            if ride_req and ride_req.status in (RideRequestStatus.CREATED, RideRequestStatus.DISPATCHING, RideRequestStatus.OFFERED) and ride_req.assigned_driver_id is None:
+            valid_statuses = (
+                RideRequestStatus.CREATED,
+                RideRequestStatus.MATCHING,
+                RideRequestStatus.DISPATCHING,
+                RideRequestStatus.OFFERED,
+                "created", "matching", "dispatching", "offered",
+                "CREATED", "MATCHING", "DISPATCHING", "OFFERED",
+            )
+
+            if ride_req and ride_req.status in valid_statuses and ride_req.assigned_driver_id is None:
                 # Assign ride atomically to this driver
                 ride_req.status = RideRequestStatus.ASSIGNED
                 ride_req.assigned_driver_id = driver.id

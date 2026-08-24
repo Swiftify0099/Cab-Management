@@ -57,6 +57,13 @@ OFFER_TIMEOUT_SEC = 180
 DEFAULT_MAX_PICKUP_RADIUS_KM = 15.0
 
 
+def _mask_phone(phone: Optional[str]) -> str:
+    """Mask phone for operational privacy: +91 98••••2345"""
+    if not phone or len(phone) < 6:
+        return phone or ""
+    return phone[:6] + "••••" + phone[-4:]
+
+
 class RideDispatchService:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -76,6 +83,17 @@ class RideDispatchService:
         seat_preferences: Optional[dict] = None,
         preferred_driver_ids: Optional[List[str]] = None,
         service_type: str = "local",
+        rider_type: str = "SELF",
+        rider_name: Optional[str] = None,
+        rider_phone: Optional[str] = None,
+        is_booked_for_other: bool = False,
+        stops: Optional[List[dict]] = None,
+        pickup_notes: Optional[str] = None,
+        payment_method: Optional[str] = "CASH",
+        is_scheduled: bool = False,
+        scheduled_pickup_time: Optional[str] = None,
+        pricing_mode: Optional[str] = "STANDARD",
+        customer_offer_amount: Optional[float] = None,
     ) -> RideRequest:
         """
         Customer creates an on-demand ride request.
@@ -103,6 +121,8 @@ class RideDispatchService:
             surge_multiplier=category.surge_multiplier if category else 1.0,
         )
 
+        final_fare = Decimal(str(round(customer_offer_amount if (pricing_mode == "NEGOTIATED" and customer_offer_amount) else fare_est.total_fare, 2)))
+
         # 4. Resolve spatial hierarchy (City / Zone / Hex) via PostGIS
         spatial_info = await self.spatial.resolve_pickup(pickup_lat, pickup_lng)
 
@@ -110,8 +130,28 @@ class RideDispatchService:
         pickup_wkt = f"SRID=4326;POINT({pickup_lng} {pickup_lat})"
         dest_wkt = f"SRID=4326;POINT({dest_lng} {dest_lat})"
 
+        pref_data = seat_preferences or {}
+        if pricing_mode:
+            pref_data["pricing_mode"] = pricing_mode
+        if customer_offer_amount:
+            pref_data["customer_offer_amount"] = customer_offer_amount
+        if stops:
+            pref_data["stops"] = stops
+        if pickup_notes:
+            pref_data["pickup_notes"] = pickup_notes
+        if payment_method:
+            pref_data["payment_method"] = payment_method
+        if is_scheduled:
+            pref_data["is_scheduled"] = is_scheduled
+            pref_data["scheduled_pickup_time"] = scheduled_pickup_time
+
         ride_req = RideRequest(
             customer_id=uuid.UUID(customer_id),
+            booking_owner_id=uuid.UUID(customer_id),
+            rider_type=rider_type,
+            rider_name=rider_name,
+            rider_phone=rider_phone,
+            is_booked_for_other=is_booked_for_other,
             pickup_location=pickup_wkt,
             pickup_lat=pickup_lat,
             pickup_lng=pickup_lng,
@@ -126,10 +166,10 @@ class RideDispatchService:
             ride_category_id=category.id if category else None,
             estimated_distance_km=dist_km,
             estimated_duration_min=dur_min,
-            estimated_fare=Decimal(str(round(fare_est.total_fare, 2))),
+            estimated_fare=final_fare,
             surge_multiplier=fare_est.surge_multiplier,
             seats_requested=seats_requested,
-            seat_preferences=seat_preferences or {"seats": ["Rear Left", "Rear Right"]},
+            seat_preferences=pref_data,
             route_polyline=polyline,
             route_distance_km=dist_km,
             route_duration_min=dur_min,
@@ -258,6 +298,14 @@ class RideDispatchService:
                     "earning": round(driver_earning, 2),
                     "seats": ride_req.seats_requested,
                 },
+                "customer": {
+                    "id": str(ride_req.customer_id),
+                    "name": ride_req.rider_name or "Rider",
+                    "phone_masked": _mask_phone(ride_req.rider_phone) if ride_req.rider_phone else "+91 98••••2345",
+                    "rider_type": ride_req.rider_type or "SELF",
+                    "is_booked_for_other": ride_req.is_booked_for_other,
+                    "special_notes": (ride_req.seat_preferences or {}).get("pickup_notes", "") if isinstance(ride_req.seat_preferences, dict) else "",
+                },
                 "category": {
                     "name": "Economy",
                     "icon": "car",
@@ -267,6 +315,33 @@ class RideDispatchService:
                     "available_seats": cand.get("seat_capacity", 4),
                     "available_labels": ["Front Window", "Rear Left", "Rear Right", "Rear Middle"],
                     "requested_seats": ride_req.seats_requested,
+                },
+                "common_job": {
+                    "job_type": "RIDE",
+                    "job_id": str(ride_req.id),
+                    "domain_id": str(ride_req.id),
+                    "status": "OFFERED",
+                    "pickup": {
+                        "latitude": ride_req.pickup_lat,
+                        "longitude": ride_req.pickup_lng,
+                        "address": ride_req.pickup_address,
+                    },
+                    "dropoff": {
+                        "latitude": ride_req.destination_lat,
+                        "longitude": ride_req.destination_lng,
+                        "address": ride_req.destination_address,
+                    },
+                    "fare_snapshot": {
+                        "total_fare": float(ride_req.estimated_fare),
+                        "driver_earning": round(driver_earning, 2),
+                        "currency": "INR",
+                        "payment_method": (ride_req.seat_preferences or {}).get("payment_method", "CASH") if isinstance(ride_req.seat_preferences, dict) else "CASH",
+                    },
+                    "customer": {
+                        "name": ride_req.rider_name or "Rider",
+                        "phone_masked": _mask_phone(ride_req.rider_phone) if ride_req.rider_phone else "+91 98••••2345",
+                        "special_notes": (ride_req.seat_preferences or {}).get("pickup_notes", "") if isinstance(ride_req.seat_preferences, dict) else "",
+                    },
                 },
                 "expires_at": expires_at.isoformat(),
                 "timeout_sec": OFFER_TIMEOUT_SEC,

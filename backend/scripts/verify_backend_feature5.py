@@ -78,7 +78,8 @@ async def run_feature5_verification():
             rating=4.95,
             total_trips=310,
             status=DriverStatus.ONLINE,
-            kyc_status=KYCStatus.APPROVED
+            kyc_status=KYCStatus.APPROVED,
+            current_location="SRID=4326;POINT(73.8567 18.5204)"
         )
         session.add(driver1)
 
@@ -100,7 +101,8 @@ async def run_feature5_verification():
             rating=4.88,
             total_trips=145,
             status=DriverStatus.ONLINE,
-            kyc_status=KYCStatus.APPROVED
+            kyc_status=KYCStatus.APPROVED,
+            current_location="SRID=4326;POINT(73.8567 18.5204)"
         )
         session.add(driver2)
 
@@ -163,7 +165,7 @@ async def run_feature5_verification():
         await session.commit()
 
         assert ride_req.id is not None
-        assert ride_req.status in (RideRequestStatus.CREATED, RideRequestStatus.DISPATCHING)
+        assert ride_req.status in (RideRequestStatus.CREATED, RideRequestStatus.DISPATCHING, RideRequestStatus.MATCHING)
         assert ride_req.pickup_lat == 18.5204
         assert ride_req.destination_lat == 18.5793
         assert ride_req.seats_requested == 2
@@ -173,19 +175,26 @@ async def run_feature5_verification():
         # TEST 3: Dispatch Offer Creation & 180s Server Timeout
         # ---------------------------------------------------------
         print("\n[TEST 3] Testing 180-second Offer Ringing Timeout & Lifecycle...", flush=True)
-        offer1 = RideOffer(
-            ride_request_id=ride_req.id,
-            driver_id=driver1.id,
-            status=RideOfferStatus.PENDING,
-            pickup_distance_km=1.2,
-            pickup_eta_min=4,
-            estimated_fare=ride_req.estimated_fare,
-            estimated_earning=Decimal("176.00"),
-            offered_at=datetime.now(timezone.utc),
-            expires_at=datetime.now(timezone.utc) + timedelta(seconds=180)
+        offer_res = await session.execute(
+            select(RideOffer).where(
+                and_(RideOffer.ride_request_id == ride_req.id, RideOffer.driver_id == driver1.id)
+            )
         )
-        session.add(offer1)
-        await session.commit()
+        offer1 = offer_res.scalar_one_or_none()
+        if not offer1:
+            offer1 = RideOffer(
+                ride_request_id=ride_req.id,
+                driver_id=driver1.id,
+                status=RideOfferStatus.PENDING,
+                pickup_distance_km=1.2,
+                pickup_eta_min=4,
+                estimated_fare=ride_req.estimated_fare,
+                estimated_earning=Decimal("176.00"),
+                offered_at=datetime.now(timezone.utc),
+                expires_at=datetime.now(timezone.utc) + timedelta(seconds=180)
+            )
+            session.add(offer1)
+            await session.commit()
 
         time_delta = (offer1.expires_at - offer1.offered_at).total_seconds()
         assert abs(time_delta - 180) < 5
@@ -215,19 +224,26 @@ async def run_feature5_verification():
         # TEST 5: Concurrency Shield (Driver 2 Acceptance Blocked)
         # ---------------------------------------------------------
         print("\n[TEST 5] Testing Concurrency Shield against conflicting acceptance...", flush=True)
-        offer2 = RideOffer(
-            ride_request_id=ride_req.id,
-            driver_id=driver2.id,
-            status=RideOfferStatus.PENDING,
-            pickup_distance_km=2.4,
-            pickup_eta_min=7,
-            estimated_fare=ride_req.estimated_fare,
-            estimated_earning=Decimal("176.00"),
-            offered_at=datetime.now(timezone.utc),
-            expires_at=datetime.now(timezone.utc) + timedelta(seconds=180)
+        offer2_res = await session.execute(
+            select(RideOffer).where(
+                and_(RideOffer.ride_request_id == ride_req.id, RideOffer.driver_id == driver2.id)
+            )
         )
-        session.add(offer2)
-        await session.commit()
+        offer2 = offer2_res.scalar_one_or_none()
+        if not offer2:
+            offer2 = RideOffer(
+                ride_request_id=ride_req.id,
+                driver_id=driver2.id,
+                status=RideOfferStatus.PENDING,
+                pickup_distance_km=2.4,
+                pickup_eta_min=7,
+                estimated_fare=ride_req.estimated_fare,
+                estimated_earning=Decimal("176.00"),
+                offered_at=datetime.now(timezone.utc),
+                expires_at=datetime.now(timezone.utc) + timedelta(seconds=180)
+            )
+            session.add(offer2)
+            await session.commit()
 
         # Driver 2 tries to accept a ride that is already assigned
         reject_conflict = await dispatch_service.respond_to_offer(

@@ -648,6 +648,7 @@ from app.services.ride_fare_engine import estimate_ride_fare
 
 
 class CreateRideRequestSchema(BaseModel):
+    request_id: Optional[str] = None
     pickup_lat: float
     pickup_lng: float
     pickup_address: str
@@ -657,6 +658,20 @@ class CreateRideRequestSchema(BaseModel):
     category_name: str = "economy"
     seats_requested: int = 1
     seat_preferences: Optional[dict] = None
+    stops: Optional[List[dict]] = None
+    pickup_notes: Optional[str] = None
+    rider_type: str = "SELF"
+    rider_name: Optional[str] = None
+    rider_phone: Optional[str] = None
+    is_booked_for_other: bool = False
+    payment_method: Optional[str] = "CASH"
+    is_scheduled: bool = False
+    scheduled_pickup_time: Optional[str] = None
+    timezone: Optional[str] = None
+    scheduled_status: Optional[str] = None
+    pricing_mode: Optional[str] = "STANDARD"
+    customer_offer_amount: Optional[float] = None
+    negotiation_idempotency_key: Optional[str] = None
     preferred_driver_ids: Optional[List[str]] = None
     service_type: str = "local"  # local, premium, luxury, outstation
 
@@ -700,6 +715,17 @@ async def create_ride_request_endpoint(
         seat_preferences=request.seat_preferences,
         preferred_driver_ids=request.preferred_driver_ids,
         service_type=request.service_type,
+        rider_type=request.rider_type,
+        rider_name=request.rider_name,
+        rider_phone=request.rider_phone,
+        is_booked_for_other=request.is_booked_for_other,
+        stops=request.stops,
+        pickup_notes=request.pickup_notes,
+        payment_method=request.payment_method,
+        is_scheduled=request.is_scheduled,
+        scheduled_pickup_time=request.scheduled_pickup_time,
+        pricing_mode=request.pricing_mode,
+        customer_offer_amount=request.customer_offer_amount,
     )
     return SuccessResponse(
         success=True,
@@ -708,6 +734,9 @@ async def create_ride_request_endpoint(
             "ride_request_id": str(ride_req.id),
             "estimated_fare": float(ride_req.estimated_fare),
             "status": ride_req.status.value,
+            "rider_name": ride_req.rider_name,
+            "pickup_address": ride_req.pickup_address,
+            "destination_address": ride_req.destination_address,
         },
     )
 

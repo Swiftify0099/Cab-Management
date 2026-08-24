@@ -125,7 +125,9 @@ class SmartRadarService:
         if not driver:
             return []
 
-        if driver.status != DriverStatus.ONLINE or driver.kyc_status.value != "approved":
+        status_val = driver.status.value if hasattr(driver.status, "value") else str(driver.status)
+        kyc_val = driver.kyc_status.value if hasattr(driver.kyc_status, "value") else str(driver.kyc_status)
+        if status_val.lower() not in ("online",) or kyc_val.lower() not in ("approved",):
             return []
 
         # Load preferences
@@ -196,8 +198,8 @@ class SmartRadarService:
 
             # ── VISIBILITY MODE COVERAGE FILTER ──
             if visibility_mode == "all_city":
-                if req.pickup_city_id and all_covered_city_ids and req.pickup_city_id not in all_covered_city_ids:
-                    continue
+                # In all_city mode, all cities are eligible
+                pass
             elif visibility_mode == "specific_city":
                 if req.pickup_city_id and selected_city_ids and req.pickup_city_id not in selected_city_ids:
                     continue

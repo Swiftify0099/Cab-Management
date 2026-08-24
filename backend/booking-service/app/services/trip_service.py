@@ -217,8 +217,16 @@ class TripService:
         with_parcel: bool = False,
     ) -> list[dict]:
         """Search available published trips using PostGIS."""
-        date_start = departure_date.replace(hour=0, minute=0, second=0)
-        date_end = departure_date.replace(hour=23, minute=59, second=59)
+        from datetime import timezone
+        
+        # Ensure timezone-aware datetime for UTC database comparison
+        if departure_date.tzinfo is None:
+            dep_utc = departure_date.replace(tzinfo=timezone.utc)
+        else:
+            dep_utc = departure_date.astimezone(timezone.utc)
+            
+        date_start = dep_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+        date_end = dep_utc.replace(hour=23, minute=59, second=59, microsecond=999999)
 
         from geoalchemy2.elements import WKTElement
         from geoalchemy2.functions import ST_DWithin
@@ -230,7 +238,7 @@ class TripService:
 
         # Allow 50km radius for pickup and dropoff
         filters = [
-            Trip.status == TripStatus.PUBLISHED,
+            Trip.status.in_([TripStatus.PUBLISHED, "published", "PUBLISHED"]),
             ST_DWithin(Trip.pickup_location, cast(search_pickup, Geography), 50000),
             ST_DWithin(Trip.destination_location, cast(search_dropoff, Geography), 50000),
             Trip.departure_time >= date_start,

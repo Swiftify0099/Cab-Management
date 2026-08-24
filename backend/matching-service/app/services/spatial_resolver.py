@@ -203,20 +203,20 @@ class SpatialResolverService:
                 d.user_id AS user_id,
                 d.full_name,
                 d.rating,
-                dp.visibility_mode,
+                COALESCE(dp.visibility_mode, 'all_city') AS visibility_mode,
                 v.id AS vehicle_id,
-                v.make,
-                v.model,
-                v.registration_number,
-                v.vehicle_type,
-                v.seat_capacity,
+                COALESCE(v.make, 'Standard') AS make,
+                COALESCE(v.model, 'Cab') AS model,
+                COALESCE(v.registration_number, 'MH-12-REG') AS registration_number,
+                COALESCE(v.vehicle_type::text, 'SEDAN') AS vehicle_type,
+                COALESCE(v.seat_capacity, 4) AS seat_capacity,
                 ST_Distance(
                     d.current_location,
                     ST_SetSRID(ST_MakePoint(:pickup_lng, :pickup_lat), 4326)::geography
                 ) / 1000.0 AS distance_km
             FROM drivers d
-            JOIN driver_preferences dp ON dp.driver_id = d.id
-            JOIN vehicles v ON v.driver_id = d.id
+            LEFT JOIN driver_preferences dp ON dp.driver_id = d.id
+            LEFT JOIN vehicles v ON v.driver_id = d.id
             LEFT JOIN driver_city_coverage dcc ON dcc.driver_id = d.id AND dcc.is_active = TRUE
             LEFT JOIN driver_hex_coverage dhc ON dhc.driver_id = d.id AND dhc.is_active = TRUE
             WHERE
@@ -231,8 +231,8 @@ class SpatialResolverService:
                 )
                 -- Coverage preference filter
                 AND (
-                    -- ALL_CITY: driver's city coverage includes pickup city
-                    (dp.visibility_mode = 'all_city' AND dcc.city_id = CAST(:city_id AS uuid))
+                    -- ALL_CITY: driver accepts requests anywhere within physical proximity
+                    (COALESCE(dp.visibility_mode, 'all_city') = 'all_city')
                     OR
                     -- SPECIFIC_CITY: driver explicitly selected this city
                     (dp.visibility_mode = 'specific_city' AND dcc.city_id = CAST(:city_id AS uuid) AND dcc.is_selected = TRUE)
