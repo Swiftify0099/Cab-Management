@@ -235,6 +235,8 @@ export default function DocumentUploadScreen() {
   const [showPhotoModal, setShowPhotoModal] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [showPreviewModal, setShowPreviewModal] = useState(false)
+  const [previewUri, setPreviewUri] = useState<string | null>(null)
+  const [previewTitle, setPreviewTitle] = useState('')
 
   useEffect(() => {
     setDocNumber('')
@@ -247,23 +249,27 @@ export default function DocumentUploadScreen() {
     const loadDriverDefaultsAndDoc = async () => {
       try {
         // Pre-fill profile defaults from driver profile
-        const profileRes = await driverApi.getProfile()
-        const p = profileRes.data?.data
+        const profileRes = await driverApi.getProfile().catch(() => null)
+        const p = profileRes?.data?.data || profileRes?.data
         if (p?.full_name) {
           setExtraField1(p.full_name)
         }
 
-        const res = await kycApi.getDocumentDetails(doc_type)
-        const doc = res.data?.data
+        const res = await kycApi.getDocumentDetails(doc_type).catch(() => null)
+        const doc = res?.data?.data || res?.data
         if (doc) {
           if (doc.document_number) setDocNumber(doc.document_number)
           if (config.hasExpiry && doc.expires_at) {
             const parts = doc.expires_at.split('-')
             if (parts.length === 3) setExpiryDate(`${parts[2]}/${parts[1]}/${parts[0]}`)
+            else setExpiryDate(doc.expires_at)
           }
-          const previewUrl = doc.access_url || doc.file_path
-          if (previewUrl) {
-            setFrontUri(previewUrl)
+          const pUrl = doc.access_url || doc.file_path || doc.preview_url
+          if (pUrl) {
+            setFrontUri(pUrl)
+          }
+          if (doc.metadata_json?.back_url || doc.back_url) {
+            setBackUri(doc.metadata_json?.back_url || doc.back_url)
           }
         }
       } catch {
@@ -310,6 +316,20 @@ export default function DocumentUploadScreen() {
     }
   }
 
+  const handleOpenCard = (side: 'front' | 'back') => {
+    setActiveSide(side)
+    setShowPhotoModal(true)
+  }
+
+  const handlePreview = (side: 'front' | 'back') => {
+    const uri = side === 'front' ? frontUri : backUri
+    if (uri) {
+      setPreviewUri(uri)
+      setPreviewTitle(`${config.label} (${side === 'front' ? 'Front Side' : 'Back Side'})`)
+      setShowPreviewModal(true)
+    }
+  }
+
   const handleSubmit = async () => {
     if (!frontUri && !backUri) {
       Alert.alert('Please Attach Photo', `Please capture or select the front side photo of your ${config.label}.`)
@@ -329,30 +349,46 @@ export default function DocumentUploadScreen() {
     setUploading(true)
     try {
       const formData = new FormData()
-      const uriToUpload = frontUri || backUri || ''
-      const filename = uriToUpload.split('/').pop() || `${doc_type}.jpg`
+      const mainUri = frontUri || backUri || ''
+      const filename = mainUri.split('/').pop() || `${doc_type}.jpg`
       const match = /\.(\w+)$/.exec(filename)
       const type = match ? `image/${match[1]}` : 'image/jpeg'
 
       formData.append('file', {
-        uri: uriToUpload,
+        uri: mainUri,
         name: filename,
         type,
       } as any)
+
+      if (config.requiresBackSide && backUri && frontUri) {
+        const bFilename = backUri.split('/').pop() || `${doc_type}_back.jpg`
+        const bMatch = /\.(\w+)$/.exec(bFilename)
+        const bType = bMatch ? `image/${bMatch[1]}` : 'image/jpeg'
+        formData.append('back_file', {
+          uri: backUri,
+          name: bFilename,
+          type: bType,
+        } as any)
+      }
 
       if (docNumber) formData.append('document_number', docNumber.trim())
       if (config.hasExpiry && expiryDate) {
         const parts = expiryDate.split('/')
         if (parts.length === 3) {
           formData.append('expires_at', `${parts[2]}-${parts[1]}-${parts[0]}`)
+        } else {
+          formData.append('expires_at', expiryDate.trim())
         }
       }
 
       const res = await kycApi.uploadDocument(doc_type, formData)
-      const uploadedData = res.data?.data
+      const uploadedData = res.data?.data || res.data
 
       if (uploadedData?.access_url || uploadedData?.file_path) {
         setFrontUri(uploadedData.access_url || uploadedData.file_path)
+      }
+      if (uploadedData?.back_url) {
+        setBackUri(uploadedData.back_url)
       }
 
       Alert.alert(
@@ -512,7 +548,7 @@ export default function DocumentUploadScreen() {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 12,
-      paddingVertical: 12,
+      paddingVertical: 14,
       borderBottomWidth: 1,
       borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : '#F1F5F9',
     },
@@ -525,6 +561,90 @@ export default function DocumentUploadScreen() {
       alignItems: 'center',
     },
     modalCancelText: { fontSize: 15, fontWeight: '700', color: '#64748B' },
+
+    // Fullscreen Preview Modal
+    previewModalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.88)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 16,
+    },
+    previewModalContent: {
+      width: '100%',
+      backgroundColor: isDark ? '#0F172A' : '#FFFFFF',
+      borderRadius: 24,
+      padding: 20,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(59,130,246,0.3)' : '#E2E8F0',
+      overflow: 'hidden',
+    },
+    previewModalHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 16,
+    },
+    previewModalTitle: {
+      fontSize: 17,
+      fontWeight: '800',
+      color: isDark ? '#FFFFFF' : '#0F172A',
+      flex: 1,
+    },
+    previewModalCloseBtn: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : '#F1F5F9',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    previewImageContainer: {
+      width: '100%',
+      height: 280,
+      borderRadius: 16,
+      backgroundColor: isDark ? '#020617' : '#000000',
+      overflow: 'hidden',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    previewImage: {
+      width: '100%',
+      height: '100%',
+    },
+    previewModalFooter: {
+      flexDirection: 'row',
+      gap: 10,
+      marginTop: 18,
+    },
+    previewRetakeBtn: {
+      flex: 1,
+      height: 44,
+      borderRadius: 12,
+      backgroundColor: '#2563EB',
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexDirection: 'row',
+      gap: 8,
+    },
+    previewRetakeBtnText: {
+      color: '#FFFFFF',
+      fontSize: 14,
+      fontWeight: '700',
+    },
+    previewCloseBtn: {
+      paddingHorizontal: 18,
+      height: 44,
+      borderRadius: 12,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : '#F1F5F9',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    previewCloseBtnText: {
+      color: isDark ? '#94A3B8' : '#475569',
+      fontSize: 14,
+      fontWeight: '700',
+    },
   })
 
   return (
@@ -547,10 +667,10 @@ export default function DocumentUploadScreen() {
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
           {/* Top Rule Badge Banner */}
           <View style={styles.badgeBanner}>
-            <div>
+            <View style={{ flex: 1 }}>
               <Text style={styles.badgeText}>{config.badgeText}</Text>
               <Text style={styles.badgeSub}>{config.label}</Text>
-            </div>
+            </View>
             <Ionicons name="shield-checkmark" size={22} color={config.badgeColor} />
           </View>
 
@@ -629,10 +749,7 @@ export default function DocumentUploadScreen() {
             {/* Front Card */}
             <TouchableOpacity
               style={frontUri ? styles.uploadCard : styles.uploadCardDashed}
-              onPress={() => {
-                setActiveSide('front')
-                setShowPhotoModal(true)
-              }}
+              onPress={() => handleOpenCard('front')}
               activeOpacity={0.8}
             >
               <Text style={styles.cardSideTitle}>Front Side Photo</Text>
@@ -641,7 +758,7 @@ export default function DocumentUploadScreen() {
                   <Image source={{ uri: frontUri }} style={styles.previewThumb} resizeMode="cover" />
                   <View style={styles.uploadedPill}>
                     <Ionicons name="checkmark-circle" size={13} color="#10B981" />
-                    <Text style={styles.uploadedText}>Captured</Text>
+                    <Text style={styles.uploadedText}>Captured • Tap Options</Text>
                   </View>
                 </>
               ) : (
@@ -656,10 +773,7 @@ export default function DocumentUploadScreen() {
             {config.requiresBackSide ? (
               <TouchableOpacity
                 style={backUri ? styles.uploadCard : styles.uploadCardDashed}
-                onPress={() => {
-                  setActiveSide('back')
-                  setShowPhotoModal(true)
-                }}
+                onPress={() => handleOpenCard('back')}
                 activeOpacity={0.8}
               >
                 <Text style={styles.cardSideTitle}>Back Side Photo</Text>
@@ -668,7 +782,7 @@ export default function DocumentUploadScreen() {
                     <Image source={{ uri: backUri }} style={styles.previewThumb} resizeMode="cover" />
                     <View style={styles.uploadedPill}>
                       <Ionicons name="checkmark-circle" size={13} color="#10B981" />
-                      <Text style={styles.uploadedText}>Captured</Text>
+                      <Text style={styles.uploadedText}>Captured • Tap Options</Text>
                     </View>
                   </>
                 ) : (
@@ -712,7 +826,7 @@ export default function DocumentUploadScreen() {
         </ScrollView>
       </SafeAreaView>
 
-      {/* Photo Picker Modal */}
+      {/* Photo Options Modal */}
       <Modal
         visible={showPhotoModal}
         transparent
@@ -726,24 +840,108 @@ export default function DocumentUploadScreen() {
         >
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>
-              Capture {activeSide === 'front' ? 'Front Side' : 'Back Side'} of {config.label}
+              {activeSide === 'front' ? 'Front Side' : 'Back Side'} — {config.label}
             </Text>
 
+            {(activeSide === 'front' ? frontUri : backUri) ? (
+              <TouchableOpacity
+                style={styles.modalOption}
+                onPress={() => {
+                  setShowPhotoModal(false)
+                  handlePreview(activeSide)
+                }}
+              >
+                <Feather name="eye" size={20} color="#3B82F6" />
+                <Text style={[styles.modalOptionText, { color: '#3B82F6', fontWeight: '700' }]}>
+                  View Fullscreen Preview
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+
             <TouchableOpacity style={styles.modalOption} onPress={() => handlePickImage(true)}>
-              <Feather name="camera" size={20} color="#3B82F6" />
-              <Text style={styles.modalOptionText}>Take Photo with Camera</Text>
+              <Feather name="camera" size={20} color="#10B981" />
+              <Text style={styles.modalOptionText}>
+                {(activeSide === 'front' ? frontUri : backUri) ? 'Retake Photo with Camera' : 'Take Photo with Camera'}
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.modalOption} onPress={() => handlePickImage(false)}>
-              <Feather name="image" size={20} color="#10B981" />
+              <Feather name="image" size={20} color="#8B5CF6" />
               <Text style={styles.modalOptionText}>Choose from Photo Gallery</Text>
             </TouchableOpacity>
+
+            {(activeSide === 'front' ? frontUri : backUri) ? (
+              <TouchableOpacity
+                style={styles.modalOption}
+                onPress={() => {
+                  if (activeSide === 'front') setFrontUri(null)
+                  else setBackUri(null)
+                  setShowPhotoModal(false)
+                }}
+              >
+                <Feather name="trash-2" size={20} color="#EF4444" />
+                <Text style={[styles.modalOptionText, { color: '#EF4444' }]}>Remove Photo</Text>
+              </TouchableOpacity>
+            ) : null}
 
             <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setShowPhotoModal(false)}>
               <Text style={styles.modalCancelText}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
+      </Modal>
+
+      {/* Fullscreen Document Preview Modal */}
+      <Modal
+        visible={showPreviewModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowPreviewModal(false)}
+      >
+        <View style={styles.previewModalOverlay}>
+          <View style={styles.previewModalContent}>
+            <View style={styles.previewModalHeader}>
+              <Text style={styles.previewModalTitle} numberOfLines={1}>
+                {previewTitle || 'Document Preview'}
+              </Text>
+              <TouchableOpacity
+                style={styles.previewModalCloseBtn}
+                onPress={() => setShowPreviewModal(false)}
+              >
+                <Feather name="x" size={20} color={isDark ? '#FFFFFF' : '#0F172A'} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.previewImageContainer}>
+              {previewUri ? (
+                <Image
+                  source={{ uri: previewUri }}
+                  style={styles.previewImage}
+                  resizeMode="contain"
+                />
+              ) : null}
+            </View>
+
+            <View style={styles.previewModalFooter}>
+              <TouchableOpacity
+                style={styles.previewRetakeBtn}
+                onPress={() => {
+                  setShowPreviewModal(false)
+                  setShowPhotoModal(true)
+                }}
+              >
+                <Feather name="camera" size={16} color="#FFFFFF" />
+                <Text style={styles.previewRetakeBtnText}>Retake Photo</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.previewCloseBtn}
+                onPress={() => setShowPreviewModal(false)}
+              >
+                <Text style={styles.previewCloseBtnText}>Close Preview</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       </Modal>
     </View>
   )

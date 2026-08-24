@@ -108,14 +108,15 @@ interface PromoItem {
 }
 
 const DEFAULT_SERVICES: ServiceItem[] = [
-  { code: 'ride',      title: 'Intercity Cab',  description: 'One-way & Round-trip', category: 'transport',   icon: 'car-sport', status: 'AVAILABLE',   badge: 'Popular',     sort_order: 1, route: '/book/cab' },
-  { code: 'parcel',    title: 'Send Parcel',    description: 'Same-day delivery',    category: 'logistics',   icon: 'package',   status: 'AVAILABLE',   badge: 'Instant',     sort_order: 2, route: '/parcel-booking' },
-  { code: 'hotel',     title: 'Book Hotel',     description: 'Verified Stays',       category: 'hospitality', icon: 'business',  status: 'AVAILABLE',   badge: 'Hotels',      sort_order: 3, route: '/book/properties' },
-  { code: 'transport', title: 'Goods Transport',description: 'Commercial Freight',   category: 'logistics',   icon: 'truck',     status: 'AVAILABLE',   badge: 'Instant & Bids', sort_order: 4, route: '/transport/create' },
-  { code: 'airport',   title: 'Airport Transfer',description: 'Flight-Aware & Pickup',category: 'transport',   icon: 'airplane',  status: 'AVAILABLE',   badge: 'Flight Sync', sort_order: 5, route: '/airport/book' },
-  { code: 'rental',    title: 'Car Rental',     description: 'Hourly / Daily packs', category: 'transport',   icon: 'key',       status: 'COMING_SOON', badge: 'Coming Soon', sort_order: 6, route: null },
-  { code: 'corporate', title: 'Corporate Rides',description: 'Business accounts',    category: 'corporate',   icon: 'briefcase', status: 'COMING_SOON', badge: 'Coming Soon', sort_order: 7, route: null },
-  { code: 'moving',    title: 'Movers & Shift', description: 'Trucks & Helpers',     category: 'logistics',   icon: 'truck',     status: 'AVAILABLE',   badge: 'Heavy Load',  sort_order: 8, route: '/transport/create' },
+  { code: 'ride',      title: 'Intercity Cab',   description: 'One-way & Round-trip', category: 'transport',   icon: 'car-sport', status: 'AVAILABLE', badge: 'Popular',     sort_order: 1, route: '/book/cab' },
+  { code: 'parcel',    title: 'Send Parcel',     description: 'Same-day delivery',    category: 'logistics',   icon: 'package',   status: 'AVAILABLE', badge: 'Instant',     sort_order: 2, route: '/parcel-booking' },
+  { code: 'hotel',     title: 'Book Hotel',      description: 'Verified Stays',       category: 'hospitality', icon: 'business',  status: 'AVAILABLE', badge: 'Hotels',      sort_order: 3, route: '/book/properties' },
+  { code: 'transport', title: 'Goods Transport', description: 'Commercial Freight',   category: 'logistics',   icon: 'truck',     status: 'AVAILABLE', badge: 'Freight',      sort_order: 4, route: '/transport/create' },
+  { code: 'airport',   title: 'Airport Transfer',description: 'Flight-Aware & Pickup',category: 'transport',   icon: 'airplane',  status: 'AVAILABLE', badge: 'Flight Sync', sort_order: 5, route: '/airport/book' },
+  { code: 'rental',    title: 'Car Rental',      description: 'Hourly / Daily packs', category: 'transport',   icon: 'key',       status: 'AVAILABLE', badge: 'Hourly',      sort_order: 6, route: '/rental' },
+  { code: 'corporate', title: 'Corporate Rides', description: 'Business accounts',    category: 'corporate',   icon: 'briefcase', status: 'AVAILABLE', badge: 'Business',    sort_order: 7, route: '/corporate' },
+  { code: 'moving',    title: 'Movers & Shift',  description: 'Trucks & Helpers',     category: 'logistics',   icon: 'truck',     status: 'AVAILABLE', badge: 'Packers',     sort_order: 8, route: '/packers' },
+  { code: 'outstation',title: 'Outstation Cab',  description: 'Intercity & Return',   category: 'transport',   icon: 'car-sport', status: 'AVAILABLE', badge: 'Intercity',   sort_order: 9, route: '/outstation' },
 ]
 
 export default function HomeScreen() {
@@ -218,7 +219,20 @@ export default function HomeScreen() {
         const d = summaryRes.value.data
         if (d.customer_name) setCustomerName(d.customer_name)
         if (d.unread_notifications_count !== undefined) setUnreadNotifications(d.unread_notifications_count)
-        if (d.services && Array.isArray(d.services) && d.services.length > 0) setServices(d.services)
+        if (d.services && Array.isArray(d.services) && d.services.length > 0) {
+          const mapped = d.services.map((s: ServiceItem) => {
+            if (s.code === 'rental') return { ...s, status: 'AVAILABLE' as const, route: '/rental', badge: 'Hourly' }
+            if (s.code === 'corporate') return { ...s, status: 'AVAILABLE' as const, route: '/corporate', badge: 'Business' }
+            if (s.code === 'moving') return { ...s, status: 'AVAILABLE' as const, route: '/packers', badge: 'Packers' }
+            if (s.code === 'transport') return { ...s, status: 'AVAILABLE' as const, route: '/transport/create', badge: 'Freight' }
+            if (s.code === 'airport') return { ...s, status: 'AVAILABLE' as const, route: '/airport/book', badge: 'Flight Sync' }
+            if (s.code === 'hotel') return { ...s, status: 'AVAILABLE' as const, route: '/book/properties', badge: 'Hotels' }
+            if (s.code === 'ride') return { ...s, status: 'AVAILABLE' as const, route: '/book/cab', badge: 'Popular' }
+            if (s.code === 'outstation') return { ...s, status: 'AVAILABLE' as const, route: '/outstation', badge: 'Intercity' }
+            return s
+          })
+          setServices(mapped)
+        }
         if (d.active_ride) setActiveRide(d.active_ride)
         else setActiveRide(null)
         if (d.upcoming_booking) setUpcomingBooking(d.upcoming_booking)

@@ -97,6 +97,8 @@ export default function DocumentStatusScreen() {
   const [actionCount, setActionCount] = useState(0)
   const [sections, setSections] = useState<KYCSection[]>(INITIAL_SECTIONS)
   const [previewDoc, setPreviewDoc] = useState<KYCItem | null>(null)
+  const [isVerified, setIsVerified] = useState(false)
+  const [canGoOnline, setCanGoOnline] = useState(false)
 
   // 1. Instantly load cached user data from AsyncStorage
   useEffect(() => {
@@ -124,6 +126,7 @@ export default function DocumentStatusScreen() {
         driverApi.getProfile(),
       ])
 
+      let verifiedFromProfile = false
       if (profileRes.status === 'fulfilled' && profileRes.value.data?.data) {
         const p = profileRes.value.data.data
         if (p.full_name) setDriverName(p.full_name)
@@ -139,6 +142,10 @@ export default function DocumentStatusScreen() {
         } else if (p.id) {
           setDriverId(`DRV-${String(p.id).replace(/-/g, '').slice(0, 4).toUpperCase()}`)
         }
+
+        if (p.is_verified === true || p.kyc_status === 'approved' || p.kyc_status === 'APPROVED' || p.kyc_status === 'verified' || p.kyc_status === 'VERIFIED') {
+          verifiedFromProfile = true
+        }
       }
 
       if (kycRes.status === 'fulfilled' && kycRes.value.data?.data) {
@@ -146,11 +153,19 @@ export default function DocumentStatusScreen() {
         if (data.driver_name) setDriverName(data.driver_name)
         if (data.driver_id_display) setDriverId(data.driver_id_display)
         if (data.profile_photo_url) setDriverPhoto(data.profile_photo_url)
-        if (data.completion_percentage !== undefined) setCompletionPct(data.completion_percentage)
         if (data.action_required_count !== undefined) setActionCount(data.action_required_count)
         if (data.sections && data.sections.length > 0) {
           setSections(data.sections)
         }
+
+        const isFullyVerified = verifiedFromProfile || data.can_go_online === true || data.overall_status === 'VERIFIED' || data.completion_percentage === 100
+        setIsVerified(isFullyVerified)
+        setCanGoOnline(isFullyVerified)
+        setCompletionPct(isFullyVerified ? 100 : (data.completion_percentage ?? 0))
+      } else if (verifiedFromProfile) {
+        setIsVerified(true)
+        setCanGoOnline(true)
+        setCompletionPct(100)
       }
     } catch (e) {
       console.warn('[KYC Dashboard] Load warning:', e)
@@ -724,11 +739,15 @@ export default function DocumentStatusScreen() {
           </View>
         </ScrollView>
 
-        {/* Floating Complete Verification Action Button */}
+        {/* Floating Complete Verification / Go Online Action Button */}
         <View style={styles.bottomFloating}>
           <TouchableOpacity
             activeOpacity={0.85}
             onPress={() => {
+              if (isVerified || completionPct >= 100) {
+                router.push('/(tabs)' as any)
+                return
+              }
               // Find first rejected or uncompleted doc
               for (const s of sections) {
                 for (const it of s.items) {
@@ -742,12 +761,16 @@ export default function DocumentStatusScreen() {
             }}
           >
             <LinearGradient
-              colors={['#10B981', '#059669']}
+              colors={isVerified || completionPct >= 100 ? ['#059669', '#047857'] : ['#2563EB', '#1D4ED8']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
               style={styles.completeBtn}
             >
-              <Text style={styles.completeBtnText}>Complete Verification</Text>
+              <Text style={styles.completeBtnText}>
+                {isVerified || completionPct >= 100
+                  ? '✅ KYC Verified • Go to Dashboard & Go Online'
+                  : 'Complete Verification'}
+              </Text>
             </LinearGradient>
           </TouchableOpacity>
         </View>

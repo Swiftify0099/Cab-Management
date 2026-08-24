@@ -14,6 +14,12 @@ import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
 import { getDirections } from '../src/services/googleMaps'
 import type { RouteData, AutocompletePrediction } from '../src/services/googleMaps'
 import { reverseGeocode, geocodeCity, getPlaceAutocomplete } from '../src/utils/maps'
+import {
+  CoverageService,
+  VisibilityMode,
+  ServiceCityItem,
+  ServiceZoneItem,
+} from '../src/services/coverageService'
 
 // Lazy-import MapView to avoid crash if native module isn't ready
 let MapView: any = null
@@ -163,6 +169,43 @@ export default function CreateTripScreen() {
   const [showTimePicker, setShowTimePicker] = useState(false)
   const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date')
 
+  // Driver Request Visibility Mode Preferences (ALL CITY, SPECIFIC CITY, SPECIFIC HEX/ZONE)
+  const [visibilityMode, setVisibilityMode] = useState<VisibilityMode>('all_city')
+  const [availableCities, setAvailableCities] = useState<ServiceCityItem[]>([])
+  const [selectedCityIds, setSelectedCityIds] = useState<string[]>([])
+  const [zonesByCity, setZonesByCity] = useState<Record<string, ServiceZoneItem[]>>({})
+  const [selectedZoneIds, setSelectedZoneIds] = useState<string[]>([])
+  const [coverageLoading, setCoverageLoading] = useState(false)
+
+  // Load available service cities & zones when entering Step 3
+  useEffect(() => {
+    if (step !== 3 || availableCities.length > 0) return
+    setCoverageLoading(true)
+    Promise.all([
+      CoverageService.getAvailableCities(),
+      CoverageService.getDriverCoverage(),
+    ])
+      .then(async ([cities, coverage]) => {
+        setAvailableCities(cities)
+        setVisibilityMode(coverage.visibility_mode || 'all_city')
+
+        const selectedIds = coverage.covered_cities
+          ?.filter(c => c.is_selected || coverage.visibility_mode === 'all_city')
+          .map(c => c.city_id) || []
+        setSelectedCityIds(selectedIds.length > 0 ? selectedIds : cities.map(c => c.city_id))
+
+        // Preload zones for available cities
+        const zoneMap: Record<string, ServiceZoneItem[]> = {}
+        for (const city of cities) {
+          const zones = await CoverageService.getCityZones(city.city_id)
+          zoneMap[city.city_id] = zones
+        }
+        setZonesByCity(zoneMap)
+      })
+      .catch(err => console.warn('[CreateTrip] Coverage load error:', err))
+      .finally(() => setCoverageLoading(false))
+  }, [step])
+
   const update = (key: string, value: any) => setForm(p => ({ ...p, [key]: value }))
 
   // Reverse Geocode when map markers move to update display strings
@@ -267,6 +310,16 @@ export default function CreateTripScreen() {
     try {
       const isoTime = new Date(form.departure_time).toISOString()
 
+      // Update driver's request visibility preferences on backend
+      try {
+        await CoverageService.updateDriverCoverage({
+          visibility_mode: visibilityMode,
+          city_ids: selectedCityIds,
+        })
+      } catch (covErr) {
+        console.warn('[CreateTrip] Failed to update visibility mode preference:', covErr)
+      }
+
       const res = await api.post(`/trips/`, {
         pickup_lat: form.pickup_lat,
         pickup_lng: form.pickup_lng,
@@ -287,6 +340,9 @@ export default function CreateTripScreen() {
         duration_minutes: routeData?.durationMinutes || null,
         pickup_polygon: pickupPolygon.length >= 3 ? pickupPolygon.map(c => ({ lat: c.latitude, lng: c.longitude })) : null,
         destination_polygon: destinationPolygon.length >= 3 ? destinationPolygon.map(c => ({ lat: c.latitude, lng: c.longitude })) : null,
+        visibility_mode: visibilityMode,
+        selected_city_ids: selectedCityIds,
+        selected_zone_ids: selectedZoneIds,
       })
 
       const tripId = res?.data?.data?.id || res?.data?.trip_id || 'demo'
@@ -599,8 +655,148 @@ export default function CreateTripScreen() {
               </View>
             </View>
 
+            {/* ── DRIVER REQUEST VISIBILITY PREFERENCES ── */}
+            <View style={{ marginTop: 24 }}>
+              <Text style={styles.label}>Driver Request Visibility Preference</Text>
+              <Text style={[styles.stepSub, { marginBottom: 12 }]}>
+                Choose which incoming customer requests you want to receive on your radar.
+              </Text>
+
+              {/* Visibility Mode 1: ALL CITY */}
+              <TouchableOpacity
+                style={[
+                  styles.visibilityModeCard,
+                  visibilityMode === 'all_city' && styles.visibilityModeCardActive,
+                ]}
+                onPress={() => setVisibilityMode('all_city')}
+              >
+                <View style={styles.visCardHeader}>
+                  <View style={[styles.visIconBox, visibilityMode === 'all_city' && styles.visIconBoxActive]}>
+                    <Feather name="globe" size={18} color={visibilityMode === 'all_city' ? '#FFF' : '#3B82F6'} />
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={[styles.visCardTitle, visibilityMode === 'all_city' && styles.visCardTitleActive]}>
+                      1. All City Mode
+                    </Text>
+                    <Text style={styles.visCardSub}>
+                      Receive eligible ride requests from ALL covered cities on the platform.
+                    </Text>
+                  </View>
+                  <View style={[styles.radioCircle, visibilityMode === 'all_city' && styles.radioCircleActive]}>
+                    {visibilityMode === 'all_city' && <View style={styles.radioDot} />}
+                  </View>
+                </View>
+              </TouchableOpacity>
+
+              {/* Visibility Mode 2: SPECIFIC CITY */}
+              <TouchableOpacity
+                style={[
+                  styles.visibilityModeCard,
+                  visibilityMode === 'specific_city' && styles.visibilityModeCardActive,
+                ]}
+                onPress={() => setVisibilityMode('specific_city')}
+              >
+                <View style={styles.visCardHeader}>
+                  <View style={[styles.visIconBox, visibilityMode === 'specific_city' && styles.visIconBoxActive]}>
+                    <Feather name="map-pin" size={18} color={visibilityMode === 'specific_city' ? '#FFF' : '#3B82F6'} />
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={[styles.visCardTitle, visibilityMode === 'specific_city' && styles.visCardTitleActive]}>
+                      2. Specific City Mode
+                    </Text>
+                    <Text style={styles.visCardSub}>
+                      Only receive requests from specific cities along your route.
+                    </Text>
+                  </View>
+                  <View style={[styles.radioCircle, visibilityMode === 'specific_city' && styles.radioCircleActive]}>
+                    {visibilityMode === 'specific_city' && <View style={styles.radioDot} />}
+                  </View>
+                </View>
+
+                {/* City selection chips if specific_city or all_city */}
+                {visibilityMode === 'specific_city' && (
+                  <View style={styles.visChipsContainer}>
+                    <Text style={[styles.label, { fontSize: 12, marginBottom: 6 }]}>Select Covered Cities:</Text>
+                    <View style={styles.chipsRow}>
+                      {availableCities.map(c => {
+                        const isSel = selectedCityIds.includes(c.city_id)
+                        return (
+                          <TouchableOpacity
+                            key={c.city_id}
+                            style={[styles.cityChip, isSel && styles.cityChipActive]}
+                            onPress={() => {
+                              setSelectedCityIds(prev =>
+                                isSel ? prev.filter(id => id !== c.city_id) : [...prev, c.city_id]
+                              )
+                            }}
+                          >
+                            <Text style={[styles.cityChipText, isSel && styles.cityChipTextActive]}>
+                              {isSel ? '✓ ' : ''}{c.name}
+                            </Text>
+                          </TouchableOpacity>
+                        )
+                      })}
+                    </View>
+                  </View>
+                )}
+              </TouchableOpacity>
+
+              {/* Visibility Mode 3: SPECIFIC HEX / ZONE */}
+              <TouchableOpacity
+                style={[
+                  styles.visibilityModeCard,
+                  visibilityMode === 'specific_hex' && styles.visibilityModeCardActive,
+                ]}
+                onPress={() => setVisibilityMode('specific_hex')}
+              >
+                <View style={styles.visCardHeader}>
+                  <View style={[styles.visIconBox, visibilityMode === 'specific_hex' && styles.visIconBoxActive]}>
+                    <MaterialCommunityIcons name="hexagon-slice-6" size={18} color={visibilityMode === 'specific_hex' ? '#FFF' : '#3B82F6'} />
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={[styles.visCardTitle, visibilityMode === 'specific_hex' && styles.visCardTitleActive]}>
+                      3. Specific Hex / Zone Mode
+                    </Text>
+                    <Text style={styles.visCardSub}>
+                      Narrow down visibility to specific operational zones or radar cells.
+                    </Text>
+                  </View>
+                  <View style={[styles.radioCircle, visibilityMode === 'specific_hex' && styles.radioCircleActive]}>
+                    {visibilityMode === 'specific_hex' && <View style={styles.radioDot} />}
+                  </View>
+                </View>
+
+                {/* Zone selection chips */}
+                {visibilityMode === 'specific_hex' && (
+                  <View style={styles.visChipsContainer}>
+                    <Text style={[styles.label, { fontSize: 12, marginBottom: 6 }]}>Select Radar Zones:</Text>
+                    <View style={styles.chipsRow}>
+                      {Object.values(zonesByCity).flat().map(z => {
+                        const isSel = selectedZoneIds.includes(z.zone_id)
+                        return (
+                          <TouchableOpacity
+                            key={z.zone_id}
+                            style={[styles.cityChip, isSel && styles.cityChipActive]}
+                            onPress={() => {
+                              setSelectedZoneIds(prev =>
+                                isSel ? prev.filter(id => id !== z.zone_id) : [...prev, z.zone_id]
+                              )
+                            }}
+                          >
+                            <Text style={[styles.cityChipText, isSel && styles.cityChipTextActive]}>
+                              {isSel ? '✓ ' : ''}{z.name}
+                            </Text>
+                          </TouchableOpacity>
+                        )
+                      })}
+                    </View>
+                  </View>
+                )}
+              </TouchableOpacity>
+            </View>
+
             <Text style={[styles.label, { marginTop: 16 }]}>Special Instructions</Text>
-            <TextInput style={[styles.input, { height: 100, textAlignVertical: 'top' }]} multiline placeholder="Any specific details for passengers..." value={form.notes} onChangeText={v => update('notes', v)} />
+            <TextInput style={[styles.input, { height: 80, textAlignVertical: 'top' }]} multiline placeholder="Any specific details for passengers..." value={form.notes} onChangeText={v => update('notes', v)} />
           </ScrollView>
         )}
 
@@ -625,6 +821,16 @@ export default function CreateTripScreen() {
                 <View style={styles.summaryItem}><Feather name="users" size={16} color="#64748B"/><Text style={styles.summaryValue}>{form.total_seats} Seats</Text></View>
                 <View style={styles.summaryItem}><Feather name="map" size={16} color="#64748B"/><Text style={styles.summaryValue}>{routeData?.distanceKm || 0} km</Text></View>
                 <View style={styles.summaryItem}><Feather name="tag" size={16} color="#64748B"/><Text style={styles.summaryValue}>₹{form.base_fare}/seat</Text></View>
+              </View>
+
+              {/* Visibility Preference Summary Row */}
+              <View style={styles.summaryVisibilityRow}>
+                <Feather name="eye" size={16} color="#2563EB" />
+                <Text style={styles.summaryVisibilityText}>
+                  Request Mode: <Text style={{ fontWeight: '700' }}>
+                    {visibilityMode === 'all_city' ? 'All City' : visibilityMode === 'specific_city' ? `Specific City (${selectedCityIds.length})` : `Specific Hex/Zone (${selectedZoneIds.length})`}
+                  </Text>
+                </Text>
               </View>
             </View>
 
@@ -754,4 +960,44 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#FDE68A',
   },
   noVehicleText: { color: '#92400E', fontSize: 12, fontWeight: '600', flex: 1 },
+
+  // Driver Request Visibility Styles
+  visibilityModeCard: {
+    backgroundColor: '#FFF', borderRadius: 14, padding: 14,
+    borderWidth: 1.5, borderColor: '#E2E8F0', marginBottom: 10,
+  },
+  visibilityModeCardActive: {
+    borderColor: '#3B82F6', backgroundColor: '#EFF6FF',
+  },
+  visCardHeader: { flexDirection: 'row', alignItems: 'center' },
+  visIconBox: {
+    width: 36, height: 36, borderRadius: 10,
+    backgroundColor: '#EFF6FF', justifyContent: 'center', alignItems: 'center',
+  },
+  visIconBoxActive: { backgroundColor: '#3B82F6' },
+  visCardTitle: { fontSize: 15, fontWeight: '700', color: '#0F172A' },
+  visCardTitleActive: { color: '#2563EB' },
+  visCardSub: { fontSize: 12, color: '#64748B', marginTop: 2 },
+  radioCircle: {
+    width: 20, height: 20, borderRadius: 10,
+    borderWidth: 2, borderColor: '#CBD5E1', justifyContent: 'center', alignItems: 'center',
+  },
+  radioCircleActive: { borderColor: '#3B82F6' },
+  radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#3B82F6' },
+  visChipsContainer: { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderColor: '#DBEAFE' },
+  chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  cityChip: {
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20,
+    backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0',
+  },
+  cityChipActive: {
+    backgroundColor: '#3B82F6', borderColor: '#2563EB',
+  },
+  cityChipText: { fontSize: 12, color: '#475569', fontWeight: '600' },
+  cityChipTextActive: { color: '#FFF', fontWeight: '700' },
+  summaryVisibilityRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: '#EFF6FF', padding: 12, borderRadius: 12, marginTop: 16,
+  },
+  summaryVisibilityText: { fontSize: 13, color: '#1E40AF' },
 })

@@ -409,6 +409,28 @@ export const fareApi = {
 // Matching & Ride Dispatch API
 export const matchingApi = {
   requestRide: (data: object) => api.post('/matching/request', data),
+  searchNearbyForMatching: (data: {
+    pickup_lat: number
+    pickup_lng: number
+    ride_request_id?: string
+    radius_km?: number
+  }) => api.post('/rides/search-nearby-for-matching', data),
+  reDispatch: (data: {
+    ride_request_id: string
+    expanded_radius_km?: number
+  }) => api.post('/rides/re-dispatch', data),
+  getPendingRequests: (params: {
+    latitude: number
+    longitude: number
+    radius_km?: number
+  }) => api.get('/rides/pending-requests', { params }),
+}
+
+// Favourite Drivers API (Production-grade)
+export const favoriteDriverApi = {
+  list: () => api.get('/profile/me/favorite-drivers'),
+  add: (driverId: string) => api.post(`/profile/me/favorite-drivers/${driverId}`),
+  remove: (driverId: string) => api.delete(`/profile/me/favorite-drivers/${driverId}`),
 }
 
 // Ride Dispatch & Dynamic Categories API (Feature 3 & Feature 4)
@@ -448,6 +470,9 @@ export const rideApi = {
     pricing_mode?: 'STANDARD' | 'NEGOTIATED'
     customer_offer_amount?: number  // Customer's proposed fare (only when pricing_mode=NEGOTIATED)
     negotiation_idempotency_key?: string  // Client-side dedup key
+    // Favourite driver priority
+    preferred_driver_ids?: string[]
+    service_type?: string  // local, premium, luxury, outstation
   }) => api.post('/rides/request', data),
 }
 

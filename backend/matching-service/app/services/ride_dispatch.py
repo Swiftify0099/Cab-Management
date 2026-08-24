@@ -74,6 +74,8 @@ class RideDispatchService:
         category_name: str = "economy",
         seats_requested: int = 1,
         seat_preferences: Optional[dict] = None,
+        preferred_driver_ids: Optional[List[str]] = None,
+        service_type: str = "local",
     ) -> RideRequest:
         """
         Customer creates an on-demand ride request.
@@ -138,8 +140,11 @@ class RideDispatchService:
         await self.db.commit()
         await self.db.refresh(ride_req)
 
-        # 6. Execute Fanout Dispatch
-        await self.dispatch_ride_request(str(ride_req.id))
+        # 6. Execute Fanout Dispatch (preferred drivers first)
+        await self.dispatch_ride_request(
+            str(ride_req.id),
+            preferred_driver_ids=preferred_driver_ids,
+        )
 
         return ride_req
 
@@ -147,6 +152,7 @@ class RideDispatchService:
         self,
         ride_request_id: str,
         excluded_driver_ids: Optional[List[str]] = None,
+        preferred_driver_ids: Optional[List[str]] = None,
     ) -> int:
         """
         Fanout Dispatch Engine:
@@ -178,6 +184,18 @@ class RideDispatchService:
         if not candidates:
             logger.warning("No eligible drivers found for ride request", ride_request_id=ride_request_id)
             return 0
+
+        # Sort preferred/favourite drivers to the front of the list
+        if preferred_driver_ids:
+            pref_set = set(str(pid) for pid in preferred_driver_ids)
+            candidates.sort(
+                key=lambda c: (0 if str(c["driver_id"]) in pref_set else 1, c.get("distance_km", 999))
+            )
+            logger.info(
+                "Favourite driver priority applied",
+                preferred_count=len(pref_set),
+                total_candidates=len(candidates),
+            )
 
         dispatched_count = 0
         offered_at = _now_utc()

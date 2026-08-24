@@ -2,6 +2,7 @@
  * Customer App — Live Ride Matching & Radar Waiting Screen
  * Route: /matching-waiting
  * Feature 4: Concentric Radar Animation & Real-Time Driver Broadcast.
+ * Enhanced: Location summary, nearby drivers from API, 5-min escalation, favourite badges.
  */
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import {
@@ -14,6 +15,7 @@ import {
   StatusBar,
   Dimensions,
   Alert,
+  ScrollView,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons'
@@ -34,8 +36,10 @@ import {
   AppCard,
   AppBadge,
 } from '../src/components/ui'
+import { matchingApi } from '../src/api/client'
 
 const { width: SCREEN_W } = Dimensions.get('window')
+const ESCALATION_TIMEOUT_SEC = 300 // 5 minutes
 
 export default function MatchingWaitingScreen() {
   const { theme, isDark } = useTheme()
@@ -45,10 +49,26 @@ export default function MatchingWaitingScreen() {
     bookingId,
     rideRequestId,
     tripId: urlTripId,
+    pickupAddress,
+    dropAddress,
+    pickupLat,
+    pickupLng,
+    dropLat,
+    dropLng,
+    fare,
+    serviceType,
   } = useLocalSearchParams<{
     bookingId?: string
     rideRequestId?: string
     tripId?: string
+    pickupAddress?: string
+    dropAddress?: string
+    pickupLat?: string
+    pickupLng?: string
+    dropLat?: string
+    dropLng?: string
+    fare?: string
+    serviceType?: string
   }>()
 
   const {
@@ -63,9 +83,12 @@ export default function MatchingWaitingScreen() {
     sendLocationUpdate,
   } = useCustomerSocket()
 
-  const [timeLeft, setTimeLeft] = useState<number>(120)
+  const [timeLeft, setTimeLeft] = useState<number>(ESCALATION_TIMEOUT_SEC)
   const [matchData, setMatchData] = useState<MatchFoundPayload | null>(null)
   const [cancelling, setCancelling] = useState<boolean>(false)
+  const [nearbyDrivers, setNearbyDrivers] = useState<any[]>([])
+  const [escalated, setEscalated] = useState<boolean>(false)
+  const [searchStatus, setSearchStatus] = useState<string>('Searching nearby drivers...')
 
   // ── Radar Ripple Animations ──
   const ring1 = useRef(new Animated.Value(0)).current
@@ -117,14 +140,67 @@ export default function MatchingWaitingScreen() {
     }
   }, [])
 
-  // ── Countdown Timer ──
+  // ── Countdown Timer with 5-minute escalation ──
   useEffect(() => {
     if (timeLeft <= 0) return
     const timer = setInterval(() => {
-      setTimeLeft((t) => Math.max(0, t - 1))
+      setTimeLeft((t) => {
+        const next = Math.max(0, t - 1)
+        // Trigger escalation at 0
+        if (next === 0 && !escalated) {
+          handleEscalation()
+        }
+        return next
+      })
     }, 1000)
     return () => clearInterval(timer)
-  }, [timeLeft])
+  }, [timeLeft, escalated])
+
+  // ── 5-minute Escalation: Re-dispatch to wider pool ──
+  const handleEscalation = async () => {
+    if (escalated) return
+    setEscalated(true)
+    setSearchStatus('Expanding search radius...')
+    try {
+      const rId = rideRequestId || bookingId
+      if (rId) {
+        await matchingApi.reDispatch({
+          ride_request_id: rId,
+          expanded_radius_km: 25,
+        })
+        setSearchStatus('Expanded — searching wider area')
+        // Reset timer for another round
+        setTimeLeft(ESCALATION_TIMEOUT_SEC)
+      }
+    } catch {
+      setSearchStatus('Searching nearby drivers...')
+    }
+  }
+
+  // ── Fetch nearby drivers from API ──
+  useEffect(() => {
+    const fetchNearby = async () => {
+      try {
+        const lat = parseFloat(pickupLat || '0')
+        const lng = parseFloat(pickupLng || '0')
+        if (lat === 0 && lng === 0) return
+        const res = await matchingApi.searchNearbyForMatching({
+          pickup_lat: lat,
+          pickup_lng: lng,
+          ride_request_id: rideRequestId || bookingId,
+          radius_km: escalated ? 25 : 10,
+        })
+        const data = res.data?.data || res.data
+        if (data?.drivers && Array.isArray(data.drivers)) {
+          setNearbyDrivers(data.drivers)
+        }
+      } catch {}
+    }
+
+    fetchNearby()
+    const interval = setInterval(fetchNearby, 15000) // Refresh every 15s
+    return () => clearInterval(interval)
+  }, [pickupLat, pickupLng, rideRequestId, bookingId, escalated])
 
   // ── WebSocket Room Subscription ──
   useEffect(() => {
@@ -234,6 +310,25 @@ export default function MatchingWaitingScreen() {
     )
   }
 
+  // Format time as M:SS
+  const formatTime = (sec: number) => {
+    const m = Math.floor(sec / 60)
+    const s = sec % 60
+    return `${m}:${s.toString().padStart(2, '0')}`
+  }
+
+  // Calculate driver dot positions on radar circle
+  const getDriverDotPosition = (index: number, total: number) => {
+    const angle = (index / Math.max(total, 1)) * 2 * Math.PI - Math.PI / 2
+    const radius = SCREEN_W * 0.28
+    const cx = SCREEN_W / 2 - 13
+    const cy = SCREEN_W / 2 - 13
+    return {
+      left: cx + Math.cos(angle) * radius,
+      top: cy + Math.sin(angle) * radius,
+    }
+  }
+
   return (
     <View style={[styles.root, { backgroundColor: theme.colors.backgroundAlt }]}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
@@ -250,8 +345,38 @@ export default function MatchingWaitingScreen() {
           <AppText variant="title" bold style={{ flex: 1, marginLeft: 12 }}>
             Connecting Nearby Cabs
           </AppText>
-          <AppBadge label={`${timeLeft}s`} variant="info" size="sm" />
+          <AppBadge label={formatTime(timeLeft)} variant={timeLeft < 60 ? 'warning' : 'info'} size="sm" />
         </View>
+
+        {/* ── Pickup → Drop Route Summary Card ── */}
+        {(pickupAddress || dropAddress) && (
+          <View style={[styles.routeCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+            <View style={styles.routeRow}>
+              <Ionicons name="radio-button-on" size={14} color="#10B981" />
+              <AppText variant="bodyS" numberOfLines={1} style={{ flex: 1, marginLeft: 8 }}>
+                {pickupAddress || 'Pickup location'}
+              </AppText>
+            </View>
+            <View style={[styles.routeDivider, { borderColor: theme.colors.border }]} />
+            <View style={styles.routeRow}>
+              <Ionicons name="location" size={14} color="#EF4444" />
+              <AppText variant="bodyS" numberOfLines={1} style={{ flex: 1, marginLeft: 8 }}>
+                {dropAddress || 'Drop location'}
+              </AppText>
+            </View>
+            <View style={styles.routeMetaRow}>
+              {fare && (
+                <AppBadge label={`₹${parseFloat(fare).toFixed(0)}`} variant="info" size="sm" />
+              )}
+              {serviceType && (
+                <AppBadge label={serviceType} variant="default" size="sm" />
+              )}
+              {nearbyDrivers.length > 0 && (
+                <AppBadge label={`${nearbyDrivers.length} drivers nearby`} variant="success" size="sm" />
+              )}
+            </View>
+          </View>
+        )}
 
         {/* ── Center Concentric Radar ── */}
         <View style={styles.radarContainer}>
@@ -273,23 +398,58 @@ export default function MatchingWaitingScreen() {
             <MaterialCommunityIcons name="car-connected" size={40} color="#FFFFFF" />
           </Animated.View>
 
-          {/* Simulated Nearby Driver Orbit Dots */}
-          <View style={[styles.orbitDriverDot, { top: 70, left: 60, backgroundColor: theme.colors.success }]}>
-            <Ionicons name="car" size={12} color="#FFFFFF" />
-          </View>
-          <View style={[styles.orbitDriverDot, { bottom: 80, right: 70, backgroundColor: theme.colors.accent }]}>
-            <Ionicons name="car" size={12} color="#FFFFFF" />
-          </View>
+          {/* Real Nearby Driver Dots (from API) */}
+          {nearbyDrivers.slice(0, 8).map((driver, idx) => {
+            const pos = getDriverDotPosition(idx, Math.min(nearbyDrivers.length, 8))
+            const isFav = driver.is_favourite
+            return (
+              <View
+                key={driver.driver_id || idx}
+                style={[
+                  styles.orbitDriverDot,
+                  {
+                    top: pos.top,
+                    left: pos.left,
+                    backgroundColor: isFav ? '#F59E0B' : theme.colors.success,
+                    borderWidth: isFav ? 2 : 0,
+                    borderColor: isFav ? '#FBBF24' : 'transparent',
+                  },
+                ]}
+              >
+                {isFav ? (
+                  <AppText variant="caption" style={{ fontSize: 10 }}>⭐</AppText>
+                ) : (
+                  <Ionicons name="car" size={12} color="#FFFFFF" />
+                )}
+              </View>
+            )
+          })}
+
+          {/* Fallback dots when no API data yet */}
+          {nearbyDrivers.length === 0 && (
+            <>
+              <View style={[styles.orbitDriverDot, { top: 70, left: 60, backgroundColor: theme.colors.success }]}>
+                <Ionicons name="car" size={12} color="#FFFFFF" />
+              </View>
+              <View style={[styles.orbitDriverDot, { bottom: 80, right: 70, backgroundColor: theme.colors.accent }]}>
+                <Ionicons name="car" size={12} color="#FFFFFF" />
+              </View>
+            </>
+          )}
         </View>
 
         {/* ── Bottom Information Card ── */}
         <View style={styles.bottomSection}>
           <AppCard style={styles.infoCard}>
             <AppText variant="h3" bold center>
-              {t('track.radar_title', 'Searching Nearby Drivers...')}
+              {matchData ? '🎉 Driver Found!' : searchStatus}
             </AppText>
             <AppText variant="bodyS" color="secondary" center style={{ marginTop: 6, paddingHorizontal: 12 }}>
-              {t('track.radar_subtitle', 'Broadcasting your ride request to top-rated drivers in your corridor.')}
+              {matchData
+                ? 'Your ride has been confirmed. Tap below to track your driver.'
+                : escalated
+                  ? 'Expanded search radius to find more available drivers for you.'
+                  : 'Broadcasting your ride request to top-rated drivers in your corridor.'}
             </AppText>
 
             <View style={styles.statusPill}>
@@ -298,6 +458,16 @@ export default function MatchingWaitingScreen() {
                 {connected ? 'Live PostGIS Corridor Active' : 'Connecting to Dispatch Gateway...'}
               </AppText>
             </View>
+
+            {/* Escalation Warning */}
+            {escalated && !matchData && (
+              <View style={[styles.escalationBanner, { backgroundColor: '#F59E0B15', borderColor: '#F59E0B' }]}>
+                <Ionicons name="expand" size={18} color="#F59E0B" />
+                <AppText variant="caption" bold style={{ color: '#F59E0B', marginLeft: 8 }}>
+                  Search radius expanded — finding more drivers
+                </AppText>
+              </View>
+            )}
 
             {/* Match Found Prompt */}
             {matchData && (
@@ -347,10 +517,35 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
 
+  // Route summary card
+  routeCard: {
+    marginHorizontal: 20,
+    padding: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+  },
+  routeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  routeDivider: {
+    borderLeftWidth: 1.5,
+    borderStyle: 'dashed',
+    height: 14,
+    marginLeft: 7,
+    marginVertical: 2,
+  },
+  routeMetaRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+    flexWrap: 'wrap',
+  },
+
   radarContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-    height: SCREEN_W,
+    height: SCREEN_W * 0.85,
     width: SCREEN_W,
     alignSelf: 'center',
   },
@@ -410,6 +605,15 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     marginTop: 16,
+    width: '100%',
+  },
+  escalationBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 12,
     width: '100%',
   },
 })

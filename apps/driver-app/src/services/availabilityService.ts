@@ -129,8 +129,12 @@ class AvailabilityServiceClass {
 
     try {
       // 1. Check Driver Account & KYC
-      const profileRes = await api.get('/driver/me').catch(() => null)
-      const profile = profileRes?.data?.data || profileRes?.data
+      const [profileRes, kycRes] = await Promise.allSettled([
+        api.get('/driver/me'),
+        api.get('/driver/kyc/dashboard'),
+      ])
+      const profile = profileRes.status === 'fulfilled' ? (profileRes.value.data?.data || profileRes.value.data) : null
+      const kycData = kycRes.status === 'fulfilled' ? (kycRes.value.data?.data || kycRes.value.data) : null
 
       if (profile?.status === 'suspended') {
         reasons.push({
@@ -142,7 +146,17 @@ class AvailabilityServiceClass {
         })
       }
 
-      if (profile?.kyc_status && profile.kyc_status !== 'approved' && profile.kyc_status !== 'APPROVED') {
+      const isKycVerified =
+        profile?.is_verified === true ||
+        profile?.kyc_status === 'approved' ||
+        profile?.kyc_status === 'APPROVED' ||
+        profile?.kyc_status === 'verified' ||
+        profile?.kyc_status === 'VERIFIED' ||
+        kycData?.can_go_online === true ||
+        kycData?.overall_status === 'VERIFIED' ||
+        kycData?.overall_status === 'APPROVED'
+
+      if (!isKycVerified) {
         reasons.push({
           id: 'kyc_pending',
           title: 'KYC Document Verification Required',

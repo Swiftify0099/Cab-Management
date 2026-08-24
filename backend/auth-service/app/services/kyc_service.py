@@ -269,14 +269,22 @@ async def get_driver_kyc_dashboard(db: AsyncSession, driver: Driver, user: User)
     completion_percentage = int((approved_mandatory / max(total_mandatory, 1)) * 100)
 
     # Overall Status Calculation
-    if action_required_count > 0:
+    if action_required_count > 0 and driver.kyc_status != KYCStatus.APPROVED:
         overall_status = "ACTION_REQUIRED"
         overall_label = "Action Required"
         action_msg = f"{action_required_count} document{'s' if action_required_count > 1 else ''} need correction"
-    elif approved_mandatory == total_mandatory:
+    elif approved_mandatory >= total_mandatory or driver.kyc_status == KYCStatus.APPROVED or driver.is_verified:
         overall_status = "VERIFIED"
         overall_label = "Verified & Active"
         action_msg = None
+        completion_percentage = 100
+        if driver.kyc_status != KYCStatus.APPROVED or not driver._is_verified:
+            driver.kyc_status = KYCStatus.APPROVED
+            driver._is_verified = True
+            try:
+                await db.commit()
+            except Exception:
+                pass
     elif approved_mandatory == 0 and all(it.status == 'not_started' for s in sections for it in s.items):
         overall_status = "NOT_STARTED"
         overall_label = "Not Started"
@@ -287,7 +295,7 @@ async def get_driver_kyc_dashboard(db: AsyncSession, driver: Driver, user: User)
         action_msg = "Verification is in progress by our compliance team"
 
     driver_display = f"DRV-{str(driver.id).replace('-', '')[:4].upper()}" if driver.id else "DRV-8942"
-    can_online = (overall_status == "VERIFIED")
+    can_online = (overall_status == "VERIFIED" or driver.kyc_status == KYCStatus.APPROVED or driver.is_verified)
 
     return KYCDashboardResponse(
         driver_id=str(driver.id),

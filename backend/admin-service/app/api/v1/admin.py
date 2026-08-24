@@ -267,6 +267,32 @@ async def list_drivers(
         for d in drivers
     ])
 
+
+class DriverVerifyRequest(BaseModel):
+    approved: bool = True
+    notes: str = ""
+
+
+@router.post("/admin/drivers/{driver_id}/verify", response_model=SuccessResponse, summary="Approve or reject driver KYC verification")
+@router.post("/admin/drivers/{driver_id}/kyc-approve", response_model=SuccessResponse, summary="One-click approve driver KYC")
+async def admin_verify_driver(
+    driver_id: str,
+    request: Optional[DriverVerifyRequest] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    svc = AdminDashboardService(db)
+    approved = request.approved if request else True
+    notes = request.notes if request else ""
+    try:
+        result = await svc.verify_driver(driver_id, approved=approved, notes=notes)
+        return SuccessResponse(
+            success=True,
+            message=f"Driver KYC {'verified and approved' if approved else 'rejected'}",
+            data=result,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
 # ============================================================
 # SUPPORT TICKETS (ADMIN VIEW)
 # ============================================================

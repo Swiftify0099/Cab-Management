@@ -139,7 +139,7 @@ class AdminDashboardService:
         ]
 
     async def approve_kyc(self, doc_id: str, approved: bool, admin_notes: str = "") -> dict:
-        """Approve or reject a KYC document."""
+        """Approve or reject a KYC document and sync driver verification status."""
         result = await self.db.execute(
             select(DriverDocument).where(DriverDocument.id == UUID(doc_id))
         )
@@ -151,9 +151,75 @@ class AdminDashboardService:
         doc.status = "approved" if approved else "rejected"
         doc.rejection_reason = None if approved else admin_notes
         doc.verified_at = datetime.utcnow()
+
+        # Check and update driver overall verification
+        driver_res = await self.db.execute(
+            select(Driver).where(Driver.id == doc.driver_id)
+        )
+        driver = driver_res.scalar_one_or_none()
+        if driver and approved:
+            unverified_res = await self.db.execute(
+                select(func.count(DriverDocument.id)).where(
+                    DriverDocument.driver_id == driver.id,
+                    DriverDocument.id != doc.id,
+                    DriverDocument.is_verified == False,
+                )
+            )
+            unverified_count = unverified_res.scalar() or 0
+            if unverified_count == 0:
+                driver.kyc_status = KYCStatus.APPROVED
+                driver.is_verified = True
+                driver._is_verified = True
+
         await self.db.commit()
 
-        return {"id": doc_id, "status": doc.status, "action": "approved" if approved else "rejected"}
+        return {
+            "id": doc_id,
+            "status": doc.status,
+            "action": "approved" if approved else "rejected",
+            "driver_id": str(doc.driver_id),
+            "driver_verified": bool(driver.is_verified) if driver else False,
+        }
+
+    async def verify_driver(self, driver_id: str, approved: bool = True, notes: str = "") -> dict:
+        """One-click admin driver verification."""
+        try:
+            d_uuid = UUID(driver_id)
+        except ValueError:
+            res = await self.db.execute(select(Driver).where(Driver.user_id == UUID(driver_id)))
+            driver = res.scalar_one_or_none()
+            if not driver:
+                raise ValueError("Driver not found")
+            d_uuid = driver.id
+
+        driver_res = await self.db.execute(select(Driver).where(Driver.id == d_uuid))
+        driver = driver_res.scalar_one_or_none()
+        if not driver:
+            raise ValueError("Driver not found")
+
+        if approved:
+            driver.kyc_status = KYCStatus.APPROVED
+            driver.is_verified = True
+            driver._is_verified = True
+            # Also mark all documents for this driver as verified
+            docs_res = await self.db.execute(select(DriverDocument).where(DriverDocument.driver_id == driver.id))
+            for d in docs_res.scalars().all():
+                d.is_verified = True
+                d.status = "approved"
+                d.rejection_reason = None
+                d.verified_at = datetime.utcnow()
+        else:
+            driver.kyc_status = KYCStatus.REJECTED
+            driver.is_verified = False
+            driver._is_verified = False
+
+        await self.db.commit()
+        return {
+            "driver_id": str(driver.id),
+            "kyc_status": driver.kyc_status.value if hasattr(driver.kyc_status, "value") else str(driver.kyc_status),
+            "is_verified": driver.is_verified,
+            "action": "verified" if approved else "rejected",
+        }
 
     async def get_complaints(self, status: Optional[str] = None, page: int = 1) -> list[dict]:
         """Get support complaints with optional status filter."""
