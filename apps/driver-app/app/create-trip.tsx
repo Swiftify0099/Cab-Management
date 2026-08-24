@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Create Trip Screen — Driver publishes a new intercity route.
  * Stepper Flow with Visibility Preferences in Step 1, Map Search,
  * Conditional Hex/Zone Drawing, and Direct Home Dashboard Navigation.
@@ -9,6 +9,7 @@ import {
   StyleSheet, ActivityIndicator, Alert, Switch, Dimensions, Platform, Modal
 } from 'react-native'
 import { router } from 'expo-router'
+import { LinearGradient } from 'expo-linear-gradient'
 import DateTimePicker from '@react-native-community/datetimepicker'
 import { api } from '../src/api/client'
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
@@ -379,30 +380,47 @@ export default function CreateTripScreen() {
     if (step < 4) setStep(step + 1)
   }
 
+  const STEP_LABELS = ['Visibility & Route', 'Vehicle & Date', 'Pricing & Prefs', 'Review & Publish']
+
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.headerTop}>
-          <TouchableOpacity onPress={() => step > 1 ? setStep(step - 1) : router.back()} style={styles.backBtn}>
-            <Feather name="arrow-left" size={24} color="#F8FAFC" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Create Trip</Text>
-          <View style={{ width: 24 }} />
-        </View>
-
-        {/* Stepper Dots */}
-        <View style={styles.stepperContainer}>
-          {[1, 2, 3, 4].map(s => (
-            <View key={s} style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <View style={[styles.stepDot, step >= s && styles.stepDotActive]}>
-                {step > s ? <Feather name="check" size={10} color="#fff" /> : <Text style={styles.stepDotText}>{s}</Text>}
-              </View>
-              {s < 4 && <View style={[styles.stepLine, step > s && styles.stepLineActive]} />}
+      {/* Professional Gradient Header */}
+      <LinearGradient colors={['#0F172A', '#1E3A5F', '#0284C7']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.header}>
+        <SafeAreaView edges={['top']}>
+          <View style={styles.headerTop}>
+            <TouchableOpacity onPress={() => step > 1 ? setStep(step - 1) : router.back()} style={[styles.backBtn, { backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 12 }]}>
+              <Feather name="arrow-left" size={22} color="#F8FAFC" />
+            </TouchableOpacity>
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text style={[styles.headerTitle, { fontSize: 17 }]}>Publish Intercity Trip</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, fontWeight: '500' }}>
+                Step {step} of 4 — {STEP_LABELS[step - 1]}
+              </Text>
             </View>
-          ))}
-        </View>
-      </View>
+            <View style={{ backgroundColor: 'rgba(255,255,255,0.15)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 }}>
+              <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '800' }}>{step}/4</Text>
+            </View>
+          </View>
+
+          {/* Professional Progress Bar */}
+          <View style={{ paddingHorizontal: 20, paddingTop: 14, paddingBottom: 10 }}>
+            <View style={{ flexDirection: 'row', gap: 6 }}>
+              {[1, 2, 3, 4].map(s => (
+                <View key={s} style={{ flex: 1 }}>
+                  <View style={[{
+                    height: 4,
+                    borderRadius: 2,
+                    backgroundColor: step >= s ? '#38BDF8' : 'rgba(255,255,255,0.2)',
+                  }]} />
+                  <Text style={{ color: step >= s ? '#38BDF8' : 'rgba(255,255,255,0.4)', fontSize: 9, fontWeight: '700', marginTop: 3, textAlign: 'center' }}>
+                    {step > s ? '✓' : s}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        </SafeAreaView>
+      </LinearGradient>
 
       <View style={styles.content}>
         {/* ================= STEP 1: ROUTE, MAP & VISIBILITY PREFERENCE ================= */}
@@ -822,7 +840,7 @@ export default function CreateTripScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC' },
-  header: { backgroundColor: '#1E293B', paddingTop: 40, paddingBottom: 16 },
+  header: { paddingBottom: 0, overflow: 'hidden' },
   headerTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, marginBottom: 16 },
   backBtn: { padding: 4 },
   headerTitle: { fontSize: 20, fontWeight: '700', color: '#FFF' },
@@ -910,7 +928,7 @@ const styles = StyleSheet.create({
 
   // Footers & Buttons
   footer: { backgroundColor: '#FFF', padding: 16, borderTopWidth: 1, borderColor: '#E2E8F0', flexDirection: 'row', gap: 10 },
-  btnPrimary: { flex: 1, backgroundColor: '#2563EB', borderRadius: 14, padding: 16, alignItems: 'center', shadowColor: '#2563EB', shadowOpacity: 0.3, shadowRadius: 6, elevation: 4 },
+  btnPrimary: { flex: 1, backgroundColor: '#0284C7', borderRadius: 14, padding: 16, alignItems: 'center', shadowColor: '#0284C7', shadowOpacity: 0.4, shadowRadius: 10, elevation: 6 },
   btnSecondary: { backgroundColor: '#F1F5F9', borderRadius: 14, padding: 16, alignItems: 'center', paddingHorizontal: 24 },
   btnTextLight: { color: '#FFF', fontSize: 15, fontWeight: '700' },
   btnTextDark: { color: '#334155', fontSize: 15, fontWeight: '700' },

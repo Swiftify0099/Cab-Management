@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Customer App — Live Ride Matching & Radar Waiting Screen
  * Route: /matching-waiting
  * Feature 4: Concentric Radar Animation & Real-Time Driver Broadcast.
@@ -36,40 +36,13 @@ import {
   AppCard,
   AppBadge,
 } from '../src/components/ui'
-import { matchingApi } from '../src/api/client'
+import { matchingApi, rideApi } from '../src/api/client'
 import { DriverInfoModal, NearbyDriverInfo } from '../src/components/matching/DriverInfoModal'
 
 const { width: SCREEN_W } = Dimensions.get('window')
 const ESCALATION_TIMEOUT_SEC = 300 // 5 minutes
 
-const FALLBACK_DRIVERS: NearbyDriverInfo[] = [
-  {
-    driver_id: 'd-101',
-    full_name: 'Suresh More',
-    rating: 4.88,
-    vehicle: 'Maruti Suzuki Dzire (White)',
-    registration_number: 'MH 12 AB 4910',
-    distance_km: 1.4,
-    eta_minutes: 4,
-    seat_capacity: 4,
-    has_ac: true,
-    is_favourite: false,
-    total_trips: 1240,
-  },
-  {
-    driver_id: 'd-102',
-    full_name: 'Ramesh Patil',
-    rating: 4.92,
-    vehicle: 'Hyundai Aura (Silver)',
-    registration_number: 'MH 14 CD 7821',
-    distance_km: 2.2,
-    eta_minutes: 6,
-    seat_capacity: 4,
-    has_ac: true,
-    is_favourite: true,
-    total_trips: 980,
-  },
-]
+// Fallback driver data removed — radar shows non-interactive loading blips when API data is pending
 
 
 export default function MatchingWaitingScreen() {
@@ -105,6 +78,7 @@ export default function MatchingWaitingScreen() {
   const {
     connected,
     joinTrip,
+    joinCustomerRoom,
     matchFound,
     tripAccepted,
     tripRejected,
@@ -121,6 +95,8 @@ export default function MatchingWaitingScreen() {
   const [selectedDriver, setSelectedDriver] = useState<NearbyDriverInfo | null>(null)
   const [escalated, setEscalated] = useState<boolean>(false)
   const [searchStatus, setSearchStatus] = useState<string>('Searching nearby drivers...')
+  // Preferred driver request state
+  const [preferredRequestSent, setPreferredRequestSent] = useState<string | null>(null)
 
   // ── Radar Ripple Animations ──
   const ring1 = useRef(new Animated.Value(0)).current
@@ -234,14 +210,17 @@ export default function MatchingWaitingScreen() {
     return () => clearInterval(interval)
   }, [pickupLat, pickupLng, rideRequestId, bookingId, escalated])
 
-  // ── WebSocket Room Subscription ──
+  // ── WebSocket Room Subscription (Bug 5 fix: join BOTH trip room + customer personal room) ──
   useEffect(() => {
     if (!connected) return
     const room = bookingId || rideRequestId || urlTripId
     if (room) {
       joinTrip(room)
     }
-  }, [connected, bookingId, rideRequestId, urlTripId, joinTrip])
+    if (joinCustomerRoom) {
+      joinCustomerRoom()
+    }
+  }, [connected, bookingId, rideRequestId, urlTripId, joinTrip, joinCustomerRoom])
 
   // ── Periodic Location Broadcast ──
   useEffect(() => {
@@ -288,6 +267,32 @@ export default function MatchingWaitingScreen() {
     } as any)
   }
 
+  // Bug 3 fix: Send a direct "preferred driver" request to a specific driver
+  const handleSendPreferredRequest = async (driverId: string) => {
+    const driverName = nearbyDrivers.find((d: any) => (d.driver_id || d.id) === driverId)?.full_name || 'this driver'
+    try {
+      const rId = rideRequestId || bookingId
+      if (rId) {
+        await rideApi.createRequest({
+          request_id: `pref_${Date.now()}_${driverId.slice(0, 6)}`,
+          pickup_lat: parseFloat(pickupLat || '18.5204'),
+          pickup_lng: parseFloat(pickupLng || '73.8567'),
+          pickup_address: pickupAddress || 'Pickup',
+          destination_lat: parseFloat(dropLat || '18.5913'),
+          destination_lng: parseFloat(dropLng || '73.7389'),
+          destination_address: dropAddress || 'Drop',
+          preferred_driver_ids: [driverId],
+          service_type: serviceType || 'economy',
+          pricing_mode: 'STANDARD',
+        } as any)
+      }
+    } catch (err) {
+      console.warn('[MatchingWaiting] preferred request error:', err)
+    }
+    setPreferredRequestSent(driverName)
+    setSelectedDriver(null)
+    setTimeout(() => setPreferredRequestSent(null), 5000)
+  }
   const handleCancelSearch = () => {
     Alert.alert(
       'Cancel Search?',
@@ -461,26 +466,31 @@ export default function MatchingWaitingScreen() {
             )
           })}
 
-          {/* Fallback dots when no API data yet - Clickable */}
+          {/* Bug 4 fix: Non-interactive loading blips (no fake driver data) */}
           {nearbyDrivers.length === 0 && (
             <>
-              <TouchableOpacity
-                activeOpacity={0.7}
-                onPress={() => setSelectedDriver(FALLBACK_DRIVERS[0])}
-                style={[styles.orbitDriverDot, { top: 70, left: 60, backgroundColor: theme.colors.success }]}
-              >
-                <Ionicons name="car" size={12} color="#FFFFFF" />
-              </TouchableOpacity>
-              <TouchableOpacity
-                activeOpacity={0.7}
-                onPress={() => setSelectedDriver(FALLBACK_DRIVERS[1])}
-                style={[styles.orbitDriverDot, { bottom: 80, right: 70, backgroundColor: theme.colors.accent }]}
-              >
-                <Ionicons name="car" size={12} color="#FFFFFF" />
-              </TouchableOpacity>
+              <View style={[styles.orbitDriverDot, { top: 70, left: 60, backgroundColor: theme.colors.primary, opacity: 0.4 }]} pointerEvents="none">
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              </View>
+              <View style={[styles.orbitDriverDot, { bottom: 80, right: 70, backgroundColor: theme.colors.primary, opacity: 0.35 }]} pointerEvents="none">
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              </View>
+              <View style={[styles.orbitDriverDot, { top: 120, right: 50, backgroundColor: theme.colors.primary, opacity: 0.3 }]} pointerEvents="none">
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              </View>
             </>
           )}
         </View>
+
+        {/* Preferred Request Sent Toast */}
+        {preferredRequestSent && (
+          <View style={[styles.preferredToast, { backgroundColor: '#10B981' }]}>
+            <Ionicons name="star" size={18} color="#FFF" />
+            <AppText variant="bodyS" bold style={{ color: '#FFF', marginLeft: 8 }}>
+              ⭐ Direct request sent to {preferredRequestSent}!
+            </AppText>
+          </View>
+        )}
 
         {/* ── Bottom Information Card ── */}
         <View style={styles.bottomSection}>
@@ -544,6 +554,7 @@ export default function MatchingWaitingScreen() {
         visible={!!selectedDriver}
         driver={selectedDriver}
         onClose={() => setSelectedDriver(null)}
+        onPrioritize={handleSendPreferredRequest}
       />
     </View>
   )
@@ -552,6 +563,22 @@ export default function MatchingWaitingScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   safeArea: { flex: 1, justifyContent: 'space-between' },
+
+  preferredToast: {
+    position: 'absolute',
+    top: 80,
+    left: 20,
+    right: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 16,
+    zIndex: 999,
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 10,
+  },
 
   header: {
     flexDirection: 'row',

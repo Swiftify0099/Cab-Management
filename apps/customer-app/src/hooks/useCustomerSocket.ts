@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from 'react'
+﻿import { useEffect, useRef, useCallback, useState } from 'react'
 import { io, Socket } from 'socket.io-client'
 import * as SecureStore from 'expo-secure-store'
 
@@ -320,6 +320,7 @@ interface UseCustomerSocketReturn {
 
   // Room management
   joinTrip:        (tripId: string) => void
+  joinCustomerRoom: () => void  // Bug 5 fix: explicit personal room re-join
   leaveTrip:       (tripId: string) => void
   joinParcelRoom:  (parcelId: string) => void
   leaveParcelRoom: (parcelId: string) => void
@@ -750,6 +751,15 @@ export function useCustomerSocket(): UseCustomerSocketReturn {
     })
   }, [])
 
+  // Bug 5 fix: Expose joinCustomerRoom so matching-waiting can explicitly rejoin personal room
+  const joinCustomerRoom = useCallback(() => {
+    const cid = customerRef.current
+    if (socketRef.current && cid) {
+      socketRef.current.emit('JOIN_CUSTOMER_ROOM', { customer_id: cid })
+      console.log('[CustomerSocket] Re-joined customer room:', cid)
+    }
+  }, [])
+
   const joinParcelRoom = useCallback((parcelId: string) => {
     if (!socketRef.current || !parcelId) return
     socketRef.current.emit('join_parcel_room', { parcel_id: parcelId })
@@ -764,6 +774,7 @@ export function useCustomerSocket(): UseCustomerSocketReturn {
     connected,
     socket: socketRef.current,
     joinTrip,
+    joinCustomerRoom,
     leaveTrip,
     joinParcelRoom,
     leaveParcelRoom,

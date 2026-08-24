@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Ride Request Card UI — Feature 5 (Approved Light Mode with Dark Mode support)
  * Production-quality bottom-sheet presentation with full trip, fare, earning & seat details.
  */
@@ -22,6 +22,7 @@ interface Props {
   isDark?: boolean
   isMuted?: boolean
   sirenName?: string
+  isPreferred?: boolean  // ⭐ Customer explicitly requested this driver
   onToggleMute?: () => void
   onAccept: () => void
   onReject: () => void
@@ -35,6 +36,7 @@ export const RideRequestCard: React.FC<Props> = ({
   isDark = false,
   isMuted = false,
   sirenName,
+  isPreferred = false,
   onToggleMute,
   onAccept,
   onReject,
@@ -79,6 +81,17 @@ export const RideRequestCard: React.FC<Props> = ({
     <View style={[styles.card, { backgroundColor: bgCard, borderColor: borderCol }]}>
       {/* Top Handle */}
       <View style={[styles.handle, { backgroundColor: isDark ? '#475569' : '#CBD5E1' }]} />
+
+      {/* ⭐ Preferred Driver Request Banner */}
+      {isPreferred && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#FEF3C7', borderRadius: 12, padding: 10, marginBottom: 8, marginHorizontal: 4, gap: 8 }}>
+          <Text style={{ fontSize: 20 }}>⭐</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontWeight: '800', color: '#92400E', fontSize: 13 }}>Preferred Driver Request</Text>
+            <Text style={{ color: '#78350F', fontSize: 11 }}>The customer specifically chose YOU for this ride!</Text>
+          </View>
+        </View>
+      )}
 
       {/* ─── Dynamic Siren Ringing & Mute Control Strip ─────────────── */}
       {!isAccepted && !isExpired && !isCancelled && !isSuperseded && (

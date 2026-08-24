@@ -1,4 +1,4 @@
-/**
+﻿/**
  * DriverInfoModal — Customer App Nearby Driver Profile & Vehicle Details
  * ─────────────────────────────────────────────────────────────────────────────
  * Shows detailed driver information when the customer taps any nearby driver
@@ -317,7 +317,7 @@ export function DriverInfoModal({
             <View style={[styles.noticeBox, { backgroundColor: isDark ? 'rgba(14,165,233,0.1)' : '#E0F2FE' }]}>
               <Ionicons name="information-circle" size={18} color="#0284C7" />
               <AppText variant="caption" style={{ flex: 1, marginLeft: 8, color: '#0369A1' }}>
-                This driver is actively circulating in your 3KM corridor. Your request has already been broadcast to them for instant pickup.
+                This driver is actively circulating near your pickup area. Tap 'Send Direct Request' below to notify them directly — they will see it as a ⭐ Preferred Request.
               </AppText>
             </View>
 
@@ -330,16 +330,21 @@ export function DriverInfoModal({
                     const dId = driver.driver_id || driver.id
                     if (dId) {
                       onPrioritize(dId)
-                      onClose()
+                      // onClose() is called inside handleSendPreferredRequest after API call
                     }
                   }}
                 >
-                  Prioritize This Driver 🚕
+                  📤 Send Direct Request to This Driver
                 </AppButton>
+              )}
+              {!onPrioritize && (
+                <AppText variant="caption" color="secondary" center style={{ marginTop: 4 }}>
+                  Tap a driver on the radar to send a direct request
+                </AppText>
               )}
 
               <AppButton variant="secondary" onPress={onClose}>
-                Back to Radar View
+                Back to Radar
               </AppButton>
             </View>
           </ScrollView>

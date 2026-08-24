@@ -239,38 +239,57 @@ export function useDriverSocket(): UseDriverSocketReturn {
       })
 
       // ─── Feature 5: On-Demand Ride Request Events ───────────────────────
-      socket.on('RIDE_REQUEST_NEW', (data: any) => {
-        console.log('[DriverSocket] RIDE_REQUEST_NEW:', data.offer_id, 'Fare:', data.trip?.fare)
-        const normalized: IncomingRequest = {
-          offer_id:        data.offer_id,
-          ride_request_id: data.ride_request_id,
-          booking_id:      data.booking_id || data.ride_request_id,
+
+      // Helper: normalize any ride request event into IncomingRequest shape
+      const normalizeRideRequest = (data: any, isPreferred = false): IncomingRequest => {
+        // Robust offer_id chain — prevents silent API failures on accept/reject
+        const offerId = data.offer_id || data.ride_request_id || data.booking_id || `off-${Date.now()}`
+        return {
+          offer_id:        offerId,
+          ride_request_id: data.ride_request_id || data.booking_id || offerId,
+          booking_id:      data.booking_id || data.ride_request_id || offerId,
           driver_id:       data.driver_id || driverIdRef.current,
-          pickup:          data.pickup,
-          destination:     data.destination,
-          trip: data.trip || {
-            from:           data.pickup?.address || '',
-            to:             data.destination?.address || '',
-            departure_time: new Date().toISOString(),
-            distance_km:    data.pickup?.distance_km || 0,
-            seats:          data.seat_info?.requested_seats || 1,
-            has_parcel:     false,
-            fare:           data.trip?.fare || 0,
-            earning:        data.trip?.earning || 0,
+          is_preferred:    isPreferred || data.is_preferred || false,  // ⭐ preferred flag
+          pickup:          data.pickup || {
+            address: data.pickup_address || 'Pickup Location',
+            lat: data.pickup_lat || 18.5204,
+            lng: data.pickup_lng || 73.8567,
+            distance_km: data.distance_km || 2.4,
+            eta_min: 7,
           },
-          category:    data.category || { name: 'Economy', icon: 'car' },
+          destination:     data.destination || {
+            address: data.destination_address || 'Drop Location',
+            lat: data.destination_lat || 18.5913,
+            lng: data.destination_lng || 73.7389,
+          },
+          trip: data.trip || {
+            from:           data.pickup?.address || data.pickup_address || '',
+            to:             data.destination?.address || data.destination_address || '',
+            departure_time: new Date().toISOString(),
+            distance_km:    data.pickup?.distance_km || data.distance_km || 0,
+            seats:          data.seat_info?.requested_seats || data.seats || 1,
+            has_parcel:     data.has_parcel || false,
+            fare:           data.fare || data.trip?.fare || 0,
+            earning:        data.earning || data.trip?.earning || 0,
+          },
+          category:    data.category || { name: isPreferred ? 'Preferred Request' : 'Economy', icon: isPreferred ? 'star' : 'car' },
           seat_info:   data.seat_info || {
             total_seats: 4,
             available_seats: 4,
             available_labels: ['Front Window', 'Rear Left', 'Rear Right', 'Rear Middle'],
-            requested_seats: 1,
+            requested_seats: data.seats || 1,
           },
-          customer:    data.customer || { id: '' },
+          customer:    data.customer || { id: data.customer_id || '' },
           timeout_sec: data.timeout_sec || 180,
           expires_at:  data.expires_at || new Date(Date.now() + 180000).toISOString(),
           paid:        data.paid ?? true,
+          service_type: data.service_type,
         } as any
+      }
 
+      socket.on('RIDE_REQUEST_NEW', (data: any) => {
+        console.log('[DriverSocket] RIDE_REQUEST_NEW:', data.offer_id, 'Fare:', data.trip?.fare)
+        const normalized = normalizeRideRequest(data)
         setIncomingRequest(normalized)
         playSiren({
           title: `🚖 New Ride Request: ₹${normalized.trip?.fare || 0}!`,
@@ -281,6 +300,25 @@ export function useDriverSocket(): UseDriverSocketReturn {
             ride_request_id: normalized.ride_request_id,
             booking_id: normalized.booking_id,
             fare: normalized.trip?.fare,
+          },
+        })
+      })
+
+      // ⭐ Preferred Driver Request — customer explicitly requested this driver
+      socket.on('PREFERRED_DRIVER_REQUEST', (data: any) => {
+        console.log('[DriverSocket] PREFERRED_DRIVER_REQUEST:', data.offer_id || data.ride_request_id, 'from customer:', data.customer?.id)
+        const normalized = normalizeRideRequest(data, true)  // isPreferred = true
+        setIncomingRequest(normalized)
+        playSiren({
+          title: `⭐ Preferred Request: ₹${normalized.trip?.fare || 0}! (Customer chose YOU)`,
+          body: `${normalized.trip?.from || 'Pickup'} → ${normalized.trip?.to || 'Drop'} • Priority Match`,
+          isParcel: false,
+          data: {
+            offer_id: normalized.offer_id,
+            ride_request_id: normalized.ride_request_id,
+            booking_id: normalized.booking_id,
+            fare: normalized.trip?.fare,
+            is_preferred: true,
           },
         })
       })
@@ -308,59 +346,26 @@ export function useDriverSocket(): UseDriverSocketReturn {
       })
 
       socket.on('INCOMING_TRIP_REQUEST', (data: any) => {
-        console.log('[DriverSocket] Incoming request:', data.booking_id)
-        const normalized: IncomingRequest = {
-          booking_id: data.booking_id,
-          driver_id:  data.driver_id || '',
-          trip: data.trip || {
-            from:           data.pickup_address || data.from || '',
-            to:             data.destination_address || data.to || '',
-            departure_time: data.timestamp || new Date().toISOString(),
-            distance_km:    data.distance_km || 0,
-            seats:          data.seats || data.seat_count || 1,
-            has_parcel:     data.parcel || data.has_parcel || false,
-            fare:           data.fare || 0,
-          },
-          customer:    data.customer || { id: '' },
-          timeout_sec: data.timeout_sec || 180,
-          paid:        data.paid || false,
-        } as any
+        console.log('[DriverSocket] INCOMING_TRIP_REQUEST:', data.booking_id)
+        const normalized = normalizeRideRequest(data)
         setIncomingRequest(normalized)
         playSiren({
           title: `🚖 New Trip Request: ₹${normalized.trip?.fare || 0}!`,
-          body: `From: ${normalized.trip?.from} → To: ${normalized.trip?.to}`,
+          body: `${normalized.trip?.from || 'Pickup'} → ${normalized.trip?.to || 'Drop'}`,
           isParcel: false,
-          data: {
-            booking_id: normalized.booking_id,
-            fare: normalized.trip?.fare,
-          },
+          data: { offer_id: normalized.offer_id, booking_id: normalized.booking_id, fare: normalized.trip?.fare },
         })
       })
 
-      // New events
       socket.on('TRIP_REQUEST', (data: any) => {
         console.log('[DriverSocket] TRIP_REQUEST:', data.booking_id)
-        const normalized: IncomingRequest = {
-          booking_id: data.booking_id,
-          driver_id:  data.driver_id || '',
-          trip: data.trip || {
-            from:           data.pickup_address || '',
-            to:             data.destination_address || '',
-            departure_time: data.timestamp || new Date().toISOString(),
-            distance_km:    data.distance_km || 0,
-            seats:          data.seats || 1,
-            has_parcel:     data.parcel || false,
-            fare:           data.fare || 0,
-          },
-          customer:    data.customer || { id: '' },
-          timeout_sec: data.timeout_sec || 180,
-        } as any
+        const normalized = normalizeRideRequest(data)
         setIncomingRequest(normalized)
         playSiren({
           title: `🚖 Customer Trip Request: ₹${normalized.trip?.fare || 0}!`,
-          body: `${normalized.trip?.from} → ${normalized.trip?.to}`,
+          body: `${normalized.trip?.from || 'Pickup'} → ${normalized.trip?.to || 'Drop'}`,
           isParcel: false,
-          data: { booking_id: normalized.booking_id },
+          data: { offer_id: normalized.offer_id, booking_id: normalized.booking_id, fare: normalized.trip?.fare },
         })
       })
 
