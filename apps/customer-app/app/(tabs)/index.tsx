@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Customer App — Home / Service Discovery Dashboard
  * Route: /(tabs)/
  * Feature 2: Multi-Service Platform & Location Discovery.
@@ -116,7 +116,7 @@ const DEFAULT_SERVICES: ServiceItem[] = [
   { code: 'rental',    title: 'Car Rental',      description: 'Hourly / Daily packs', category: 'transport',   icon: 'key',       status: 'AVAILABLE', badge: 'Hourly',      sort_order: 6, route: '/rental' },
   { code: 'corporate', title: 'Corporate Rides', description: 'Business accounts',    category: 'corporate',   icon: 'briefcase', status: 'AVAILABLE', badge: 'Business',    sort_order: 7, route: '/corporate' },
   { code: 'moving',    title: 'Movers & Shift',  description: 'Trucks & Helpers',     category: 'logistics',   icon: 'truck',     status: 'AVAILABLE', badge: 'Packers',     sort_order: 8, route: '/packers' },
-  { code: 'outstation',title: 'Outstation Cab',  description: 'Intercity & Return',   category: 'transport',   icon: 'car-sport', status: 'AVAILABLE', badge: 'Intercity',   sort_order: 9, route: '/outstation' },
+  { code: 'outstation',title: 'Outstation Cab',  description: 'Intercity & Return',   category: 'transport',   icon: 'road',      status: 'AVAILABLE', badge: 'Intercity',   sort_order: 9, route: '/outstation' },
 ]
 
 export default function HomeScreen() {
@@ -221,14 +221,27 @@ export default function HomeScreen() {
         if (d.unread_notifications_count !== undefined) setUnreadNotifications(d.unread_notifications_count)
         if (d.services && Array.isArray(d.services) && d.services.length > 0) {
           const mapped = d.services.map((s: ServiceItem) => {
-            if (s.code === 'rental') return { ...s, status: 'AVAILABLE' as const, route: '/rental', badge: 'Hourly' }
-            if (s.code === 'corporate') return { ...s, status: 'AVAILABLE' as const, route: '/corporate', badge: 'Business' }
-            if (s.code === 'moving') return { ...s, status: 'AVAILABLE' as const, route: '/packers', badge: 'Packers' }
-            if (s.code === 'transport') return { ...s, status: 'AVAILABLE' as const, route: '/transport/create', badge: 'Freight' }
-            if (s.code === 'airport') return { ...s, status: 'AVAILABLE' as const, route: '/airport/book', badge: 'Flight Sync' }
-            if (s.code === 'hotel') return { ...s, status: 'AVAILABLE' as const, route: '/book/properties', badge: 'Hotels' }
-            if (s.code === 'ride') return { ...s, status: 'AVAILABLE' as const, route: '/book/cab', badge: 'Popular' }
-            if (s.code === 'outstation') return { ...s, status: 'AVAILABLE' as const, route: '/outstation', badge: 'Intercity' }
+            // Route + icon override map — works regardless of what backend sends
+            const _rm: Record<string,{route:string;badge:string;icon:string}> = {
+              rental:    {route:'/rental',badge:'Hourly',icon:'key'},
+              corporate: {route:'/corporate',badge:'Business',icon:'briefcase'},
+              moving:    {route:'/packers',badge:'Packers',icon:'truck'},
+              transport: {route:'/transport/create',badge:'Freight',icon:'bus'},
+              airport:   {route:'/airport/book',badge:'Flight Sync',icon:'airplane'},
+              hotel:     {route:'/book/properties',badge:'Hotels',icon:'business'},
+              ride:      {route:'/book/cab',badge:'Popular',icon:'car-sport'},
+              outstation:{route:'/outstation',badge:'Intercity',icon:'road'},
+              parcel:    {route:'/parcel-booking',badge:'Instant',icon:'package'},
+            }
+            const _ov = _rm[s.code]
+            if (_ov) return { ...s, status: 'AVAILABLE' as const, ..._ov }
+
+
+
+
+
+
+
             return s
           })
           setServices(mapped)
@@ -320,6 +333,10 @@ export default function HomeScreen() {
           pickupLng: coords?.lng ? coords.lng.toString() : undefined,
         },
       } as any)
+      return
+    }
+    if (service.route === '/outstation') {
+      router.push({ pathname: '/outstation', params: { pickupAddress: currentAddress || undefined, pickupLat: coords?.lat ? String(coords.lat) : undefined, pickupLng: coords?.lng ? String(coords.lng) : undefined } } as any)
       return
     }
     router.push(service.route as any)
@@ -725,6 +742,7 @@ export default function HomeScreen() {
                       {s.icon === 'key'       && <Ionicons name="key" size={24} color="#8B5CF6" />}
                       {s.icon === 'briefcase' && <Ionicons name="briefcase" size={24} color="#6366F1" />}
                       {s.icon === 'truck'     && <FontAwesome5 name="truck" size={22} color="#F59E0B" />}
+                      {s.icon === 'road'      && <MaterialCommunityIcons name={"road-variant"} size={28} color={"#10B981"} />}
                     </View>
 
                     {/* Title */}

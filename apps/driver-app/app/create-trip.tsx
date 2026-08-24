@@ -9,6 +9,7 @@ import {
   StyleSheet, ActivityIndicator, Alert, Switch, Dimensions, Platform, Modal
 } from 'react-native'
 import { router } from 'expo-router'
+import { SafeAreaView } from 'react-native-safe-area-context'
 import { LinearGradient } from 'expo-linear-gradient'
 import DateTimePicker from '@react-native-community/datetimepicker'
 import { api } from '../src/api/client'
@@ -357,7 +358,33 @@ export default function CreateTripScreen() {
       // Navigate to Home Dashboard with created trip visible
       router.replace('/(tabs)')
     } catch (err: any) {
-      const msg = err?.response?.data?.detail || 'Could not publish trip. Please try again.'
+      const status = err?.response?.status
+      const detail = err?.response?.data?.detail
+      let msg = 'Could not publish trip. Please try again.'
+
+      if (!err?.response) {
+        // Network timeout or server sleep (Render free tier)
+        msg = 'Server is waking up. Please wait 30 seconds and try again.'
+      } else if (status === 422) {
+        // Validation error — show which field failed
+        const errors = err?.response?.data?.detail
+        if (Array.isArray(errors)) {
+          const fieldErrors = errors.map((e: any) => `${e.loc?.slice(-1)[0]}: ${e.msg}`).join('\n')
+          msg = `Validation error:\n${fieldErrors}`
+        } else {
+          msg = typeof detail === 'string' ? detail : 'Invalid trip data. Check all fields.'
+        }
+      } else if (status === 401) {
+        msg = 'Session expired. Please log in again.'
+      } else if (status === 403) {
+        msg = 'Driver account not fully verified. Please complete KYC first.'
+      } else if (status === 500) {
+        msg = 'Server error. Our team has been notified. Please try again in a moment.'
+      } else if (typeof detail === 'string') {
+        msg = detail
+      }
+
+      console.error('[CreateTrip] Publish failed:', status, detail, err?.message)
       Alert.alert('Publish Failed', msg)
     } finally {
       setLoading(false)

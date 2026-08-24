@@ -409,6 +409,14 @@ export const fareApi = {
 // Matching & Ride Dispatch API
 export const matchingApi = {
   requestRide: (data: object) => api.post('/matching/request', data),
+  // Fetch actual nearby online drivers for the radar display
+  // GET /rides/search-drivers — customer-facing nearby drivers (same auth as get_current_user)
+  getNearbyDrivers: (params: {
+    pickup_lat: number
+    pickup_lng: number
+    radius_km?: number
+    service_type?: string
+  }) => api.post('/rides/search-nearby-for-matching', params),
   searchNearbyForMatching: (data: {
     pickup_lat: number
     pickup_lng: number

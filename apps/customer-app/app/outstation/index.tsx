@@ -4,10 +4,10 @@
  * Fixed: Directly submits ride request → navigates to /matching-waiting (no /book/cab detour).
  */
 import React, { useState } from 'react'
-import { View, ScrollView, TouchableOpacity, StyleSheet, TextInput, StatusBar } from 'react-native'
+import { View, ScrollView, TouchableOpacity, StyleSheet, TextInput, StatusBar, Alert } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
-import { router } from 'expo-router'
+import { router, useLocalSearchParams } from 'expo-router'
 import { LinearGradient } from 'expo-linear-gradient'
 import { useTheme } from '../../src/contexts/ThemeContext'
 import { useTranslation } from '../../src/i18n'
@@ -23,9 +23,11 @@ const VEHICLE_TIERS = [
 
 export default function OutstationBookingScreen() {
   const { theme, isDark } = useTheme()
+  // Pre-fill pickup from dashboard navigation params
+  const params = useLocalSearchParams<{ pickupAddress?: string; pickupLat?: string; pickupLng?: string }>()
   const { t } = useTranslation()
   const [tripType, setTripType] = useState<'ONE_WAY' | 'ROUND_TRIP' | 'MULTI_CITY'>('ONE_WAY')
-  const [originAddress, setOriginAddress] = useState('Pune Railway Station, Pune')
+  const [originAddress, setOriginAddress] = useState(params?.pickupAddress || 'Pune Railway Station, Pune')
   const [destinationAddress, setDestinationAddress] = useState('Mahabaleshwar Main Market')
   const [departureDate, setDepartureDate] = useState('Tomorrow, 06:00 AM')
   const [returnDate, setReturnDate] = useState('Day after tomorrow, 08:00 PM')
@@ -42,9 +44,16 @@ export default function OutstationBookingScreen() {
 
   const handleBookOutstation = async () => {
     setLoading(true)
-    let pickupLat = 18.5204, pickupLng = 73.8567, dropLat = 17.9307, dropLng = 73.6477
+    // Use pre-filled coords from dashboard if available (avoids extra geocoding round-trip)
+    let pickupLat = params?.pickupLat ? parseFloat(params.pickupLat) : 18.5204
+    let pickupLng = params?.pickupLng ? parseFloat(params.pickupLng) : 73.8567
+    let dropLat = 17.9307, dropLng = 73.6477
     try {
-      const [og, dg] = await Promise.all([geocodeCity(originAddress), geocodeCity(destinationAddress)])
+      const geocodePromises: Promise<any>[] = []
+      if (!params?.pickupLat) geocodePromises.push(geocodeCity(originAddress))
+      else geocodePromises.push(Promise.resolve(null))
+      geocodePromises.push(geocodeCity(destinationAddress))
+      const [og, dg] = await Promise.all(geocodePromises)
       if (og) { pickupLat = og.lat; pickupLng = og.lon }
       if (dg) { dropLat = dg.lat; dropLng = dg.lon }
     } catch {}
@@ -63,11 +72,22 @@ export default function OutstationBookingScreen() {
       const d = res.data?.data || res.data
       rideRequestId = d?.ride_request_id || d?.id || requestId
     } catch (err: any) {
-      console.warn('[Outstation] API error, using local ID:', err?.message)
+      const status = err?.response?.status
+      if (status === 401) {
+        setLoading(false)
+        Alert.alert('Session Expired', 'Please log in again.')
+        return
+      }
+      if (status === 422) {
+        console.warn('[Outstation] Validation error:', err?.response?.data?.detail)
+        // Still navigate — the local ID will be used as fallback
+      } else {
+        console.warn('[Outstation] API error, using local ID:', err?.message)
+      }
     } finally {
       setLoading(false)
     }
-    // ✅ Navigate DIRECTLY to matching-waiting (Bug 1 fixed)
+    // ✅ Navigate DIRECTLY to matching-waiting
     router.push({
       pathname: '/matching-waiting',
       params: {

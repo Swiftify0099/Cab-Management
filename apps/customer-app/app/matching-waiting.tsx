@@ -185,30 +185,61 @@ export default function MatchingWaitingScreen() {
     }
   }
 
-  // ── Fetch nearby drivers from API ──
+  // ── Fetch nearby drivers: radar display + dispatch trigger ──
   useEffect(() => {
     const fetchNearby = async () => {
       try {
         const lat = parseFloat(pickupLat || '0')
         const lng = parseFloat(pickupLng || '0')
         if (lat === 0 && lng === 0) return
-        const res = await matchingApi.searchNearbyForMatching({
-          pickup_lat: lat,
-          pickup_lng: lng,
-          ride_request_id: rideRequestId || bookingId,
-          radius_km: escalated ? 25 : 10,
-        })
-        const data = res.data?.data || res.data
-        if (data?.drivers && Array.isArray(data.drivers)) {
-          setNearbyDrivers(data.drivers)
+
+        // 1. GET /rides/radar — returns displayable nearby drivers
+        let radarDrivers: any[] = []
+        try {
+          const radarRes = await matchingApi.getNearbyDrivers({
+            pickup_lat: lat, pickup_lng: lng,
+            radius_km: escalated ? 25 : 10,
+            service_type: serviceType || 'outstation',
+          })
+          const rd = radarRes.data?.data || radarRes.data
+          radarDrivers = rd?.drivers || (Array.isArray(rd) ? rd : [])
+          if (radarDrivers.length > 0) {
+            setNearbyDrivers(radarDrivers)
+            const cnt = radarDrivers.length
+            setSearchStatus(cnt + ' driver' + (cnt > 1 ? 's' : '') + ' nearby — sending request...')
+          }
+        } catch (radarErr) {
+          console.warn('[MatchingWaiting] radar fetch error:', radarErr)
         }
-      } catch {}
+
+        // 2. POST /rides/search-nearby-for-matching — triggers backend dispatch
+        try {
+          const matchRes = await matchingApi.searchNearbyForMatching({
+            pickup_lat: lat, pickup_lng: lng,
+            ride_request_id: rideRequestId || bookingId,
+            radius_km: escalated ? 25 : 10,
+          })
+          if (radarDrivers.length === 0) {
+            const md = matchRes.data?.data || matchRes.data
+            const merged = md?.drivers || (Array.isArray(md) ? md : [])
+            if (merged.length > 0) {
+              setNearbyDrivers(merged)
+              const cnt = merged.length
+              setSearchStatus(cnt + ' driver' + (cnt > 1 ? 's' : '') + ' nearby — sending request...')
+            }
+          }
+        } catch (matchErr) {
+          console.warn('[MatchingWaiting] search-nearby error:', matchErr)
+        }
+      } catch (err) {
+        console.warn('[MatchingWaiting] fetchNearby outer error:', err)
+      }
     }
 
     fetchNearby()
-    const interval = setInterval(fetchNearby, 15000) // Refresh every 15s
+    const interval = setInterval(fetchNearby, 15000)
     return () => clearInterval(interval)
-  }, [pickupLat, pickupLng, rideRequestId, bookingId, escalated])
+  }, [pickupLat, pickupLng, rideRequestId, bookingId, escalated, serviceType])
 
   // ── WebSocket Room Subscription (Bug 5 fix: join BOTH trip room + customer personal room) ──
   useEffect(() => {

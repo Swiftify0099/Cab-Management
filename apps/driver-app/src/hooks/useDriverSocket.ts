@@ -201,9 +201,14 @@ export function useDriverSocket(): UseDriverSocketReturn {
         path: '/socket.io/',
         transports: ['websocket', 'polling'],
         auth: { token: `Bearer ${token}` },
+        // Smarter reconnection for Render.com free tier (server sleeps after inactivity)
+        // Longer initial delay prevents flooding a waking server
         reconnection: true,
-        reconnectionDelay: 3000,
-        reconnectionAttempts: 15,
+        reconnectionDelay: 5000,       // wait 5s before first retry
+        reconnectionDelayMax: 30000,   // cap at 30s between retries
+        randomizationFactor: 0.5,      // adds jitter to prevent thundering herd
+        reconnectionAttempts: 8,       // 8 attempts max then stop (avoids infinite loop)
+        timeout: 20000,                // 20s connection timeout
       })
 
       socketRef.current = socket
@@ -228,14 +233,36 @@ export function useDriverSocket(): UseDriverSocketReturn {
         startHeartbeat(socket!)
       })
 
-      socket.on('disconnect', () => {
+      socket.on('disconnect', (reason) => {
         setConnected(false)
         stopHeartbeat()
-        console.log('[DriverSocket] Disconnected')
+        console.log('[DriverSocket] Disconnected:', reason)
         try {
           const { AvailabilityService } = require('../services/availabilityService')
           AvailabilityService.handleNetworkChange(false)
         } catch {}
+      })
+
+      // Reconnection lifecycle — prevents UI from appearing stuck
+      socket.on('reconnecting', (attempt: number) => {
+        console.log(`[DriverSocket] Reconnecting... attempt ${attempt}/8`)
+      })
+
+      socket.on('reconnect', (attempt: number) => {
+        console.log(`[DriverSocket] Reconnected after ${attempt} attempt(s)`)
+        setConnected(true)
+        socket!.emit('DRIVER_ONLINE', { driver_id: driverIdRef.current, timestamp: Date.now() })
+        startHeartbeat(socket!)
+      })
+
+      socket.on('reconnect_error', (err: Error) => {
+        console.warn('[DriverSocket] Reconnect error:', err.message)
+      })
+
+      socket.on('reconnect_failed', () => {
+        // All 8 attempts exhausted — server is offline or sleeping
+        console.warn('[DriverSocket] All reconnect attempts failed. Server may be sleeping (Render free tier). Will retry on next app foreground.')
+        setConnected(false)
       })
 
       // ─── Feature 5: On-Demand Ride Request Events ───────────────────────

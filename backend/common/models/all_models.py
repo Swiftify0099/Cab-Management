@@ -2118,6 +2118,9 @@ class RideRequest(Base, UUIDMixin, TimestampMixin):
     payment_method: Mapped[str] = mapped_column(String(30), default="cash", nullable=False)  # cash, upi, card, wallet
     payment_status: Mapped[str] = mapped_column(String(30), default="pending", nullable=False)  # pending, paid, failed, cash_collected
     tip_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    service_type: Mapped[Optional[str]] = mapped_column(String(50), default="cab", nullable=True, index=True)  # cab, outstation, parcel, rental, transport, airport
+    pricing_mode: Mapped[str] = mapped_column(String(30), default="STANDARD", nullable=False)  # STANDARD, NEGOTIATED
+    preferred_driver_ids: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)  # [driver_id, ...]
 
     # Feature 21: Back-to-Back Rides Continuous Dispatch
     is_back_to_back: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -2194,6 +2197,7 @@ class RideOffer(Base, UUIDMixin, TimestampMixin):
     # Available seat info for display in driver app
     available_seats: Mapped[int] = mapped_column(Integer, default=4, nullable=False)
     available_seat_labels: Mapped[Optional[List[str]]] = mapped_column(ARRAY(String), nullable=True)  # ["Window Front", "Window Rear", "Middle"]
+    is_preferred: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)  # Preferred driver direct request
 
     # Relationships
     ride_request: Mapped["RideRequest"] = relationship(back_populates="offers")

@@ -242,6 +242,21 @@ export default function DriverHomeScreen() {
     <View style={[styles.root, { backgroundColor: theme.colors.background }]}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
+      {/* ⚡ Socket Reconnecting Banner — shown when server is offline/sleeping */}
+      {!connected && (
+        <View style={{
+          position: 'absolute', top: 0, left: 0, right: 0, zIndex: 9998,
+          backgroundColor: '#92400E', paddingVertical: 6, paddingHorizontal: 16,
+          flexDirection: 'row', alignItems: 'center', gap: 8,
+        }}>
+          <MaterialCommunityIcons name="wifi-off" size={14} color="#FEF3C7" />
+          <Text style={{ color: '#FEF3C7', fontSize: 12, fontWeight: '600', flex: 1 }}>
+            Reconnecting to server… Ride requests paused.
+          </Text>
+          <ActivityIndicator size="small" color="#FEF3C7" />
+        </View>
+      )}
+
       {/* Incoming Request Overlay */}
       {incomingRequest && (
         <IncomingRequestScreen request={incomingRequest} onDismiss={clearRequest} />
