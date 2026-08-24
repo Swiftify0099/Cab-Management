@@ -38,9 +38,41 @@ Notifications.setNotificationHandler({
   }),
 })
 
-// Fallbacks point to host IP: 8010 for WS gateway, 80 for API gateway
-const WS_URL = (process.env.EXPO_PUBLIC_WS_URL || 'https://cab-management-1.onrender.com').replace(/\/api\/v1$/, '')
-const API    = process.env.EXPO_PUBLIC_API_URL || 'https://cab-management-1.onrender.com/api/v1'
+const PROD_WS_URL = 'https://cab-management-1.onrender.com'
+const PROD_API_URL = 'https://cab-management-1.onrender.com/api/v1'
+
+const resolveWsUrl = () => {
+  const envWs = process.env.EXPO_PUBLIC_WS_URL?.trim()
+  if (!envWs) return PROD_WS_URL
+  if (
+    envWs.includes('10.189.118.102') ||
+    envWs.includes('172.31.') ||
+    envWs.includes('172.18.') ||
+    envWs.startsWith('http://localhost') ||
+    envWs.startsWith('http://127.0.0.1')
+  ) {
+    return PROD_WS_URL
+  }
+  return envWs.replace(/\/api\/v1$/, '')
+}
+
+const resolveApiUrl = () => {
+  const envApi = process.env.EXPO_PUBLIC_API_URL?.trim()
+  if (!envApi) return PROD_API_URL
+  if (
+    envApi.includes('10.189.118.102') ||
+    envApi.includes('172.31.') ||
+    envApi.includes('172.18.') ||
+    envApi.startsWith('http://localhost') ||
+    envApi.startsWith('http://127.0.0.1')
+  ) {
+    return PROD_API_URL
+  }
+  return envApi.replace(/\/+$/, '')
+}
+
+const WS_URL = resolveWsUrl()
+const API    = resolveApiUrl()
 
 // ─── Types ────────────────────────────────────────────────────
 export interface IncomingRequest {

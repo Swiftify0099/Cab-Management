@@ -15,6 +15,7 @@ import {
   ActivityIndicator,
   RefreshControl,
   Dimensions,
+  useWindowDimensions,
   Modal,
   Alert,
   Linking,
@@ -50,6 +51,7 @@ import {
 import DevModeModal from '../../src/components/dev/DevModeModal'
 import { PromotionsSheet } from '../../src/components/promotions/PromotionsSheet'
 import { SmartCompanionCard } from '../../src/components/smart/SmartCompanionCard'
+import { reverseGeocodeCoordinate } from '../../src/utils/maps'
 
 const { width: SCREEN_W } = Dimensions.get('window')
 
@@ -108,20 +110,120 @@ interface PromoItem {
 }
 
 const DEFAULT_SERVICES: ServiceItem[] = [
-  { code: 'ride',      title: 'Intercity Cab',  description: 'One-way & Round-trip', category: 'transport',   icon: 'car-sport', status: 'AVAILABLE',   badge: 'Popular',     sort_order: 1, route: '/book/cab' },
-  { code: 'parcel',    title: 'Send Parcel',    description: 'Same-day delivery',    category: 'logistics',   icon: 'package',   status: 'AVAILABLE',   badge: 'Instant',     sort_order: 2, route: '/parcel-booking' },
-  { code: 'hotel',     title: 'Book Hotel',     description: 'Verified Stays',       category: 'hospitality', icon: 'business',  status: 'AVAILABLE',   badge: 'Hotels',      sort_order: 3, route: '/book/properties' },
-  { code: 'transport', title: 'Goods Transport',description: 'Commercial Freight',   category: 'logistics',   icon: 'truck',     status: 'AVAILABLE',   badge: 'Instant & Bids', sort_order: 4, route: '/transport/create' },
-  { code: 'airport',   title: 'Airport Transfer',description: 'Flight-Aware & Pickup',category: 'transport',   icon: 'airplane',  status: 'AVAILABLE',   badge: 'Flight Sync', sort_order: 5, route: '/airport/book' },
-  { code: 'rental',    title: 'Car Rental',     description: 'Hourly / Daily packs', category: 'transport',   icon: 'key',       status: 'COMING_SOON', badge: 'Coming Soon', sort_order: 6, route: null },
-  { code: 'corporate', title: 'Corporate Rides',description: 'Business accounts',    category: 'corporate',   icon: 'briefcase', status: 'COMING_SOON', badge: 'Coming Soon', sort_order: 7, route: null },
-  { code: 'moving',    title: 'Movers & Shift', description: 'Trucks & Helpers',     category: 'logistics',   icon: 'truck',     status: 'AVAILABLE',   badge: 'Heavy Load',  sort_order: 8, route: '/transport/create' },
+  { code: 'ride',      title: 'Intercity Cab',   description: 'One-way & Round-trip', category: 'transport',   icon: 'car-sport', status: 'AVAILABLE', badge: 'Hot',     sort_order: 1, route: '/book/cab' },
+  { code: 'parcel',    title: 'Send Parcel',     description: 'Same-day delivery',    category: 'logistics',   icon: 'package',   status: 'AVAILABLE', badge: 'Fast',    sort_order: 2, route: '/parcel-booking' },
+  { code: 'hotel',     title: 'Book Hotel',      description: 'Verified Stays',       category: 'hospitality', icon: 'business',  status: 'AVAILABLE', badge: 'Stays',   sort_order: 3, route: '/book/properties' },
+  { code: 'transport', title: 'Goods Transport', description: 'Commercial Freight',   category: 'logistics',   icon: 'truck',     status: 'AVAILABLE', badge: 'Cargo',   sort_order: 4, route: '/transport/create' },
+  { code: 'airport',   title: 'Airport Transfer',description: 'Flight-Aware & Pickup',category: 'transport',   icon: 'airplane',  status: 'AVAILABLE', badge: '24/7',    sort_order: 5, route: '/airport/book' },
+  { code: 'rental',    title: 'Car Rental',      description: 'Hourly / Daily packs', category: 'transport',   icon: 'key',       status: 'AVAILABLE', badge: 'Hourly',  sort_order: 6, route: '/rental' },
+  { code: 'corporate', title: 'Corporate Rides', description: 'Business accounts',    category: 'corporate',   icon: 'briefcase', status: 'AVAILABLE', badge: 'Biz',     sort_order: 7, route: '/corporate' },
+  { code: 'moving',    title: 'Packers & Movers',description: 'House & office shifting',category: 'logistics',icon: 'truck-fast', status: 'AVAILABLE', badge: 'Movers',  sort_order: 8, route: '/transport/create' },
 ]
 
 export default function HomeScreen() {
   const { theme, isDark } = useTheme()
   const { t } = useTranslation()
   const user = useAuthStore((s) => s.user) as any
+  const { width: windowWidth } = useWindowDimensions()
+
+  // Dynamic 4-column responsive sizing for perfect fit on any mobile screen
+  const GRID_PADDING = 16
+  const GAP = 8
+  const COLUMNS = 4
+  const itemWidth = Math.floor((windowWidth - (GRID_PADDING * 2) - (GAP * (COLUMNS - 1))) / COLUMNS)
+
+  // Contextual micro-badge formatting per service
+  const getBadgeText = (code: string, badge?: string, status?: string) => {
+    switch (code) {
+      case 'ride': return 'HOT'
+      case 'parcel': return 'FAST'
+      case 'hotel': return 'STAYS'
+      case 'transport': return 'CARGO'
+      case 'airport': return '24/7'
+      case 'rental': return 'HOURLY'
+      case 'corporate': return 'BIZ'
+      case 'moving': return 'MOVERS'
+      default:
+        if (status === 'COMING_SOON') return 'SOON'
+        return badge ? badge.slice(0, 6).toUpperCase() : null
+    }
+  }
+
+  // Beautiful gradient icon styling per service category
+  const renderServiceIcon = (s: ServiceItem) => {
+    let iconName = 'car-sport'
+    let iconColor = '#2563EB'
+    let gradientColors: [string, string] = isDark ? ['#1E3A8A35', '#1E40AF45'] : ['#EFF6FF', '#DBEAFE']
+    let IconComp: any = Ionicons
+
+    switch (s.code) {
+      case 'ride':
+        iconName = 'car-sport'
+        iconColor = '#2563EB'
+        gradientColors = isDark ? ['#1E3A8A35', '#1E40AF45'] : ['#EFF6FF', '#DBEAFE']
+        IconComp = Ionicons
+        break
+      case 'parcel':
+        iconName = 'package'
+        iconColor = '#9333EA'
+        gradientColors = isDark ? ['#581C8735', '#6B21A845'] : ['#FAF5FF', '#F3E8FF']
+        IconComp = Feather
+        break
+      case 'hotel':
+        iconName = 'business'
+        iconColor = '#059669'
+        gradientColors = isDark ? ['#064E3B35', '#065F4645'] : ['#ECFDF5', '#D1FAE5']
+        IconComp = Ionicons
+        break
+      case 'airport':
+        iconName = 'airplane'
+        iconColor = '#0891B2'
+        gradientColors = isDark ? ['#164E6335', '#155E7545'] : ['#ECFEFF', '#CFFAFE']
+        IconComp = Ionicons
+        break
+      case 'transport':
+        iconName = 'bus'
+        iconColor = '#D97706'
+        gradientColors = isDark ? ['#78350F35', '#92400E45'] : ['#FFFBEB', '#FEF3C7']
+        IconComp = Ionicons
+        break
+      case 'moving':
+        iconName = 'truck-fast'
+        iconColor = '#EA580C'
+        gradientColors = isDark ? ['#7C2D1235', '#9A341245'] : ['#FFF7ED', '#FFEDD5']
+        IconComp = MaterialCommunityIcons
+        break
+      case 'rental':
+        iconName = 'key'
+        iconColor = '#6366F1'
+        gradientColors = isDark ? ['#312E8135', '#3730A345'] : ['#EEF2FF', '#E0E7FF']
+        IconComp = Ionicons
+        break
+      case 'corporate':
+        iconName = 'briefcase'
+        iconColor = '#475569'
+        gradientColors = isDark ? ['#33415535', '#47556945'] : ['#F1F5F9', '#E2E8F0']
+        IconComp = Ionicons
+        break
+      default:
+        iconName = 'car-sport'
+        iconColor = theme.colors.primary
+        gradientColors = isDark ? ['#1E293B', '#334155'] : ['#F1F5F9', '#E2E8F0']
+        IconComp = Ionicons
+        break
+    }
+
+    return (
+      <LinearGradient
+        colors={gradientColors}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.serviceIconCircle}
+      >
+        <IconComp name={iconName} size={24} color={iconColor} />
+      </LinearGradient>
+    )
+  }
 
   // UI State
   const [loading, setLoading] = useState(true)
@@ -167,50 +269,87 @@ export default function HomeScreen() {
     ).start()
   }, [])
 
+  // Stable refs to prevent state re-trigger loops and UI flickering
+  const coordsRef = useRef<{ lat: number; lng: number } | null>(null)
+  const isResolvingLocation = useRef(false)
+  const hasResolvedInitialLocation = useRef(false)
+
   // ── 1. GPS Location Resolution ─────────────────────────────────────────────
-  const resolveLocation = useCallback(async () => {
+  const resolveLocation = useCallback(async (forceRefresh = false) => {
+    if (isResolvingLocation.current && !forceRefresh) return
+    isResolvingLocation.current = true
+
     try {
-      const { status } = await Location.getForegroundPermissionsAsync()
-      if (status !== 'granted') {
+      const { status: existingStatus } = await Location.getForegroundPermissionsAsync()
+      let finalStatus = existingStatus
+      if (finalStatus !== 'granted') {
         const req = await Location.requestForegroundPermissionsAsync()
-        if (req.status !== 'granted') {
-          setLocationStatus('PERMISSION_REQUIRED')
-          setCurrentAddress('Tap to enable GPS location for easy pickup')
-          return
+        finalStatus = req.status
+      }
+
+      if (finalStatus !== 'granted') {
+        setLocationStatus('PERMISSION_REQUIRED')
+        setCurrentAddress('Tap to enable GPS location')
+        isResolvingLocation.current = false
+        return
+      }
+
+      if (!hasResolvedInitialLocation.current || forceRefresh) {
+        setLocationStatus('LOADING')
+      }
+
+      // Fast location acquisition with balanced accuracy
+      const loc = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      })
+
+      const newCoords = { lat: loc.coords.latitude, lng: loc.coords.longitude }
+      coordsRef.current = newCoords
+      setCoords(newCoords)
+
+      // Authoritative reverse-geocoding via Google Maps & native fallback
+      const geoAddress = await reverseGeocodeCoordinate(loc.coords.latitude, loc.coords.longitude)
+      if (geoAddress && !geoAddress.startsWith('Lat:')) {
+        setCurrentAddress(geoAddress)
+      } else {
+        const places = await Location.reverseGeocodeAsync({
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+        }).catch(() => [])
+
+        if (places && places.length > 0) {
+          const p = places[0]
+          const formatted = [p.name, p.street || p.district, p.city].filter(Boolean).join(', ')
+          setCurrentAddress(formatted || 'Current Location')
+        } else {
+          setCurrentAddress(geoAddress || 'Current Location')
         }
       }
 
-      setLocationStatus('LOADING')
-      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
-      setCoords({ lat: loc.coords.latitude, lng: loc.coords.longitude })
-
-      const places = await Location.reverseGeocodeAsync({
-        latitude: loc.coords.latitude,
-        longitude: loc.coords.longitude,
-      })
-
-      if (places.length > 0) {
-        const p = places[0]
-        const formatted = [p.name, p.street || p.district, p.city].filter(Boolean).join(', ')
-        setCurrentAddress(formatted || `${loc.coords.latitude.toFixed(4)}, ${loc.coords.longitude.toFixed(4)}`)
-      } else {
-        setCurrentAddress('Current Location')
-      }
       setLocationStatus('AVAILABLE')
-    } catch {
+      hasResolvedInitialLocation.current = true
+    } catch (err: any) {
+      console.warn('[Location] Resolution error:', err)
       setLocationStatus('UNAVAILABLE')
-      setCurrentAddress('Pune, Maharashtra (Default)')
+      if (!currentAddress) {
+        setCurrentAddress('Pune, Maharashtra (Default)')
+      }
+    } finally {
+      isResolvingLocation.current = false
     }
-  }, [])
+  }, [currentAddress])
 
   // ── 2. Unified Dashboard Data Fetch ────────────────────────────────────────
   const loadDashboardData = useCallback(async () => {
     try {
+      const currentLat = coordsRef.current?.lat || coords?.lat
+      const currentLng = coordsRef.current?.lng || coords?.lng
+
       const [summaryRes, addrRes, tripsRes, smartRes, journeysRes] = await Promise.allSettled([
         homeApi.getSummary(),
         profileApi.getAddresses(),
         bookingApi.getMyTrips(),
-        smartApi.getHomeFeed({ lat: coords?.lat, lng: coords?.lng }),
+        smartApi.getHomeFeed({ lat: currentLat, lng: currentLng }),
         orchestrationApi.getJourneys(),
       ])
 
@@ -218,7 +357,31 @@ export default function HomeScreen() {
         const d = summaryRes.value.data
         if (d.customer_name) setCustomerName(d.customer_name)
         if (d.unread_notifications_count !== undefined) setUnreadNotifications(d.unread_notifications_count)
-        if (d.services && Array.isArray(d.services) && d.services.length > 0) setServices(d.services)
+        if (d.services && Array.isArray(d.services) && d.services.length > 0) {
+          const sanitized = d.services.map((s: ServiceItem) => ({
+            ...s,
+            status: 'AVAILABLE',
+            route: s.route || (
+              s.code === 'rental' ? '/rental' :
+              s.code === 'corporate' ? '/corporate' :
+              s.code === 'moving' ? '/transport/create' :
+              s.code === 'transport' ? '/transport/create' :
+              s.code === 'airport' ? '/airport/book' :
+              s.code === 'hotel' ? '/book/properties' :
+              s.code === 'parcel' ? '/parcel-booking' : '/book/cab'
+            ),
+            badge: (
+              s.code === 'rental' ? 'Hourly' :
+              s.code === 'corporate' ? 'Biz' :
+              s.code === 'moving' ? 'Movers' :
+              s.code === 'transport' ? 'Cargo' :
+              s.code === 'airport' ? '24/7' :
+              s.code === 'hotel' ? 'Stays' :
+              s.code === 'parcel' ? 'Fast' : 'Hot'
+            ),
+          }))
+          setServices(sanitized)
+        }
         if (d.active_ride) setActiveRide(d.active_ride)
         else setActiveRide(null)
         if (d.upcoming_booking) setUpcomingBooking(d.upcoming_booking)
@@ -276,13 +439,15 @@ export default function HomeScreen() {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [user, coords])
+  }, [user])
 
   useFocusEffect(
     useCallback(() => {
-      resolveLocation()
       loadDashboardData()
-    }, [resolveLocation, loadDashboardData])
+      if (!hasResolvedInitialLocation.current) {
+        resolveLocation()
+      }
+    }, [loadDashboardData, resolveLocation])
   )
 
   const getGreeting = () => {
@@ -293,11 +458,20 @@ export default function HomeScreen() {
   }
 
   const handleServicePress = (service: ServiceItem) => {
-    if (service.status === 'COMING_SOON' || !service.route) {
-      setComingSoonModal(service)
-      return
+    const routeMap: Record<string, string> = {
+      ride: '/book/cab',
+      parcel: '/parcel-booking',
+      hotel: '/book/properties',
+      transport: '/transport/create',
+      airport: '/airport/book',
+      rental: '/rental',
+      corporate: '/corporate',
+      moving: '/transport/create',
     }
-    if (service.route === '/book/cab') {
+
+    const targetRoute = service.route || routeMap[service.code]
+
+    if (service.code === 'ride' || targetRoute === '/book/cab') {
       router.push({
         pathname: '/book/cab',
         params: {
@@ -308,7 +482,16 @@ export default function HomeScreen() {
       } as any)
       return
     }
-    router.push(service.route as any)
+
+    if (targetRoute) {
+      router.push(targetRoute as any)
+      return
+    }
+
+    if (service.status === 'COMING_SOON' || !service.route) {
+      setComingSoonModal(service)
+      return
+    }
   }
 
   const handleSavedPlacePress = (place: any) => {
@@ -336,7 +519,7 @@ export default function HomeScreen() {
               refreshing={refreshing}
               onRefresh={() => {
                 setRefreshing(true)
-                resolveLocation()
+                resolveLocation(true)
                 loadDashboardData()
               }}
               tintColor={theme.colors.primary}
@@ -654,71 +837,53 @@ export default function HomeScreen() {
             <View style={styles.servicesGrid}>
               {services.map((s) => {
                 const isAvail = s.status === 'AVAILABLE'
+                const badgeText = getBadgeText(s.code, s.badge, s.status)
+
                 return (
                   <TouchableOpacity
                     key={s.code}
                     style={[
                       styles.serviceTile,
                       {
+                        width: itemWidth,
                         backgroundColor: theme.colors.surface,
-                        borderColor: theme.colors.border,
+                        borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
                       },
                     ]}
-                    activeOpacity={0.8}
+                    activeOpacity={0.75}
                     onPress={() => handleServicePress(s)}
                   >
-                    {/* Badge */}
-                    {s.badge && (
+                    {/* Floating Micro Badge */}
+                    {badgeText && (
                       <View
                         style={[
                           styles.serviceBadge,
                           {
-                            backgroundColor: isAvail
-                              ? `${theme.colors.primary}20`
-                              : `${theme.colors.warning}22`,
+                            backgroundColor: isAvail ? theme.colors.primary : '#F59E0B',
                           },
                         ]}
                       >
-                        <AppText
-                          variant="caption"
-                          bold
-                          style={{
-                            color: isAvail ? theme.colors.primary : theme.colors.warning,
-                            fontSize: 10,
-                          }}
-                        >
-                          {s.badge}
+                        <AppText variant="caption" bold style={styles.serviceBadgeText}>
+                          {badgeText}
                         </AppText>
                       </View>
                     )}
 
-                    {/* Icon */}
-                    <View
+                    {/* Service Icon with Tinted Gradient Container */}
+                    {renderServiceIcon(s)}
+
+                    {/* Service Title (Clean 2-line wrap, 0 truncation) */}
+                    <AppText
+                      variant="caption"
+                      bold
+                      center
+                      numberOfLines={2}
                       style={[
-                        styles.serviceIconCircle,
-                        {
-                          backgroundColor: isAvail
-                            ? `${theme.colors.primary}15`
-                            : theme.colors.backgroundAlt,
-                        },
+                        styles.serviceTitle,
+                        { color: theme.colors.textPrimary },
                       ]}
                     >
-                      {s.icon === 'car-sport' && <Ionicons name="car-sport" size={28} color={theme.colors.primary} />}
-                      {s.icon === 'package'   && <Feather name="package" size={26} color={theme.colors.secondary} />}
-                      {s.icon === 'business'  && <Ionicons name="business" size={26} color={theme.colors.tertiary} />}
-                      {s.icon === 'bus'       && <Ionicons name="bus" size={26} color="#10B981" />}
-                      {s.icon === 'airplane'  && <Ionicons name="airplane" size={26} color="#06B6D4" />}
-                      {s.icon === 'key'       && <Ionicons name="key" size={24} color="#8B5CF6" />}
-                      {s.icon === 'briefcase' && <Ionicons name="briefcase" size={24} color="#6366F1" />}
-                      {s.icon === 'truck'     && <FontAwesome5 name="truck" size={22} color="#F59E0B" />}
-                    </View>
-
-                    {/* Title */}
-                    <AppText variant="bodyS" bold center numberOfLines={1} style={{ marginTop: 6 }}>
                       {s.title}
-                    </AppText>
-                    <AppText variant="caption" color="muted" center numberOfLines={1}>
-                      {s.description}
                     </AppText>
                   </TouchableOpacity>
                 )
@@ -1023,33 +1188,59 @@ const styles = StyleSheet.create({
   servicesGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    paddingHorizontal: 14,
-    gap: 10,
+    paddingHorizontal: 16,
+    rowGap: 10,
+    columnGap: 8,
+    justifyContent: 'flex-start',
   },
   serviceTile: {
-    width: (SCREEN_W - 48) / 4,
-    minHeight: 112,
     borderRadius: 18,
-    paddingVertical: 12,
-    paddingHorizontal: 4,
+    paddingTop: 12,
+    paddingBottom: 10,
+    paddingHorizontal: 3,
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     borderWidth: 1,
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 6,
+    elevation: 2,
+    minHeight: 106,
   },
   serviceBadge: {
     position: 'absolute',
-    top: 6,
-    right: 4,
-    borderRadius: 6,
+    top: -5,
+    right: -2,
+    borderRadius: 8,
     paddingHorizontal: 5,
-    paddingVertical: 1,
+    paddingVertical: 2,
+    zIndex: 2,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowOffset: { width: 0, height: 1 },
+    shadowRadius: 2,
+    elevation: 3,
+  },
+  serviceBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 8.5,
+    fontWeight: '900',
+    letterSpacing: 0.3,
   },
   serviceIconCircle: {
-    width: 50,
-    height: 50,
-    borderRadius: 16,
+    width: 48,
+    height: 48,
+    borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: 8,
+  },
+  serviceTitle: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    lineHeight: 14,
+    paddingHorizontal: 2,
   },
 
   journeyCard: {

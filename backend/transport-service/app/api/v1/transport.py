@@ -114,6 +114,18 @@ class VerifyPODRequest(BaseModel):
     longitude: float = 73.8567
 
 
+def get_user_id_str(user: Optional[Any], default: str = "00000000-0000-0000-0000-000000000001") -> str:
+    if not user:
+        return default
+    if hasattr(user, "id"):
+        return str(user.id)
+    if hasattr(user, "user_id"):
+        return str(user.user_id)
+    if isinstance(user, dict):
+        return str(user.get("id") or user.get("user_id") or user.get("sub") or default)
+    return str(user)
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/estimate", summary="Calculate authoritative transport estimate")
@@ -147,9 +159,9 @@ async def calculate_estimate(
 async def create_transport_order(
     req: CreateTransportOrderRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    current_user: Optional[Any] = Depends(get_current_user_optional),
 ):
-    user_id = current_user.get("id") if current_user else "00000000-0000-0000-0000-000000000001"
+    user_id = get_user_id_str(current_user, "00000000-0000-0000-0000-000000000001")
     service = TransportService(db)
     return await service.create_transport_order(
         customer_user_id=str(user_id),
@@ -199,9 +211,9 @@ async def get_transport_order(
 @router.get("/my-orders", summary="Get customer transport order history")
 async def get_my_transport_orders(
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    current_user: Optional[Any] = Depends(get_current_user_optional),
 ):
-    user_id = current_user.get("id") if current_user else "00000000-0000-0000-0000-000000000001"
+    user_id = get_user_id_str(current_user, "00000000-0000-0000-0000-000000000001")
     service = TransportService(db)
     return await service.get_customer_orders(str(user_id))
 
@@ -211,9 +223,9 @@ async def submit_quote(
     order_id: str,
     req: SubmitQuoteRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    current_user: Optional[Any] = Depends(get_current_user_optional),
 ):
-    user_id = current_user.get("id") if current_user else "00000000-0000-0000-0000-000000000002"
+    user_id = get_user_id_str(current_user, "00000000-0000-0000-0000-000000000002")
     service = TransportService(db)
     return await service.submit_transporter_quote(
         order_id=order_id,
@@ -241,9 +253,9 @@ async def send_counter_offer(
     quote_id: str,
     req: CounterOfferRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    current_user: Optional[Any] = Depends(get_current_user_optional),
 ):
-    user_id = current_user.get("id") if current_user else "00000000-0000-0000-0000-000000000001"
+    user_id = get_user_id_str(current_user, "00000000-0000-0000-0000-000000000001")
     service = TransportService(db)
     return await service.send_counter_offer(
         quote_id=quote_id,
@@ -259,9 +271,9 @@ async def select_quote(
     order_id: str,
     req: SelectQuoteRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    current_user: Optional[Any] = Depends(get_current_user_optional),
 ):
-    user_id = current_user.get("id") if current_user else "00000000-0000-0000-0000-000000000001"
+    user_id = get_user_id_str(current_user, "00000000-0000-0000-0000-000000000001")
     service = TransportService(db)
     return await service.select_quote(
         order_id=order_id,
@@ -276,13 +288,13 @@ async def update_transport_status(
     order_id: str,
     req: UpdateTransportStatusRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    current_user: Optional[Any] = Depends(get_current_user_optional),
 ):
-    user_id = current_user.get("id") if current_user else req.driver_user_id
+    user_id = get_user_id_str(current_user, req.driver_user_id or "00000000-0000-0000-0000-000000000002")
     service = TransportService(db)
     return await service.update_transport_status(
         order_id=order_id,
-        driver_user_id=str(user_id or "00000000-0000-0000-0000-000000000002"),
+        driver_user_id=str(user_id),
         next_status=req.next_status,
         notes=req.notes,
         latitude=req.latitude,

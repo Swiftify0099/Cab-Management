@@ -268,31 +268,32 @@ export default function TransportTrackingScreen() {
         {/* Driver & Commercial Truck Card */}
         {order?.driver && (
           <AppCard style={styles.driverCard}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <View style={styles.driverCardInner}>
               <View style={[styles.driverAvatar, { backgroundColor: theme.colors.primary }]}>
                 <MaterialCommunityIcons name="truck-delivery" size={24} color="#FFF" />
               </View>
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <AppText variant="subtitle" bold>
+              <View style={styles.driverInfoCol}>
+                <View style={styles.driverNameRow}>
+                  <AppText variant="subtitle" bold numberOfLines={1} style={styles.driverNameText}>
                     {order.driver.name}
                   </AppText>
                   <View style={styles.ratingBadge}>
                     <Ionicons name="star" size={11} color="#F59E0B" />
-                    <AppText variant="caption" bold style={{ marginLeft: 2, color: '#F59E0B' }}>
+                    <AppText variant="caption" bold style={{ marginLeft: 3, color: '#D97706' }}>
                       {order.driver.rating || 4.9}
                     </AppText>
                   </View>
                 </View>
-                <AppText variant="caption" color="secondary" style={{ marginTop: 2 }}>
+                <AppText variant="caption" color="secondary" numberOfLines={1} style={{ marginTop: 2 }}>
                   {order.vehicle?.make_model} • {order.vehicle?.registration_number}
                 </AppText>
               </View>
               <TouchableOpacity
-                style={[styles.callBtn, { backgroundColor: '#10B981' }]}
+                style={styles.callBtn}
+                activeOpacity={0.8}
                 onPress={handleCallDriver}
               >
-                <Feather name="phone" size={18} color="#FFF" />
+                <Ionicons name="call" size={18} color="#FFF" />
               </TouchableOpacity>
             </View>
           </AppCard>
@@ -412,28 +413,56 @@ const styles = StyleSheet.create({
   },
   stepContent: { flex: 1, marginLeft: 12, paddingTop: 2 },
   driverCard: { padding: 14, borderRadius: 14, marginBottom: 12 },
+  driverCardInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   driverAvatar: {
     width: 44,
     height: 44,
     borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
+    flexShrink: 0,
+  },
+  driverInfoCol: {
+    flex: 1,
+    marginLeft: 12,
+    marginRight: 8,
+    justifyContent: 'center',
+  },
+  driverNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'nowrap',
+  },
+  driverNameText: {
+    flexShrink: 1,
   },
   ratingBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FEF3C7',
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
     marginLeft: 6,
+    flexShrink: 0,
   },
   callBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#10B981',
     justifyContent: 'center',
     alignItems: 'center',
+    flexShrink: 0,
+    elevation: 2,
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.5,
   },
   cargoCard: { padding: 14, borderRadius: 14, marginBottom: 12 },
   infoRow: {

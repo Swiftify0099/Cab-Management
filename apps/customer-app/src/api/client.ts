@@ -4,7 +4,24 @@
 import axios from 'axios'
 import * as SecureStore from 'expo-secure-store'
 
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://cab-management-1.onrender.com/api/v1'
+export const PROD_BASE_URL = 'https://cab-management-1.onrender.com/api/v1'
+
+const resolveBaseUrl = () => {
+  const envUrl = process.env.EXPO_PUBLIC_API_URL?.trim()
+  if (!envUrl) return PROD_BASE_URL
+  if (
+    envUrl.includes('10.189.118.102') ||
+    envUrl.includes('172.31.') ||
+    envUrl.includes('172.18.') ||
+    envUrl.startsWith('http://localhost') ||
+    envUrl.startsWith('http://127.0.0.1')
+  ) {
+    return PROD_BASE_URL
+  }
+  return envUrl.replace(/\/+$/, '')
+}
+
+export const BASE_URL = resolveBaseUrl()
 
 export const api = axios.create({
   baseURL: BASE_URL,
@@ -27,18 +44,32 @@ api.interceptors.request.use(async (config) => {
   return config
 })
 
-// Response interceptor — token refresh on 401
+// Response interceptor — token refresh on 401 & failover on Network Error
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const original = error.config
+
+    // Failover retry to production backend if a local IP threw a Network Error
+    if (
+      (!error.response || error.message === 'Network Error' || error.code === 'ERR_NETWORK') &&
+      original &&
+      !original._cloudRetry &&
+      original.baseURL !== PROD_BASE_URL
+    ) {
+      original._cloudRetry = true
+      original.baseURL = PROD_BASE_URL
+      console.log('[API Client] Network failure on local URL, retrying via Cloud Backend:', PROD_BASE_URL)
+      return api(original)
+    }
+
     if (error.response?.status === 401 && !original._retry) {
       original._retry = true
       try {
         const refresh = await SecureStore.getItemAsync('refresh_token')
         if (!refresh) throw new Error('No refresh token')
 
-        const res = await axios.post(`${BASE_URL}/auth/token/refresh`, {
+        const res = await axios.post(`${PROD_BASE_URL}/auth/token/refresh`, {
           refresh_token: refresh,
         })
         const { access_token, refresh_token: newRefresh } = res.data.data

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Customer Home Summary & Service Catalog Service.
 Aggregates active rides, upcoming bookings, service catalog, and promotions for Customer App.
 """
@@ -88,10 +88,10 @@ SERVICE_CATALOG: List[ServiceCatalogItem] = [
         description="Hourly and daily self/chauffeur rentals",
         category="transport",
         icon="key",
-        status="COMING_SOON",
-        badge="Coming Soon",
+        status="AVAILABLE",
+        badge="Rentals",
         sort_order=6,
-        route=None,
+        route="/rental",
     ),
     ServiceCatalogItem(
         code="corporate",
@@ -99,10 +99,10 @@ SERVICE_CATALOG: List[ServiceCatalogItem] = [
         description="Business billing & team management",
         category="corporate",
         icon="briefcase",
-        status="COMING_SOON",
-        badge="Coming Soon",
+        status="AVAILABLE",
+        badge="Business",
         sort_order=7,
-        route=None,
+        route="/corporate",
     ),
     ServiceCatalogItem(
         code="moving",
@@ -110,10 +110,10 @@ SERVICE_CATALOG: List[ServiceCatalogItem] = [
         description="House & office relocation service",
         category="logistics",
         icon="truck",
-        status="COMING_SOON",
-        badge="Coming Soon",
+        status="AVAILABLE",
+        badge="Movers",
         sort_order=8,
-        route=None,
+        route="/transport/create",
     ),
 ]
 

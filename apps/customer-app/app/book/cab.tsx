@@ -89,11 +89,19 @@ export default function CabBookingScreen() {
     riderName?: string
     riderPhone?: string
     riderType?: string
+    isCorporate?: string
+    companyId?: string
+    companyName?: string
   }>()
 
   // ── Mode Switchers ──
   const [tripMode, setTripMode] = useState<'ONE_WAY' | 'ROUND_TRIP' | 'RENTAL'>('ONE_WAY')
   const [bookingType, setBookingType] = useState<'IMMEDIATE' | 'SCHEDULED'>('IMMEDIATE')
+
+  // ── Corporate Ride State ──
+  const [isCorporateRide, setIsCorporateRide] = useState<boolean>(params.isCorporate === 'true')
+  const [companyName, setCompanyName] = useState<string>(params.companyName || 'Corporate Billing')
+  const [companyId, setCompanyId] = useState<string>(params.companyId || '')
 
   // ── Pricing Mode & Negotiation (Feature 5) ──
   const [pricingMode, setPricingMode] = useState<'STANDARD' | 'NEGOTIATED'>('STANDARD')
@@ -148,7 +156,7 @@ export default function CabBookingScreen() {
 
   // ── Booking Participant Contract (Feature 1) ──
   const [riderType, setRiderType] = useState<'SELF' | 'FAMILY_MEMBER' | 'GUEST'>('SELF')
-  const [riderName, setRiderName] = useState<string>(user?.name || 'Pankaj Patil')
+  const [riderName, setRiderName] = useState<string>((user as any)?.name || 'Pankaj Patil')
   const [riderPhone, setRiderPhone] = useState<string>(user?.phone || '+919876543210')
   const [familyMembers, setFamilyMembers] = useState<any[]>([])
   const [participantModalVisible, setParticipantModalVisible] = useState<boolean>(false)
@@ -166,11 +174,31 @@ export default function CabBookingScreen() {
     if (params.dropLat && params.dropLng) {
       setDropCoord({ latitude: parseFloat(params.dropLat), longitude: parseFloat(params.dropLng) })
     }
-  }, [params.riderName, params.riderPhone, params.riderType, params.pickupAddress, params.dropAddress, params.pickupLat, params.pickupLng, params.dropLat, params.dropLng])
+    if (params.isCorporate === 'true') {
+      setIsCorporateRide(true)
+      if (params.companyName) setCompanyName(params.companyName)
+      if (params.companyId) setCompanyId(params.companyId)
+    }
+  }, [
+    params.riderName,
+    params.riderPhone,
+    params.riderType,
+    params.pickupAddress,
+    params.dropAddress,
+    params.pickupLat,
+    params.pickupLng,
+    params.dropLat,
+    params.dropLng,
+    params.isCorporate,
+    params.companyName,
+    params.companyId,
+  ])
 
   // ── Preferences & Payment ──
   const [seats, setSeats] = useState<number>(1)
-  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'WALLET' | 'UPI' | 'SHARED_FAMILY'>('CASH')
+  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'WALLET' | 'UPI' | 'SHARED_FAMILY' | 'CORPORATE'>(
+    params.isCorporate === 'true' ? 'CORPORATE' : 'CASH'
+  )
   const [bookingLoading, setBookingLoading] = useState<boolean>(false)
 
   // ── Feature 27: Smart Vehicle Sizing State ──
@@ -560,6 +588,26 @@ export default function CabBookingScreen() {
         </View>
 
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          {/* ── Corporate Billing Header Banner ── */}
+          {isCorporateRide && (
+            <View style={[styles.corporateBanner, { backgroundColor: `${theme.colors.primary}12`, borderColor: `${theme.colors.primary}40` }]}>
+              <View style={[styles.corporateIconBox, { backgroundColor: `${theme.colors.primary}20` }]}>
+                <Ionicons name="business" size={20} color={theme.colors.primary} />
+              </View>
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <AppText variant="bodyS" bold color="brand">
+                    Corporate Ride Pass Active
+                  </AppText>
+                  <AppBadge label="CORP BILLED" variant="success" size="sm" />
+                </View>
+                <AppText variant="caption" color="secondary" style={{ marginTop: 2 }}>
+                  Billed directly to {companyName} • Zero personal cost
+                </AppText>
+              </View>
+            </View>
+          )}
+
           {/* ── Immediate vs Scheduled Switcher (Feature 4) ── */}
           <View style={[styles.bookingTypeRow, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
             <TouchableOpacity
@@ -800,7 +848,7 @@ export default function CabBookingScreen() {
             <MapView
               ref={mapRef}
               style={styles.map}
-              provider={PROVIDER_GOOGLE}
+              provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
               initialRegion={{
                 latitude: (pickupCoord.latitude + dropCoord.latitude) / 2,
                 longitude: (pickupCoord.longitude + dropCoord.longitude) / 2,
@@ -1593,5 +1641,20 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     marginBottom: 10,
+  },
+  corporateBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    marginBottom: 14,
+  },
+  corporateIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 })

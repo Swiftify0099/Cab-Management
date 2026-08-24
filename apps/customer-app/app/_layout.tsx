@@ -1,5 +1,6 @@
 import { Slot, router } from 'expo-router'
 import { useEffect } from 'react'
+import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { useAuthStore } from '../src/store/auth.store'
 import { usePushNotifications } from '../src/hooks/usePushNotifications'
 import { ThemeProvider } from '../src/contexts/ThemeContext'
@@ -75,8 +76,10 @@ export default function RootLayout() {
   }, [])
 
   return (
-    <ThemeProvider>
-      <Slot />
-    </ThemeProvider>
+    <SafeAreaProvider>
+      <ThemeProvider>
+        <Slot />
+      </ThemeProvider>
+    </SafeAreaProvider>
   )
 }
