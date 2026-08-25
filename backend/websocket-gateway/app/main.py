@@ -388,6 +388,62 @@ async def sos_trigger(sid, data):
 
 
 @sio.event
+async def DRIVER_ONLINE(sid, data):
+    """Driver goes online - ensure entered in room and notify ready."""
+    client = _connected_clients.get(sid, {})
+    driver_id = data.get("driver_id") or client.get("user_id")
+    if driver_id:
+        room = f"driver:{driver_id}"
+        await sio.enter_room(sid, room)
+        logger.info("Driver online event received", driver_id=driver_id, room=room)
+        await sio.emit("DRIVER_SOCKET_READY", {"status": "ready", "driver_id": driver_id, "room": room}, to=sid)
+
+
+@sio.event
+async def DRIVER_OFFLINE(sid, data):
+    """Driver goes offline."""
+    client = _connected_clients.get(sid, {})
+    driver_id = data.get("driver_id") or client.get("user_id")
+    if driver_id:
+        await sio.leave_room(sid, f"driver:{driver_id}")
+        logger.info("Driver offline event received", driver_id=driver_id)
+
+
+@sio.event
+async def DRIVER_PING(sid, data):
+    """Lightweight 15s driver heartbeat and location update."""
+    client = _connected_clients.get(sid, {})
+    driver_id = client.get("user_id") or data.get("driver_id")
+    if driver_id:
+        lat = data.get("lat") or data.get("latitude")
+        lng = data.get("lng") or data.get("longitude")
+        if lat and lng:
+            try:
+                r = await get_redis()
+                await r.setex(
+                    f"driver:location:{driver_id}",
+                    35,
+                    json.dumps({"driver_id": driver_id, "latitude": lat, "longitude": lng}),
+                )
+            except Exception:
+                pass
+    await sio.emit("PONG", {"ts": data.get("t") or data.get("ts")}, to=sid)
+
+
+@sio.event
+async def BOOKING_RESPONSE(sid, data):
+    """Driver accepts or rejects booking."""
+    booking_id = data.get("booking_id")
+    driver_id = data.get("driver_id") or (_connected_clients.get(sid, {})).get("user_id")
+    accepted = data.get("accepted", False)
+    if booking_id and driver_id:
+        r = await get_redis()
+        response_key = f"dispatch:response:{booking_id}:{driver_id}"
+        await r.setex(response_key, 120, "accepted" if accepted else "rejected")
+        logger.info("Driver BOOKING_RESPONSE", driver_id=driver_id, booking_id=booking_id, accepted=accepted)
+
+
+@sio.event
 async def ride_request_respond(sid, data):
     """
     Driver accepts or rejects an on-demand RIDE_REQUEST_NEW offer.
@@ -413,12 +469,6 @@ async def ride_request_respond(sid, data):
     }, to=sid)
 
 
-# 
-# Mount as ASGI
-# 
-socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
-
-
 @app.get("/health")
 async def health():
     return {
@@ -426,3 +476,11 @@ async def health():
         "service": "websocket-gateway",
         "connected_clients": len(_connected_clients),
     }
+
+
+# ── Mount Socket.IO as ASGI app ──────────────────────────────────────────────
+socket_app = socketio.ASGIApp(sio, other_asgi_app=app, socketio_path="/socket.io")
+
+# Also mount on FastAPI app root so running `uvicorn app.main:app` handles /socket.io correctly
+app.mount("/socket.io", socketio.ASGIApp(sio))
+

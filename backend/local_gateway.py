@@ -750,7 +750,7 @@ try:
         except Exception as _e:
             print(f"[WS] LOCATION_UPDATE Redis publish error: {_e}")
 
-    # ── Heartbeat ───────────────────────────────────────────────────────
+    # ── Heartbeat & Driver Ping ─────────────────────────────────────────
     @sio.event
     async def heartbeat(sid, data):
         client = _sid_to_user.get(sid, {})
@@ -770,6 +770,26 @@ try:
             except Exception:
                 pass
         await sio.emit("HEARTBEAT_ACK", {"ts": data.get("ts")}, room=sid)
+
+    @sio.event
+    async def DRIVER_PING(sid, data):
+        client = _sid_to_user.get(sid, {})
+        driver_id = client.get("id") or client.get("user_id") or data.get("driver_id")
+        if driver_id and driver_id != "unknown":
+            try:
+                from common.utils.redis_client import get_redis
+                r = await get_redis()
+                lat = data.get("lat") or data.get("latitude")
+                lng = data.get("lng") or data.get("longitude")
+                if lat and lng:
+                    await r.setex(
+                        f"driver:location:{driver_id}",
+                        35,
+                        _json.dumps({"driver_id": driver_id, "latitude": lat, "longitude": lng}),
+                    )
+            except Exception:
+                pass
+        await sio.emit("PONG", {"ts": data.get("t") or data.get("ts")}, room=sid)
 
     # ── Customer GPS update -> corridor matching ────────────────────────
     @sio.event

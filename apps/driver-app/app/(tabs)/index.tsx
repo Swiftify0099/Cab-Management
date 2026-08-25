@@ -186,6 +186,29 @@ export default function DriverHomeScreen() {
     loadData()
   }, [loadData])
 
+  // Resilient 5s Polling Fallback for Pending Ride Offers when Online
+  useEffect(() => {
+    if (availabilityData.state !== 'ONLINE') return
+
+    const pollOffers = async () => {
+      try {
+        const pending = await RideRequestService.fetchPendingOffers()
+        if (Array.isArray(pending) && pending.length > 0) {
+          setIncomingRequest((prev: any) => {
+            if (!prev || prev.offer_id !== pending[0].offer_id) {
+              return pending[0]
+            }
+            return prev
+          })
+        }
+      } catch {}
+    }
+
+    pollOffers()
+    const interval = setInterval(pollOffers, 5000)
+    return () => clearInterval(interval)
+  }, [availabilityData.state, setIncomingRequest])
+
   const handleTurnOffDestination = async () => {
     try {
       await DestinationModeService.setDestinationMode({ turn_off: true })

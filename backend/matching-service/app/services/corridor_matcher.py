@@ -138,7 +138,8 @@ class CorridorMatchingService:
         linestring_wkt = _coords_to_linestring_wkt(coords)
         trip_uuid = uuid.UUID(trip_id)
 
-        # Upsert via raw SQL so we can use ST_Buffer in a single round-trip
+        # Upsert: delete any existing row for this trip_id first, then insert
+        await self.db.execute(text("DELETE FROM trip_route_geometry WHERE trip_id = :trip_id"), {"trip_id": str(trip_uuid)})
         await self.db.execute(text("""
             INSERT INTO trip_route_geometry
                 (id, trip_id, route_linestring, route_buffer,
@@ -157,13 +158,6 @@ class CorridorMatchingService:
                 :duration_minutes,
                 NOW(), NOW()
             )
-            ON CONFLICT (trip_id) DO UPDATE SET
-                route_linestring = EXCLUDED.route_linestring,
-                route_buffer     = EXCLUDED.route_buffer,
-                encoded_polyline = EXCLUDED.encoded_polyline,
-                distance_km      = EXCLUDED.distance_km,
-                duration_minutes = EXCLUDED.duration_minutes,
-                updated_at       = NOW()
         """), {
             "trip_id":          str(trip_uuid),
             "linestring_wkt":   linestring_wkt,
@@ -198,6 +192,7 @@ class CorridorMatchingService:
         pickup_wkt = _polygon_coords_to_wkt(pickup_polygon_coords)
         dest_wkt   = _polygon_coords_to_wkt(destination_polygon_coords)
 
+        await self.db.execute(text("DELETE FROM trip_polygons WHERE trip_id = :trip_id"), {"trip_id": str(trip_id)})
         await self.db.execute(text("""
             INSERT INTO trip_polygons
                 (id, trip_id, pickup_polygon, destination_polygon, created_at, updated_at)
@@ -208,10 +203,6 @@ class CorridorMatchingService:
                 ST_GeomFromText(:dest_wkt, 4326),
                 NOW(), NOW()
             )
-            ON CONFLICT (trip_id) DO UPDATE SET
-                pickup_polygon      = EXCLUDED.pickup_polygon,
-                destination_polygon = EXCLUDED.destination_polygon,
-                updated_at          = NOW()
         """), {
             "trip_id":     trip_id,
             "pickup_wkt":  pickup_wkt,
@@ -537,7 +528,8 @@ class CorridorMatchingService:
         """
         customer_uuid = uuid.UUID(customer_id)
 
-        # Upsert customer location
+        # Upsert customer location: delete any existing row first, then insert
+        await self.db.execute(text("DELETE FROM customer_locations WHERE customer_id = :customer_id"), {"customer_id": str(customer_uuid)})
         await self.db.execute(text("""
             INSERT INTO customer_locations
                 (id, customer_id, location, lat, lng, created_at, updated_at)
@@ -547,11 +539,6 @@ class CorridorMatchingService:
                 ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography,
                 :lat, :lng, NOW(), NOW()
             )
-            ON CONFLICT (customer_id) DO UPDATE SET
-                location   = EXCLUDED.location,
-                lat        = EXCLUDED.lat,
-                lng        = EXCLUDED.lng,
-                updated_at = NOW()
         """), {"customer_id": str(customer_uuid), "lat": lat, "lng": lng})
         await self.db.commit()
 

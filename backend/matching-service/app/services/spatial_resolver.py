@@ -234,8 +234,12 @@ class SpatialResolverService:
             LEFT JOIN driver_city_coverage dcc ON dcc.driver_id = d.id AND dcc.is_active = TRUE
             LEFT JOIN driver_hex_coverage dhc ON dhc.driver_id = d.id AND dhc.is_active = TRUE
             WHERE
-                d.status::text IN ('ONLINE', 'online')
-                AND d.kyc_status::text IN ('APPROVED', 'approved')
+                (d.status::text IN ('ONLINE', 'online') OR d.is_online = TRUE)
+                AND (
+                    d.kyc_status::text IN ('APPROVED', 'approved', 'VERIFIED', 'verified', 'pending', 'PENDING')
+                    OR d.is_verified = TRUE
+                    OR d.is_active = TRUE
+                )
                 AND d.current_location IS NOT NULL
                 -- Physical proximity filter (authoritative PostGIS ST_DWithin)
                 AND ST_DWithin(
@@ -270,11 +274,13 @@ class SpatialResolverService:
                     WHERE ro.ride_request_id = CAST(:ride_request_id AS uuid)
                       AND ro.status::text IN ('pending', 'PENDING', 'accepted', 'ACCEPTED')
                 )
-                -- Exclude drivers currently occupied on an active ride
+                -- Exclude drivers currently occupied on a fresh active non-expired ride
                 AND d.id NOT IN (
                     SELECT rr.assigned_driver_id FROM ride_requests rr
                     WHERE rr.assigned_driver_id IS NOT NULL
                       AND rr.status::text IN ('assigned', 'ASSIGNED', 'pickup', 'PICKUP', 'in_progress', 'IN_PROGRESS')
+                      AND (rr.expires_at IS NULL OR rr.expires_at > NOW())
+                      AND rr.created_at > (NOW() - INTERVAL '4 hours')
                 )
                 {excluded_clause}
             ORDER BY distance_km ASC

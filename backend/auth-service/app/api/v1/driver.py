@@ -598,12 +598,40 @@ async def update_driver_status(
 
     if data.lat is not None and data.lng is not None:
         try:
-            from geoalchemy2.elements import WKTElement
-            driver.current_location = WKTElement(f"POINT({data.lng} {data.lat})", srid=4326)
-        except Exception:
-            pass
+            from sqlalchemy import text as _sql_text
+            await db.execute(
+                _sql_text("UPDATE drivers SET current_location = ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography WHERE id = :id"),
+                {"lng": float(data.lng), "lat": float(data.lat), "id": driver.id}
+            )
+        except Exception as _loc_err:
+            logger.warning("Error updating driver geography location", error=str(_loc_err))
 
     await db.commit()
+
+    # Also update Redis online pool
+    try:
+        from common.utils.redis_client import set_driver_online, set_driver_offline
+        if is_online_requested:
+            await set_driver_online(str(driver.id), {
+                "driver_id": str(driver.id),
+                "user_id": str(current_user.id),
+                "latitude": data.lat,
+                "longitude": data.lng,
+                "status": "online",
+            })
+            if str(current_user.id) != str(driver.id):
+                await set_driver_online(str(current_user.id), {
+                    "driver_id": str(driver.id),
+                    "user_id": str(current_user.id),
+                    "latitude": data.lat,
+                    "longitude": data.lng,
+                    "status": "online",
+                })
+        else:
+            await set_driver_offline(str(driver.id))
+            await set_driver_offline(str(current_user.id))
+    except Exception:
+        pass
 
     return APIResponse(
         message=f"Driver is now {'online' if is_online_requested else 'offline'}",
