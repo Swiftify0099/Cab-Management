@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Customer App — Home / Service Discovery Dashboard
  * Route: /(tabs)/
  * Feature 2: Multi-Service Platform & Location Discovery.
@@ -110,13 +110,14 @@ interface PromoItem {
 const DEFAULT_SERVICES: ServiceItem[] = [
   { code: 'ride',      title: 'Intercity Cab',   description: 'One-way & Round-trip', category: 'transport',   icon: 'car-sport', status: 'AVAILABLE', badge: 'Popular',     sort_order: 1, route: '/book/cab' },
   { code: 'parcel',    title: 'Send Parcel',     description: 'Same-day delivery',    category: 'logistics',   icon: 'package',   status: 'AVAILABLE', badge: 'Instant',     sort_order: 2, route: '/parcel-booking' },
-  { code: 'hotel',     title: 'Book Hotel',      description: 'Verified Stays',       category: 'hospitality', icon: 'business',  status: 'AVAILABLE', badge: 'Hotels',      sort_order: 3, route: '/book/properties' },
+  { code: 'hotel',     title: 'Book Hotel',      description: 'Verified Stays',       category: 'hospitality', icon: 'business',  status: 'AVAILABLE', badge: 'Hotels',      sort_order: 3, route: '/hotel/search' },
   { code: 'transport', title: 'Goods Transport', description: 'Commercial Freight',   category: 'logistics',   icon: 'truck',     status: 'AVAILABLE', badge: 'Freight',      sort_order: 4, route: '/transport/create' },
   { code: 'airport',   title: 'Airport Transfer',description: 'Flight-Aware & Pickup',category: 'transport',   icon: 'airplane',  status: 'AVAILABLE', badge: 'Flight Sync', sort_order: 5, route: '/airport/book' },
   { code: 'rental',    title: 'Car Rental',      description: 'Hourly / Daily packs', category: 'transport',   icon: 'key',       status: 'AVAILABLE', badge: 'Hourly',      sort_order: 6, route: '/rental' },
   { code: 'corporate', title: 'Corporate Rides', description: 'Business accounts',    category: 'corporate',   icon: 'briefcase', status: 'AVAILABLE', badge: 'Business',    sort_order: 7, route: '/corporate' },
   { code: 'moving',    title: 'Movers & Shift',  description: 'Trucks & Helpers',     category: 'logistics',   icon: 'truck',     status: 'AVAILABLE', badge: 'Packers',     sort_order: 8, route: '/packers' },
   { code: 'outstation',title: 'Outstation Cab',  description: 'Intercity & Return',   category: 'transport',   icon: 'road',      status: 'AVAILABLE', badge: 'Intercity',   sort_order: 9, route: '/outstation' },
+  { code: 'carpool',   title: 'Intercity Carpool', description: 'Share rides & Save CO2', category: 'transport', icon: 'people', status: 'AVAILABLE', badge: 'Eco Share', sort_order: 10, route: '/carpool' },
 ]
 
 export default function HomeScreen() {

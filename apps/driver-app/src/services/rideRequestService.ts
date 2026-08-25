@@ -74,11 +74,39 @@ class RideRequestServiceClass {
   }
 
   /**
+   * Fetch all active pending offers for authenticated driver (Pending Request Recovery)
+   */
+  public async fetchPendingOffers(): Promise<any[]> {
+    try {
+      let res: any
+      try {
+        res = await api.get('/matching/rides/pending')
+      } catch {
+        try {
+          res = await api.get('/rides/pending')
+        } catch {
+          res = await api.get('/driver/ride-requests/pending')
+        }
+      }
+      const list = res.data?.data || []
+      return Array.isArray(list) ? list : []
+    } catch (err) {
+      console.warn('[RideRequestService] fetchPendingOffers error:', err)
+      return []
+    }
+  }
+
+  /**
    * Fetch active assigned ride or pending offer on app reconnect
    */
   public async getActiveRide(): Promise<any> {
     try {
-      const res = await api.get('/matching/rides/active')
+      let res: any
+      try {
+        res = await api.get('/matching/rides/active')
+      } catch {
+        res = await api.get('/rides/active')
+      }
       return res.data?.data || null
     } catch (err) {
       console.warn('[RideRequestService] getActiveRide error:', err)
@@ -91,7 +119,12 @@ class RideRequestServiceClass {
    */
   public async getRideCategories(): Promise<RideCategoryModel[]> {
     try {
-      const res = await api.get('/matching/rides/categories')
+      let res: any
+      try {
+        res = await api.get('/matching/rides/categories')
+      } catch {
+        res = await api.get('/rides/categories')
+      }
       return res.data?.data || []
     } catch (err) {
       console.warn('[RideRequestService] getRideCategories error:', err)

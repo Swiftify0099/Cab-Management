@@ -746,6 +746,11 @@ async def create_ride_request_endpoint(
     response_model=SuccessResponse,
     summary="Driver: Accept or reject a ride offer",
 )
+@router.post(
+    "/matching/rides/respond",
+    response_model=SuccessResponse,
+    summary="Driver: Accept or reject a ride offer (alias)",
+)
 async def respond_to_ride_offer_endpoint(
     request: RideOfferResponseSchema,
     db: AsyncSession = Depends(get_db),
@@ -770,6 +775,90 @@ async def respond_to_ride_offer_endpoint(
         )
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
+
+
+@router.get(
+    "/rides/pending",
+    response_model=SuccessResponse,
+    summary="Driver: Get all active pending ride offers (Pending Request Recovery)",
+)
+@router.get(
+    "/matching/rides/pending",
+    response_model=SuccessResponse,
+    summary="Driver: Get all active pending ride offers (alias)",
+)
+@router.get(
+    "/driver/ride-requests/pending",
+    response_model=SuccessResponse,
+    summary="Driver: Get all active pending ride offers (spec alias)",
+)
+async def get_pending_ride_offers_endpoint(
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    """
+    Pending Request Recovery Endpoint:
+    Returns currently valid, unexpired offers for the authenticated driver.
+    Used on app launch, reconnect, or push notification tap.
+    """
+    service = RideDispatchService(db)
+    offers = await service.get_pending_offers_for_driver(current_user.user_id_str)
+    return SuccessResponse(
+        success=True,
+        message=f"Found {len(offers)} pending offers",
+        data=offers,
+    )
+
+
+@router.get(
+    "/rides/active",
+    response_model=SuccessResponse,
+    summary="Driver: Get current active assigned ride or pending offer",
+)
+@router.get(
+    "/matching/rides/active",
+    response_model=SuccessResponse,
+    summary="Driver: Get current active assigned ride or pending offer (alias)",
+)
+async def get_active_ride_endpoint(
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    """
+    Returns the driver's current assigned active ride or active offer.
+    """
+    service = RideDispatchService(db)
+    active_ride = await service.get_active_ride_for_driver(current_user.user_id_str)
+    return SuccessResponse(
+        success=True,
+        message="Active ride fetched" if active_ride else "No active ride",
+        data=active_ride,
+    )
+
+
+@router.get(
+    "/rides/categories",
+    response_model=SuccessResponse,
+    summary="Get active ride categories and fares",
+)
+@router.get(
+    "/matching/rides/categories",
+    response_model=SuccessResponse,
+    summary="Get active ride categories and fares (alias)",
+)
+async def get_ride_categories_endpoint(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Returns list of active ride categories with base fares and rates.
+    """
+    service = RideDispatchService(db)
+    cats = await service.get_categories()
+    return SuccessResponse(
+        success=True,
+        message="Categories fetched",
+        data=cats,
+    )
 
 
 class UpdateDriverCoverageSchema(BaseModel):

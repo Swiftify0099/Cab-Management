@@ -644,3 +644,100 @@ class AirportService:
             "cancelled_reason": reason,
             "message": "Booking cancelled successfully. 100% refund credited to your wallet.",
         }
+
+    @staticmethod
+    async def start_trip(
+        db: AsyncSession,
+        booking_id: uuid.UUID,
+        driver_id: uuid.UUID,
+    ) -> Dict[str, Any]:
+        """Driver meets passenger at airport terminal and starts transfer trip."""
+        booking_res = await db.execute(select(AirportBooking).where(AirportBooking.id == booking_id))
+        booking = booking_res.scalar_one_or_none()
+        if not booking:
+            raise HTTPException(status_code=404, detail="Airport booking not found")
+
+        booking.status = AirportBookingStatus.IN_PROGRESS
+        # Close waiting log if active
+        waiting_log_res = await db.execute(
+            select(AirportWaitingLog).where(
+                and_(
+                    AirportWaitingLog.booking_id == booking.id,
+                    AirportWaitingLog.is_active == True,
+                )
+            )
+        )
+        waiting_log = waiting_log_res.scalar_one_or_none()
+        if waiting_log:
+            now_utc = datetime.now(timezone.utc)
+            waiting_log.waiting_ended_at = now_utc
+            waiting_log.is_active = False
+            total_mins = int((now_utc - waiting_log.driver_arrived_at).total_seconds() / 60)
+            waiting_log.total_waiting_mins = max(0, total_mins)
+
+        await db.commit()
+        await db.refresh(booking)
+        return {
+            "success": True,
+            "booking_reference": booking.booking_reference,
+            "status": booking.status.value,
+        }
+
+    @staticmethod
+    async def complete_trip(
+        db: AsyncSession,
+        booking_id: uuid.UUID,
+        driver_id: uuid.UUID,
+    ) -> Dict[str, Any]:
+        """Passenger dropped at destination; driver earnings settled."""
+        booking_res = await db.execute(select(AirportBooking).where(AirportBooking.id == booking_id))
+        booking = booking_res.scalar_one_or_none()
+        if not booking:
+            raise HTTPException(status_code=404, detail="Airport booking not found")
+
+        booking.status = AirportBookingStatus.COMPLETED
+        driver_earning = Decimal(str(round(booking.total_fare * 0.80, 2)))
+        platform_comm = Decimal(str(round(booking.total_fare * 0.20, 2)))
+
+        # Credit driver wallet
+        d_res = await db.execute(select(Driver).where(Driver.id == driver_id))
+        driver = d_res.scalar_one_or_none()
+        if driver:
+            driver.wallet_balance = (driver.wallet_balance or Decimal("0.00")) + driver_earning
+            driver.total_earnings = (driver.total_earnings or Decimal("0.00")) + driver_earning
+            driver.total_trips = (driver.total_trips or 0) + 1
+
+            try:
+                from common.models.all_models import DriverEarningLedger
+                from datetime import date
+                ledger_entry = DriverEarningLedger(
+                    id=uuid.uuid4(),
+                    driver_id=driver.id,
+                    entry_type="AIRPORT_EARNING",
+                    amount=driver_earning,
+                    currency="INR",
+                    direction="CREDIT",
+                    status="SETTLED",
+                    description=f"Earnings for Airport Transfer #{booking.booking_reference}",
+                    effective_date=date.today(),
+                    metadata_json={
+                        "booking_id": str(booking.id),
+                        "booking_reference": booking.booking_reference,
+                        "flight_number": booking.flight_number,
+                        "total_fare": float(booking.total_fare),
+                        "driver_earning": float(driver_earning),
+                        "platform_commission": float(platform_comm),
+                    },
+                )
+                db.add(ledger_entry)
+            except Exception as ex:
+                logger.warning("DriverEarningLedger creation note", error=str(ex))
+
+        await db.commit()
+        await db.refresh(booking)
+        return {
+            "success": True,
+            "booking_reference": booking.booking_reference,
+            "status": booking.status.value,
+            "driver_earning": float(driver_earning),
+        }

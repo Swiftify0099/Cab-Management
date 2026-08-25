@@ -203,6 +203,8 @@ class ParcelService:
             "effective_weight_kg": effective_weight_kg,
             "vehicle_category": v_cat,
             "delivery_priority": delivery_priority.upper(),
+            "is_fragile": is_fragile,
+            "is_valuable": is_valuable,
             "base_fare": float(base_fare),
             "distance_fare": float(distance_fare),
             "weight_fare": float(weight_fare),
@@ -732,7 +734,7 @@ class ParcelService:
         )
         self.db.add(history)
 
-        # 3. Credit Driver Earnings in Driver Profile
+        # 3. Credit Driver Earnings in Driver Profile & Financial Ledger
         if parcel.driver_id:
             d_res = await self.db.execute(select(Driver).where(Driver.id == parcel.driver_id))
             driver = d_res.scalar_one_or_none()
@@ -740,6 +742,31 @@ class ParcelService:
                 driver.total_earnings = (driver.total_earnings or Decimal("0.00")) + parcel.driver_earning
                 driver.wallet_balance = (driver.wallet_balance or Decimal("0.00")) + parcel.driver_earning
                 driver.total_trips = (driver.total_trips or 0) + 1
+
+                try:
+                    from common.models.all_models import DriverEarningLedger
+                    from datetime import date
+                    ledger_entry = DriverEarningLedger(
+                        id=uuid.uuid4(),
+                        driver_id=driver.id,
+                        entry_type="PARCEL_EARNING",
+                        amount=parcel.driver_earning,
+                        currency="INR",
+                        direction="CREDIT",
+                        status="SETTLED",
+                        description=f"Earnings for Parcel #{parcel.tracking_number} ({parcel.weight_kg}kg)",
+                        effective_date=date.today(),
+                        metadata_json={
+                            "parcel_id": str(parcel.id),
+                            "tracking_number": parcel.tracking_number,
+                            "weight_kg": parcel.weight_kg,
+                            "fare": float(parcel.fare),
+                            "commission": float(parcel.platform_commission),
+                        },
+                    )
+                    self.db.add(ledger_entry)
+                except Exception as ex:
+                    logger.warning("DriverEarningLedger creation note", error=str(ex))
 
         await self.db.commit()
 

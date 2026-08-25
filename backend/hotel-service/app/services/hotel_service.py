@@ -928,3 +928,78 @@ class HotelService:
             "status": "CREATED",
             "flight_number": flight_number,
         }
+
+    # ─────────────────────────────────────────────────────────────────
+    # 10. HOTEL PARTNER ROSTER & GUEST CHECK-IN / CHECK-OUT
+    # ─────────────────────────────────────────────────────────────────
+    async def get_hotel_roster(self, property_id: str, date_filter: Optional[date] = None) -> List[Dict[str, Any]]:
+        """Fetch daily guest check-in / check-out roster for Hotel Front Desk Partner."""
+        p_uuid = uuid.UUID(property_id) if isinstance(property_id, str) else property_id
+        target_date = date_filter or date.today()
+
+        stmt = select(PropertyBooking).where(
+            and_(
+                PropertyBooking.property_id == p_uuid,
+                or_(
+                    PropertyBooking.check_in == target_date,
+                    PropertyBooking.check_out == target_date,
+                    and_(PropertyBooking.check_in <= target_date, PropertyBooking.check_out >= target_date),
+                ),
+            )
+        ).order_by(PropertyBooking.check_in)
+
+        res = await self.db.execute(stmt)
+        bookings = res.scalars().all()
+
+        roster = []
+        for b in bookings:
+            unit = await self.db.get(PropertyUnit, b.unit_id)
+            roster.append({
+                "booking_id": str(b.id),
+                "booking_reference": b.booking_reference,
+                "guest_name": b.primary_guest_name,
+                "guest_phone": b.primary_guest_phone,
+                "room_name": unit.name if unit else "Standard Suite",
+                "check_in": b.check_in.isoformat(),
+                "check_out": b.check_out.isoformat(),
+                "status": b.status.value if hasattr(b.status, "value") else str(b.status),
+                "total_fare": float(b.total_fare),
+                "payment_status": b.payment_status,
+            })
+        return roster
+
+    async def check_in_guest(self, booking_id: str) -> Dict[str, Any]:
+        """Hotel front desk marks guest check-in."""
+        b_uuid = uuid.UUID(booking_id) if isinstance(booking_id, str) else booking_id
+        booking = await self.db.get(PropertyBooking, b_uuid)
+        if not booking:
+            raise HTTPException(status_code=404, detail="Hotel booking not found")
+
+        booking.status = BookingStatus.STARTED
+        await self.db.commit()
+        await self.db.refresh(booking)
+
+        return {
+            "booking_reference": booking.booking_reference,
+            "status": "STARTED",
+            "message": "Guest checked in successfully",
+        }
+
+    async def check_out_guest(self, booking_id: str) -> Dict[str, Any]:
+        """Hotel front desk marks guest check-out and settles property vendor earnings."""
+        b_uuid = uuid.UUID(booking_id) if isinstance(booking_id, str) else booking_id
+        booking = await self.db.get(PropertyBooking, b_uuid)
+        if not booking:
+            raise HTTPException(status_code=404, detail="Hotel booking not found")
+
+        booking.status = BookingStatus.COMPLETED
+        await self.db.commit()
+        await self.db.refresh(booking)
+
+        return {
+            "booking_reference": booking.booking_reference,
+            "status": "COMPLETED",
+            "total_settled_fare": float(booking.total_fare),
+            "message": "Guest checked out successfully",
+        }
+

@@ -229,7 +229,26 @@ class SmartRadarService:
                 )
             )
             existing_offer = offer_res.scalar_one_or_none()
-            offer_id_str = str(existing_offer.id) if existing_offer else f"off-{req.id}-{driver.id}"
+            if not existing_offer:
+                existing_offer = RideOffer(
+                    ride_request_id=req.id,
+                    driver_id=driver.id,
+                    status=RideOfferStatus.PENDING,
+                    pickup_distance_km=pickup_dist,
+                    pickup_eta_min=pickup_eta,
+                    estimated_fare=Decimal(str(round(total_fare, 2))),
+                    platform_commission=Decimal(str(round(total_fare * 0.20, 2))),
+                    estimated_earning=Decimal(str(round(earning, 2))),
+                    offered_at=now,
+                    expires_at=now + timedelta(seconds=180),
+                    available_seats=4,
+                    available_seat_labels=["Front Window", "Rear Left", "Rear Right", "Rear Middle"],
+                )
+                self.db.add(existing_offer)
+                await self.db.commit()
+                await self.db.refresh(existing_offer)
+
+            offer_id_str = str(existing_offer.id)
 
             scored = SmartScoringEngine.score_ride(
                 ride_id=str(req.id),
@@ -259,8 +278,10 @@ class SmartRadarService:
             scored_dict = scored.to_dict()
             scored_dict["offer_id"] = offer_id_str
             scored_dict["ride_request_id"] = str(req.id)
+            scored_dict["service_type"] = getattr(req, "service_type", "cab") or "cab"
+            scored_dict["pricing_mode"] = getattr(req, "pricing_mode", "STANDARD") or "STANDARD"
             scored_dict["created_at"] = req.created_at.isoformat() if req.created_at else None
-            scored_dict["age_seconds"] = int((now - req.created_at).total_seconds()) if req.created_at else 0
+            scored_dict["age_seconds"] = int((now - req.created_at.replace(tzinfo=None) if req.created_at.tzinfo else now - req.created_at).total_seconds()) if req.created_at else 0
 
             # Filter by Trip Types preference
             if scored.classification.trip_type == "AIRPORT" and not pref.allow_airport:

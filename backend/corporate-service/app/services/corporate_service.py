@@ -402,8 +402,11 @@ class CorporateService:
         self.db.add(approval)
         await self.db.flush()
 
-        # Create approval steps (one per approver)
-        for i, approver in enumerate(approvers[:2], 1):  # max 2-step approval
+        # Sort so designated APPROVER is prioritized
+        approvers.sort(key=lambda a: 0 if a.role == CorporateRole.APPROVER else 1)
+
+        # Create approval step for primary approver
+        for i, approver in enumerate(approvers[:1], 1):
             step = ApprovalStep(
                 id=uuid.uuid4(),
                 approval_request_id=approval.id,

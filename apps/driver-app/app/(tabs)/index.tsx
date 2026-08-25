@@ -120,7 +120,7 @@ export default function DriverHomeScreen() {
   const loadData = useCallback(async () => {
     try {
       setLoading(true)
-      const [tripsRes, statsRes, vehList, destRes, aiRes, radarCntRes, covRes] = await Promise.allSettled([
+      const [tripsRes, statsRes, vehList, destRes, aiRes, radarCntRes, covRes, pendingOffers] = await Promise.allSettled([
         api.get('/trips/my-trips'),
         api.get('/driver/stats'),
         VehicleService.getVehicles(),
@@ -128,7 +128,12 @@ export default function DriverHomeScreen() {
         AISmartDriverService.getDriverAIInsights(),
         CoverageService.getRadarCount(),
         CoverageService.getDriverCoverage(),
+        RideRequestService.fetchPendingOffers(),
       ])
+
+      if (pendingOffers.status === 'fulfilled' && Array.isArray(pendingOffers.value) && pendingOffers.value.length > 0) {
+        setIncomingRequest(pendingOffers.value[0])
+      }
 
       if (tripsRes.status === 'fulfilled') {
         setTrips(tripsRes.value.data?.data || [])

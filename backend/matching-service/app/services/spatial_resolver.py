@@ -160,6 +160,10 @@ class SpatialResolverService:
     # 2. FIND ELIGIBLE DRIVERS FOR REQUEST (Core fanout query)
     # ─────────────────────────────────────────────────────────────────────────
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # 2. FIND ELIGIBLE DRIVERS FOR REQUEST (Core 3-Mode Candidate Provider)
+    # ─────────────────────────────────────────────────────────────────────────
+
     async def find_eligible_drivers_for_request(
         self,
         pickup_lat: float,
@@ -169,24 +173,15 @@ class SpatialResolverService:
         ride_request_id: uuid.UUID,
         max_pickup_radius_km: float = 15.0,
         excluded_driver_ids: Optional[List[str]] = None,
+        discovery_mode: str = "ALL",  # ALL, NEARBY, CITY, HEX
     ) -> List[dict]:
         """
-        Find all online, eligible drivers whose coverage preference matches
-        the request's spatial classification AND who are within physical
-        pickup proximity.
+        Common Dispatch Candidate Engine supporting 3 matching modes:
+          1. NEARBY: Physical spatial distance (PostGIS ST_DWithin) + location freshness + active status
+          2. CITY COVERAGE: Driver selected specific city coverage matching pickup_city_id (or all_city)
+          3. HEX / ZONE COVERAGE: Driver selected H3 hex coverage matching pickup_hex_id
 
-        Coverage logic:
-          - ALL_CITY: Driver has pickup_city_id in their city coverage
-          - SPECIFIC_CITY: Driver has pickup_city_id in selected cities
-          - SPECIFIC_HEX: Driver has pickup_hex_id in selected hexes
-
-        Physical filter:
-          - Driver's current_location within max_pickup_radius_km of pickup
-
-        Exclusions:
-          - Already rejected this request
-          - Already has an active offer for this request
-          - Offline / KYC not approved / has conflicting active ride
+        All candidates go through the unified eligibility, ranking, and fanout pipeline.
         """
         excluded = excluded_driver_ids or []
         excluded_clause = ""
@@ -197,24 +192,43 @@ class SpatialResolverService:
         city_id_str = str(pickup_city_id) if pickup_city_id else None
         hex_id_str = str(pickup_hex_id) if pickup_hex_id else None
 
+        # Mode filter condition
+        mode_upper = (discovery_mode or "ALL").upper()
+        mode_condition = ""
+        if mode_upper == "NEARBY":
+            mode_condition = "AND (COALESCE(dp.visibility_mode, 'all_city') = 'all_city' OR dp.visibility_mode IS NULL)"
+        elif mode_upper == "CITY":
+            mode_condition = f"AND (dp.visibility_mode = 'specific_city' AND dcc.city_id = CAST('{city_id_str}' AS uuid) AND dcc.is_selected = TRUE)" if city_id_str else "AND FALSE"
+        elif mode_upper == "HEX":
+            mode_condition = f"AND (dp.visibility_mode = 'specific_hex' AND dhc.hex_id = CAST('{hex_id_str}' AS uuid))" if hex_id_str else "AND FALSE"
+
         sql = text(f"""
             SELECT DISTINCT
                 d.id AS driver_id,
                 d.user_id AS user_id,
                 d.full_name,
+                d.phone,
                 d.rating,
+                u.device_token,
                 COALESCE(dp.visibility_mode, 'all_city') AS visibility_mode,
                 v.id AS vehicle_id,
                 COALESCE(v.make, 'Standard') AS make,
                 COALESCE(v.model, 'Cab') AS model,
+                COALESCE(v.color, 'White') AS color,
                 COALESCE(v.registration_number, 'MH-12-REG') AS registration_number,
                 COALESCE(v.vehicle_type::text, 'SEDAN') AS vehicle_type,
                 COALESCE(v.seat_capacity, 4) AS seat_capacity,
                 ST_Distance(
                     d.current_location,
                     ST_SetSRID(ST_MakePoint(:pickup_lng, :pickup_lat), 4326)::geography
-                ) / 1000.0 AS distance_km
+                ) / 1000.0 AS distance_km,
+                CASE
+                    WHEN dp.visibility_mode = 'specific_hex' AND dhc.hex_id = CAST(:hex_id AS uuid) THEN 'HEX_COVERAGE'
+                    WHEN dp.visibility_mode = 'specific_city' AND dcc.city_id = CAST(:city_id AS uuid) AND dcc.is_selected = TRUE THEN 'CITY_COVERAGE'
+                    ELSE 'NEARBY'
+                END AS match_mode
             FROM drivers d
+            JOIN users u ON u.id = d.user_id
             LEFT JOIN driver_preferences dp ON dp.driver_id = d.id
             LEFT JOIN vehicles v ON v.driver_id = d.id
             LEFT JOIN driver_city_coverage dcc ON dcc.driver_id = d.id AND dcc.is_active = TRUE
@@ -223,39 +237,40 @@ class SpatialResolverService:
                 d.status::text IN ('ONLINE', 'online')
                 AND d.kyc_status::text IN ('APPROVED', 'approved')
                 AND d.current_location IS NOT NULL
-                -- Physical proximity filter
+                -- Physical proximity filter (authoritative PostGIS ST_DWithin)
                 AND ST_DWithin(
                     d.current_location,
                     ST_SetSRID(ST_MakePoint(:pickup_lng, :pickup_lat), 4326)::geography,
                     :max_radius_m
                 )
-                -- Coverage preference filter
+                -- 3-Mode Coverage Preference Filter
                 AND (
-                    -- ALL_CITY: driver accepts requests anywhere within physical proximity
+                    -- Mode 1: ALL_CITY / NEARBY - driver accepts requests anywhere within physical proximity
                     (COALESCE(dp.visibility_mode, 'all_city') = 'all_city')
                     OR
-                    -- SPECIFIC_CITY: driver explicitly selected this city
+                    -- Mode 2: SPECIFIC_CITY - driver explicitly covers this city
                     (dp.visibility_mode = 'specific_city' AND dcc.city_id = CAST(:city_id AS uuid) AND dcc.is_selected = TRUE)
                     OR
-                    -- SPECIFIC_HEX: driver selected hex that contains pickup
+                    -- Mode 3: SPECIFIC_HEX - driver explicitly monitors this H3 hex cell
                     (dp.visibility_mode = 'specific_hex' AND dhc.hex_id = CAST(:hex_id AS uuid))
                     OR
-                    -- Fallback: if no city_id resolved (location outside service area), skip coverage check
+                    -- Fallback: if no city_id resolved, physical distance takes precedence
                     (CAST(:city_id AS text) IS NULL)
                 )
-                -- Exclude drivers who already rejected this request
+                {mode_condition}
+                -- Exclude drivers who already rejected or had this offer removed
                 AND d.id NOT IN (
                     SELECT ro.driver_id FROM ride_offers ro
                     WHERE ro.ride_request_id = CAST(:ride_request_id AS uuid)
                       AND ro.status::text IN ('rejected', 'REJECTED', 'expired', 'EXPIRED', 'removed', 'REMOVED', 'superseded', 'SUPERSEDED')
                 )
-                -- Exclude drivers who already have a pending/accepted offer for this request
+                -- Exclude drivers who already have a pending or accepted offer for this request
                 AND d.id NOT IN (
                     SELECT ro.driver_id FROM ride_offers ro
                     WHERE ro.ride_request_id = CAST(:ride_request_id AS uuid)
                       AND ro.status::text IN ('pending', 'PENDING', 'accepted', 'ACCEPTED')
                 )
-                -- Exclude drivers currently on an active ride
+                -- Exclude drivers currently occupied on an active ride
                 AND d.id NOT IN (
                     SELECT rr.assigned_driver_id FROM ride_requests rr
                     WHERE rr.assigned_driver_id IS NOT NULL
@@ -278,24 +293,32 @@ class SpatialResolverService:
 
         candidates = []
         for r in rows:
+            dist_km = round(float(r.distance_km), 2)
+            eta_min = max(int(dist_km / 25.0 * 60), 2)
             candidates.append({
                 "driver_id": str(r.driver_id),
                 "user_id": str(r.user_id),
                 "full_name": r.full_name,
-                "rating": float(r.rating or 4.8),
+                "phone": r.phone,
+                "device_token": getattr(r, "device_token", None),
+                "rating": float(r.rating or 4.85),
                 "visibility_mode": r.visibility_mode,
+                "match_mode": r.match_mode,
                 "vehicle_id": str(r.vehicle_id),
                 "vehicle_name": f"{r.make} {r.model}",
                 "registration_number": r.registration_number,
+                "vehicle_color": r.color,
                 "vehicle_type": str(r.vehicle_type),
                 "seat_capacity": r.seat_capacity,
-                "distance_km": round(float(r.distance_km), 2),
+                "distance_km": dist_km,
+                "eta_min": eta_min,
             })
 
         logger.info(
-            "Eligible drivers found",
+            "Candidate discovery complete",
             pickup_city_id=city_id_str,
             pickup_hex_id=hex_id_str,
+            discovery_mode=discovery_mode,
             total_candidates=len(candidates),
         )
         return candidates

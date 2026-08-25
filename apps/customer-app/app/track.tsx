@@ -129,6 +129,7 @@ export default function TrackTripScreen() {
     tripCompleted,
     sosAlert,
     safetyAlert,
+    otpData,
     clearTripCompleted,
     clearSOSAlert,
     clearSafetyAlert,
@@ -143,6 +144,12 @@ export default function TrackTripScreen() {
   const [eta, setEta] = useState<number>(4)
   const [distKm, setDistKm] = useState<number>(3.2)
   const [startOtp, setStartOtp] = useState<string>('4921')
+
+  useEffect(() => {
+    if (otpData?.otp) {
+      setStartOtp(otpData.otp)
+    }
+  }, [otpData])
   const [fare, setFare] = useState<number>(1850)
   const [tolls, setTolls] = useState<Array<{ name: string; amount: number }>>([])
   const [stops, setStops] = useState<IntermediateStop[]>([])

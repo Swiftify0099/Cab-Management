@@ -468,6 +468,32 @@ class RentalService:
             )
             self.db.add(earnings_txn)
 
+            try:
+                from common.models.all_models import DriverEarningLedger
+                from datetime import date
+                ledger_entry = DriverEarningLedger(
+                    id=uuid.uuid4(),
+                    driver_id=driver.id,
+                    entry_type="RENTAL_EARNING",
+                    amount=Decimal(str(driver_earning)),
+                    currency="INR",
+                    direction="CREDIT",
+                    status="SETTLED",
+                    description=f"Earnings for Hourly Rental #{booking.reference}",
+                    effective_date=date.today(),
+                    metadata_json={
+                        "booking_id": str(booking.id),
+                        "reference": booking.reference,
+                        "plan_id": str(booking.plan_id),
+                        "final_fare": float(final_fare),
+                        "driver_earning": float(driver_earning),
+                        "platform_commission": float(platform_commission),
+                    },
+                )
+                self.db.add(ledger_entry)
+            except Exception as ex:
+                log.warning("DriverEarningLedger insertion note", error=str(ex))
+
         # Refund/charge delta on customer wallet
         cust_q = select(CustomerProfile).where(CustomerProfile.id == booking.customer_id)
         cust_res = await self.db.execute(cust_q)
