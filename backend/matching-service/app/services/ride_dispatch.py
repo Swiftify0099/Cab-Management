@@ -364,6 +364,9 @@ class RideDispatchService:
 
             # 1. Publish to driver's personal Socket.IO room via Redis
             await publish_event(f"driver:{user_id_str}:events", offer_payload)
+            driver_id_str = str(cand.get("driver_id", ""))
+            if driver_id_str and driver_id_str != user_id_str:
+                await publish_event(f"driver:{driver_id_str}:events", offer_payload)
             dispatched_count += 1
 
             # 2. Push Notification (FCM / Expo) for background/offline driver if token present
@@ -578,9 +581,11 @@ class RideDispatchService:
         other_offers = other_offers_res.scalars().all()
 
         other_driver_user_ids = []
+        other_driver_ids = []
         for other_off in other_offers:
             other_off.status = RideOfferStatus.REMOVED
             other_off.responded_at = now
+            other_driver_ids.append(str(other_off.driver_id))
             # Fetch user_id to notify via socket
             d_other_res = await self.db.execute(
                 select(Driver.user_id).where(Driver.id == other_off.driver_id)
@@ -592,12 +597,16 @@ class RideDispatchService:
         await self.db.commit()
 
         # 4. Broadcast RIDE_REQUEST_REMOVED to all other drivers
+        removed_payload = {
+            "event": "RIDE_REQUEST_REMOVED",
+            "ride_request_id": str(ride_req.id),
+            "reason": "ASSIGNED_TO_ANOTHER_DRIVER",
+        }
         for other_user_id in other_driver_user_ids:
-            await publish_event(f"driver:{other_user_id}:events", {
-                "event": "RIDE_REQUEST_REMOVED",
-                "ride_request_id": str(ride_req.id),
-                "reason": "ASSIGNED_TO_ANOTHER_DRIVER",
-            })
+            await publish_event(f"driver:{other_user_id}:events", removed_payload)
+        for other_d_id in other_driver_ids:
+            if other_d_id not in other_driver_user_ids:
+                await publish_event(f"driver:{other_d_id}:events", removed_payload)
 
         # 5. Fetch vehicle details for customer payload
         veh_res = await self.db.execute(
