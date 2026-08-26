@@ -70,6 +70,7 @@ export interface RideOfferPayload {
     name?: string
     rating?: number
   }
+  pickup_notes?: string
 }
 
 export interface RideOfferResponsePayload {

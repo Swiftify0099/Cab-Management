@@ -1,4 +1,4 @@
-﻿/**
+/**
  * DriverInfoModal — Customer App Nearby Driver Profile & Vehicle Details
  * ─────────────────────────────────────────────────────────────────────────────
  * Shows detailed driver information when the customer taps any nearby driver
@@ -361,7 +361,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...(StyleSheet.absoluteFill as any),
   },
   sheetContainer: {
     borderTopLeftRadius: 24,

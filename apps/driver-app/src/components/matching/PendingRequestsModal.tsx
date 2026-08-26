@@ -223,7 +223,7 @@ export function PendingRequestsModal({
               <View>
                 <Text style={styles.title}>Pending Requests in My Area</Text>
                 <Text style={styles.subtitle}>
-                  Unassigned rider requests waiting > 5 mins
+                  Unassigned rider requests waiting {'>'} 5 mins
                 </Text>
               </View>
             </View>

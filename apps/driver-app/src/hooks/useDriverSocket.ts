@@ -13,6 +13,8 @@ import {
   PendingCustomer,
   ArrivalAlertPayload,
   CorridorCustomerPayload,
+} from '../services/driverSocketService'
+
 export type {
   IncomingRideRequestPayload as IncomingRequest,
   LocationUpdatePayload,

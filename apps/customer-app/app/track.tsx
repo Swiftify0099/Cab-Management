@@ -205,6 +205,7 @@ export default function TrackTripScreen() {
   const [shareTripModalVisible, setShareTripModalVisible] = useState(false)
   const [safetyAnomalyModalVisible, setSafetyAnomalyModalVisible] = useState(false)
   const [reportIncidentModalVisible, setReportIncidentModalVisible] = useState(false)
+  const [showDriverInfoModal, setShowDriverInfoModal] = useState(false)
   const [activeAnomalyAlert, setActiveAnomalyAlert] = useState<any>(null)
 
   // In-App Chat Modal
@@ -1317,8 +1318,8 @@ export default function TrackTripScreen() {
           rating: booking?.driver?.rating || 4.85,
           vehicle: booking?.driver?.vehicle_model || 'Swift Dzire (White)',
           registration_number: booking?.driver?.license_plate || 'MH 12 AB 1234',
-          distance_km: (etaInfo as any)?.distance_km || 1.8,
-          eta_minutes: (etaInfo as any)?.eta_minutes || 5,
+          distance_km: distKm || 1.8,
+          eta_minutes: eta || 5,
           phone: booking?.driver?.phone,
           is_favourite: false,
         }}

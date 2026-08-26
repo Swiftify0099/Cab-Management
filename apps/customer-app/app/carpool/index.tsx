@@ -126,17 +126,17 @@ export default function CarpoolScreen() {
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Feather name="arrow-left" size={24} color={theme.colors.text} />
+          <Feather name="arrow-left" size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
         <View style={{ flex: 1, marginLeft: 12 }}>
-          <AppText style={[styles.headerTitle, { color: theme.colors.text }]}>
+          <AppText style={[styles.headerTitle, { color: theme.colors.textPrimary }]}>
             Intercity Carpool
           </AppText>
           <AppText style={[styles.headerSubtitle, { color: theme.colors.textSecondary }]}>
             Share highway rides & save carbon emissions
           </AppText>
         </View>
-        <AppBadge label="Eco Share" variant="success" size="small" />
+        <AppBadge label="Eco Share" variant="success" size="sm" />
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -155,7 +155,7 @@ export default function CarpoolScreen() {
                   FROM
                 </AppText>
                 <TextInput
-                  style={[styles.textInput, { color: theme.colors.text }]}
+                  style={[styles.textInput, { color: theme.colors.textPrimary }]}
                   value={originCity}
                   onChangeText={setOriginCity}
                   placeholder="Enter origin city"
@@ -163,14 +163,14 @@ export default function CarpoolScreen() {
                 />
               </View>
 
-              <AppDivider style={{ marginVertical: 8 }} />
+              <AppDivider marginVertical={8} />
 
               <View style={styles.inputBox}>
                 <AppText style={[styles.inputLabel, { color: theme.colors.textSecondary }]}>
                   TO
                 </AppText>
                 <TextInput
-                  style={[styles.textInput, { color: theme.colors.text }]}
+                  style={[styles.textInput, { color: theme.colors.textPrimary }]}
                   value={destinationCity}
                   onChangeText={setDestinationCity}
                   placeholder="Enter destination city"
@@ -199,7 +199,7 @@ export default function CarpoolScreen() {
                   <AppText
                     style={[
                       styles.seatBtnText,
-                      { color: seatsNeeded === num ? '#FFFFFF' : theme.colors.text },
+                      { color: seatsNeeded === num ? '#FFFFFF' : theme.colors.textPrimary },
                     ]}
                   >
                     {num}
@@ -252,7 +252,7 @@ export default function CarpoolScreen() {
               </View>
             </View>
 
-            <AppDivider style={{ marginVertical: 10, backgroundColor: 'rgba(255,255,255,0.2)' }} />
+            <AppDivider marginVertical={10} />
 
             <View style={styles.voucherDetails}>
               <AppText style={styles.voucherText}>
@@ -273,7 +273,7 @@ export default function CarpoolScreen() {
 
         {/* Available Rides Section */}
         <View style={styles.sectionHeader}>
-          <AppText style={[styles.sectionTitle, { color: theme.colors.text }]}>
+          <AppText style={[styles.sectionTitle, { color: theme.colors.textPrimary }]}>
             Available Carpools ({filteredRides.length})
           </AppText>
           <AppText style={[styles.subLabel, { color: theme.colors.textSecondary }]}>
@@ -286,7 +286,7 @@ export default function CarpoolScreen() {
             <View style={styles.rideTop}>
               <View style={{ flex: 1 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <AppText style={[styles.hostName, { color: theme.colors.text }]}>
+                  <AppText style={[styles.hostName, { color: theme.colors.textPrimary }]}>
                     {ride.host_name}
                   </AppText>
                   <View style={styles.ratingBadge}>
@@ -294,7 +294,7 @@ export default function CarpoolScreen() {
                     <AppText style={styles.ratingText}>{ride.host_rating}</AppText>
                   </View>
                   {ride.ladies_only && (
-                    <AppBadge label="Women Only" variant="secondary" size="small" />
+                    <AppBadge label="Women Only" variant="info" size="sm" />
                   )}
                 </View>
                 <AppText style={[styles.vehicleDesc, { color: theme.colors.textSecondary }]}>
@@ -312,12 +312,12 @@ export default function CarpoolScreen() {
               </View>
             </View>
 
-            <AppDivider style={{ marginVertical: 10 }} />
+            <AppDivider marginVertical={10} />
 
             <View style={styles.routeBox}>
               <View style={styles.routeRow}>
                 <Ionicons name="time-outline" size={16} color={theme.colors.primary} />
-                <AppText style={[styles.departureText, { color: theme.colors.text }]}>
+                <AppText style={[styles.departureText, { color: theme.colors.textPrimary }]}>
                   {ride.departure}
                 </AppText>
               </View>
@@ -345,12 +345,14 @@ export default function CarpoolScreen() {
               </View>
 
               <AppButton
-                title={loading ? 'Reserving...' : `Book Seat (₹${ride.price_per_seat * seatsNeeded})`}
                 onPress={() => handleBookCarpool(ride)}
                 disabled={loading}
-                size="small"
+                loading={loading}
+                size="sm"
                 style={styles.bookBtn}
-              />
+              >
+                {`Book Seat (₹${ride.price_per_seat * seatsNeeded})`}
+              </AppButton>
             </View>
           </AppCard>
         ))}

@@ -394,6 +394,13 @@ class DriverSoundServiceImpl {
     }
   }
 
+  public async playAcceptedSound(): Promise<void> {
+    this.stopIncomingAlert()
+    try {
+      Vibration.vibrate([0, 100, 50, 150])
+    } catch {}
+  }
+
   public subscribe(listener: SoundStateListener): () => void {
     this.listeners.add(listener)
     listener({

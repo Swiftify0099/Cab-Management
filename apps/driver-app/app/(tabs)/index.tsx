@@ -49,6 +49,7 @@ import { AICopilotModal } from '../../src/components/ai/AICopilotModal'
 import { PendingRequestsModal } from '../../src/components/matching/PendingRequestsModal'
 import { AISmartDriverService } from '../../src/services/aiSmartDriverService'
 import { DriverAIInsights } from '../../src/types/aiSmartDriver'
+import { RideRequestService } from '../../src/services/rideRequestService'
 
 
 const STATUS_COLORS: Record<string, string> = {
@@ -400,7 +401,7 @@ export default function DriverHomeScreen() {
                 <View style={[styles.livePulseDot, { backgroundColor: '#0284C7' }]} />
               </View>
               <Text style={[styles.radarSub, { color: theme.colors.textSecondary }]}>
-                {availabilityData.currentZone || 'My Area'} • Unassigned riders (>5m) • Tap to Accept
+                {availabilityData.currentZone || 'My Area'} • Unassigned riders ({'>'}5m) • Tap to Accept
               </Text>
             </View>
             <View style={[styles.openRadarBtn, { backgroundColor: '#E0F2FE' }]}>

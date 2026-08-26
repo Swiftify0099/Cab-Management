@@ -10,6 +10,9 @@ interface AuthUser {
   phone: string
   isNewUser: boolean
   profileComplete: boolean
+  full_name?: string
+  email?: string
+  avatar_url?: string
 }
 
 interface AuthState {
@@ -21,6 +24,7 @@ interface AuthState {
   login: (user: AuthUser, accessToken: string, refreshToken: string) => Promise<void>
   logout: () => Promise<void>
   setProfileComplete: () => void
+  setUser: (user: AuthUser | null | any) => void
   initialize: () => Promise<void>
 }
 
@@ -56,6 +60,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     await SecureStore.deleteItemAsync('refresh_token')
     await SecureStore.deleteItemAsync('auth_user')
     set({ user: null, isAuthenticated: false })
+  },
+
+  setUser: (userOrFn: any) => {
+    const current = get().user
+    const nextUser = typeof userOrFn === 'function' ? userOrFn(current) : userOrFn
+    set({ user: nextUser })
+    if (nextUser) {
+      SecureStore.setItemAsync('auth_user', JSON.stringify(nextUser)).catch(() => {})
+    }
   },
 
   setProfileComplete: () => {

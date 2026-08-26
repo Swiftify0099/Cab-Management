@@ -820,6 +820,7 @@ export function useCustomerSocket(): UseCustomerSocketReturn {
     tripRejected,
     arrivalAlert,
     driverLocation,
+    otpData,
     // Feature 4: Reservation events
     reservationDriverAssigned,
     reservationReminder,

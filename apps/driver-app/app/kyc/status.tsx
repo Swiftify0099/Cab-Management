@@ -771,6 +771,11 @@ export default function DocumentStatusScreen() {
       alignItems: 'center',
       justifyContent: 'center',
     },
+    previewDoneBtnText: {
+      color: isDark ? '#FFFFFF' : '#0F172A',
+      fontSize: 13,
+      fontWeight: '700',
+    },
     // Card styles for thumbnail and modal
     thumbAadhaarCard: { flex: 1, backgroundColor: '#FFFBEB', borderRadius: 8, padding: 6, justifyContent: 'space-between', borderWidth: 1, borderColor: '#FDE68A' },
     modalAadhaarCard: { width: '100%', height: '100%', backgroundColor: '#FFFBEB', borderRadius: 14, padding: 14, justifyContent: 'space-between', borderWidth: 1.5, borderColor: '#F59E0B' },

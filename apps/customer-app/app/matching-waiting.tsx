@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Customer App — Live Ride Matching & Radar Waiting Screen
  * Route: /matching-waiting
  * Feature 4: Concentric Radar Animation & Real-Time Driver Broadcast.
@@ -440,7 +440,7 @@ export default function MatchingWaitingScreen() {
                 <AppBadge label={serviceType} variant="default" size="sm" />
               )}
               {nearbyDrivers.length > 0 && (
-                <TouchableOpacity activeOpacity={0.7} onPress={() => setSelectedDriver(nearbyDrivers[0] || FALLBACK_DRIVERS[0])}>
+                <TouchableOpacity activeOpacity={0.7} onPress={() => setSelectedDriver(nearbyDrivers[0])}>
                   <AppBadge label={`${nearbyDrivers.length} drivers nearby • Tap to view`} variant="success" size="sm" />
                 </TouchableOpacity>
               )}
