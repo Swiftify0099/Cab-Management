@@ -114,7 +114,7 @@ export default function CarpoolScreen() {
       Alert.alert(
         'Seat Reserved! 🚗👥',
         `Your seat on ${ride.reference} is confirmed.\nBoarding OTP: ${mockOtp}`,
-        [{ text: 'View Voucher', onPress: () => {} }]
+        [{ text: 'View Voucher', onPress: () => { } }]
       )
     }, 800)
   }

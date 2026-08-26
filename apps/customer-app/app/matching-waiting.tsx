@@ -131,7 +131,7 @@ export default function MatchingWaitingScreen() {
     const pulseAnim = Animated.loop(
       Animated.sequence([
         Animated.timing(pulseCore, { toValue: 1.15, duration: 800, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
-        Animated.timing(pulseCore, { toValue: 1,    duration: 800, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
+        Animated.timing(pulseCore, { toValue: 1, duration: 800, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
       ])
     )
 
@@ -263,7 +263,7 @@ export default function MatchingWaitingScreen() {
           const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
           sendLocationUpdate(loc.coords.latitude, loc.coords.longitude)
         }
-      } catch {}
+      } catch { }
     }
     broadcast()
     intervalId = setInterval(broadcast, 10000)

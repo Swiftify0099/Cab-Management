@@ -330,82 +330,82 @@ export interface SafetyAlertPayload {
 
 // ─── Hook return type ──────────────────────────────────────────────────────────
 interface UseCustomerSocketReturn {
-  connected:       boolean
-  socket:          Socket | null
+  connected: boolean
+  socket: Socket | null
 
   // Room management
-  joinTrip:        (tripId: string) => void
+  joinTrip: (tripId: string) => void
   joinCustomerRoom: () => void  // Bug 5 fix: explicit personal room re-join
-  leaveTrip:       (tripId: string) => void
-  joinParcelRoom:  (parcelId: string) => void
+  leaveTrip: (tripId: string) => void
+  joinParcelRoom: (parcelId: string) => void
   leaveParcelRoom: (parcelId: string) => void
 
   // Generic listener
-  on:              (event: SocketEvent, handler: (data: any) => void) => void
-  off:             (event: SocketEvent, handler: (data: any) => void) => void
+  on: (event: SocketEvent, handler: (data: any) => void) => void
+  off: (event: SocketEvent, handler: (data: any) => void) => void
 
   // Stateful reactive events
-  matchFound:      MatchFoundPayload | null
-  tripAccepted:    TripAcceptedPayload | null
-  tripRejected:    TripRejectedPayload | null
-  arrivalAlert:    ArrivalAlertPayload | null
-  driverLocation:  LocationUpdatePayload | null
+  matchFound: MatchFoundPayload | null
+  tripAccepted: TripAcceptedPayload | null
+  tripRejected: TripRejectedPayload | null
+  arrivalAlert: ArrivalAlertPayload | null
+  driverLocation: LocationUpdatePayload | null
 
   // Feature 4: Reservation stateful events
   reservationDriverAssigned: ReservationDriverAssignedPayload | null
-  reservationReminder:       ReservationReminderPayload | null
-  reservationCancelled:      ReservationCancelledPayload | null
-  reservationModified:       ReservationModifiedPayload | null
+  reservationReminder: ReservationReminderPayload | null
+  reservationCancelled: ReservationCancelledPayload | null
+  reservationModified: ReservationModifiedPayload | null
 
   // Feature 5: Negotiation stateful events
-  negotiationDriverOffer:    NegotiationDriverOfferPayload | null
+  negotiationDriverOffer: NegotiationDriverOfferPayload | null
   negotiationSessionExpired: NegotiationSessionExpiredPayload | null
-  negotiationAssigned:       NegotiationAssignedPayload | null
-  negotiationFallback:       NegotiationFallbackPayload | null
+  negotiationAssigned: NegotiationAssignedPayload | null
+  negotiationFallback: NegotiationFallbackPayload | null
 
   // Feature 8: During Ride stateful events
-  stopAdded:                 StopAddedPayload | null
-  destinationUpdated:        DestinationUpdatedPayload | null
-  waitingStatus:             WaitingStatusPayload | null
-  tollAdded:                 TollAddedPayload | null
-  newChatMessage:            ChatMessagePayload | null
+  stopAdded: StopAddedPayload | null
+  destinationUpdated: DestinationUpdatedPayload | null
+  waitingStatus: WaitingStatusPayload | null
+  tollAdded: TollAddedPayload | null
+  newChatMessage: ChatMessagePayload | null
 
   // Feature 9 & 10: Safety & Trip Completion stateful events
-  tripCompleted:             TripCompletedPayload | null
-  sosAlert:                  SOSAlertPayload | null
-  safetyAlert:               SafetyAlertPayload | null
+  tripCompleted: TripCompletedPayload | null
+  sosAlert: SOSAlertPayload | null
+  safetyAlert: SafetyAlertPayload | null
 
   // 3KM OTP Proximity stateful events
-  otpData:                   { ride_request_id: string; otp: string; distance_km: number; eta_min: number; message: string } | null
+  otpData: { ride_request_id: string; otp: string; distance_km: number; eta_min: number; message: string } | null
 
   // Clearers
-  clearMatchFound:               () => void
-  clearTripAccepted:             () => void
-  clearTripRejected:             () => void
-  clearArrivalAlert:             () => void
-  clearOtpData:                  () => void
-  clearReservationDriverAssigned:() => void
-  clearReservationReminder:      () => void
-  clearReservationCancelled:     () => void
-  clearReservationModified:      () => void
+  clearMatchFound: () => void
+  clearTripAccepted: () => void
+  clearTripRejected: () => void
+  clearArrivalAlert: () => void
+  clearOtpData: () => void
+  clearReservationDriverAssigned: () => void
+  clearReservationReminder: () => void
+  clearReservationCancelled: () => void
+  clearReservationModified: () => void
 
   // Feature 5: Negotiation clearers
-  clearNegotiationDriverOffer:    () => void
+  clearNegotiationDriverOffer: () => void
   clearNegotiationSessionExpired: () => void
-  clearNegotiationAssigned:       () => void
-  clearNegotiationFallback:       () => void
+  clearNegotiationAssigned: () => void
+  clearNegotiationFallback: () => void
 
   // Feature 8: During Ride clearers
-  clearStopAdded:                 () => void
-  clearDestinationUpdated:        () => void
-  clearWaitingStatus:             () => void
-  clearTollAdded:                 () => void
-  clearNewChatMessage:            () => void
+  clearStopAdded: () => void
+  clearDestinationUpdated: () => void
+  clearWaitingStatus: () => void
+  clearTollAdded: () => void
+  clearNewChatMessage: () => void
 
   // Feature 9 & 10: Safety & Trip Completion clearers
-  clearTripCompleted:             () => void
-  clearSOSAlert:                  () => void
-  clearSafetyAlert:               () => void
+  clearTripCompleted: () => void
+  clearSOSAlert: () => void
+  clearSafetyAlert: () => void
 
   // Phase 2: Location broadcast for corridor matching
   sendLocationUpdate: (lat: number, lng: number) => void
@@ -416,36 +416,36 @@ interface UseCustomerSocketReturn {
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 export function useCustomerSocket(): UseCustomerSocketReturn {
-  const socketRef   = useRef<Socket | null>(null)
+  const socketRef = useRef<Socket | null>(null)
   const customerRef = useRef<string>('')   // customer user_id from SecureStore
   const reconnectSyncRef = useRef<(() => void) | null>(null)  // Feature 4: reconnect sync
-  const [connected,      setConnected]      = useState(false)
-  const [matchFound,     setMatchFound]     = useState<MatchFoundPayload | null>(null)
-  const [tripAccepted,   setTripAccepted]   = useState<TripAcceptedPayload | null>(null)
-  const [tripRejected,   setTripRejected]   = useState<TripRejectedPayload | null>(null)
-  const [arrivalAlert,   setArrivalAlert]   = useState<ArrivalAlertPayload | null>(null)
+  const [connected, setConnected] = useState(false)
+  const [matchFound, setMatchFound] = useState<MatchFoundPayload | null>(null)
+  const [tripAccepted, setTripAccepted] = useState<TripAcceptedPayload | null>(null)
+  const [tripRejected, setTripRejected] = useState<TripRejectedPayload | null>(null)
+  const [arrivalAlert, setArrivalAlert] = useState<ArrivalAlertPayload | null>(null)
   const [driverLocation, setDriverLocation] = useState<LocationUpdatePayload | null>(null)
   // Feature 4: Reservation state
   const [reservationDriverAssigned, setReservationDriverAssigned] = useState<ReservationDriverAssignedPayload | null>(null)
-  const [reservationReminder,       setReservationReminder]       = useState<ReservationReminderPayload | null>(null)
-  const [reservationCancelled,      setReservationCancelled]      = useState<ReservationCancelledPayload | null>(null)
-  const [reservationModified,       setReservationModified]       = useState<ReservationModifiedPayload | null>(null)
+  const [reservationReminder, setReservationReminder] = useState<ReservationReminderPayload | null>(null)
+  const [reservationCancelled, setReservationCancelled] = useState<ReservationCancelledPayload | null>(null)
+  const [reservationModified, setReservationModified] = useState<ReservationModifiedPayload | null>(null)
   // Feature 5: Negotiation state
-  const [negotiationDriverOffer,    setNegotiationDriverOffer]    = useState<NegotiationDriverOfferPayload | null>(null)
+  const [negotiationDriverOffer, setNegotiationDriverOffer] = useState<NegotiationDriverOfferPayload | null>(null)
   const [negotiationSessionExpired, setNegotiationSessionExpired] = useState<NegotiationSessionExpiredPayload | null>(null)
-  const [negotiationAssigned,       setNegotiationAssigned]       = useState<NegotiationAssignedPayload | null>(null)
-  const [negotiationFallback,       setNegotiationFallback]       = useState<NegotiationFallbackPayload | null>(null)
+  const [negotiationAssigned, setNegotiationAssigned] = useState<NegotiationAssignedPayload | null>(null)
+  const [negotiationFallback, setNegotiationFallback] = useState<NegotiationFallbackPayload | null>(null)
   // Feature 8: During Ride state
-  const [stopAdded,                 setStopAdded]                 = useState<StopAddedPayload | null>(null)
-  const [destinationUpdated,        setDestinationUpdated]        = useState<DestinationUpdatedPayload | null>(null)
-  const [waitingStatus,             setWaitingStatus]             = useState<WaitingStatusPayload | null>(null)
-  const [tollAdded,                 setTollAdded]                 = useState<TollAddedPayload | null>(null)
-  const [newChatMessage,            setNewChatMessage]            = useState<ChatMessagePayload | null>(null)
+  const [stopAdded, setStopAdded] = useState<StopAddedPayload | null>(null)
+  const [destinationUpdated, setDestinationUpdated] = useState<DestinationUpdatedPayload | null>(null)
+  const [waitingStatus, setWaitingStatus] = useState<WaitingStatusPayload | null>(null)
+  const [tollAdded, setTollAdded] = useState<TollAddedPayload | null>(null)
+  const [newChatMessage, setNewChatMessage] = useState<ChatMessagePayload | null>(null)
   // Feature 9 & 10: Safety & Trip Completion state
-  const [tripCompleted,             setTripCompleted]             = useState<TripCompletedPayload | null>(null)
-  const [sosAlert,                  setSosAlert]                  = useState<SOSAlertPayload | null>(null)
-  const [safetyAlert,               setSafetyAlert]               = useState<SafetyAlertPayload | null>(null)
-  const [otpData,                   setOtpData]                   = useState<{ ride_request_id: string; otp: string; distance_km: number; eta_min: number; message: string } | null>(null)
+  const [tripCompleted, setTripCompleted] = useState<TripCompletedPayload | null>(null)
+  const [sosAlert, setSosAlert] = useState<SOSAlertPayload | null>(null)
+  const [safetyAlert, setSafetyAlert] = useState<SafetyAlertPayload | null>(null)
+  const [otpData, setOtpData] = useState<{ ride_request_id: string; otp: string; distance_km: number; eta_min: number; message: string } | null>(null)
 
   useEffect(() => {
     let socket: Socket | null = null
@@ -735,31 +735,31 @@ export function useCustomerSocket(): UseCustomerSocketReturn {
   }, [])
 
   // ─── Clearers ──────────────────────────────────────────────────────────
-  const clearMatchFound   = useCallback(() => setMatchFound(null),   [])
+  const clearMatchFound = useCallback(() => setMatchFound(null), [])
   const clearTripAccepted = useCallback(() => setTripAccepted(null), [])
   const clearTripRejected = useCallback(() => setTripRejected(null), [])
   const clearArrivalAlert = useCallback(() => setArrivalAlert(null), [])
   // Feature 4 clearers
   const clearReservationDriverAssigned = useCallback(() => setReservationDriverAssigned(null), [])
-  const clearReservationReminder       = useCallback(() => setReservationReminder(null),       [])
-  const clearReservationCancelled      = useCallback(() => setReservationCancelled(null),      [])
-  const clearReservationModified       = useCallback(() => setReservationModified(null),       [])
+  const clearReservationReminder = useCallback(() => setReservationReminder(null), [])
+  const clearReservationCancelled = useCallback(() => setReservationCancelled(null), [])
+  const clearReservationModified = useCallback(() => setReservationModified(null), [])
   // Feature 5: Negotiation clearers
-  const clearNegotiationDriverOffer    = useCallback(() => setNegotiationDriverOffer(null),    [])
+  const clearNegotiationDriverOffer = useCallback(() => setNegotiationDriverOffer(null), [])
   const clearNegotiationSessionExpired = useCallback(() => setNegotiationSessionExpired(null), [])
-  const clearNegotiationAssigned       = useCallback(() => setNegotiationAssigned(null),       [])
-  const clearNegotiationFallback       = useCallback(() => setNegotiationFallback(null),       [])
+  const clearNegotiationAssigned = useCallback(() => setNegotiationAssigned(null), [])
+  const clearNegotiationFallback = useCallback(() => setNegotiationFallback(null), [])
   // Feature 8: During Ride clearers
-  const clearStopAdded                 = useCallback(() => setStopAdded(null),                 [])
-  const clearDestinationUpdated        = useCallback(() => setDestinationUpdated(null),        [])
-  const clearWaitingStatus             = useCallback(() => setWaitingStatus(null),             [])
-  const clearTollAdded                 = useCallback(() => setTollAdded(null),                 [])
-  const clearNewChatMessage            = useCallback(() => setNewChatMessage(null),            [])
+  const clearStopAdded = useCallback(() => setStopAdded(null), [])
+  const clearDestinationUpdated = useCallback(() => setDestinationUpdated(null), [])
+  const clearWaitingStatus = useCallback(() => setWaitingStatus(null), [])
+  const clearTollAdded = useCallback(() => setTollAdded(null), [])
+  const clearNewChatMessage = useCallback(() => setNewChatMessage(null), [])
   // Feature 9 & 10: Safety & Trip Completion clearers
-  const clearTripCompleted             = useCallback(() => setTripCompleted(null),             [])
-  const clearSOSAlert                  = useCallback(() => setSosAlert(null),                  [])
-  const clearSafetyAlert               = useCallback(() => setSafetyAlert(null),               [])
-  const clearOtpData                   = useCallback(() => setOtpData(null),                   [])
+  const clearTripCompleted = useCallback(() => setTripCompleted(null), [])
+  const clearSOSAlert = useCallback(() => setSosAlert(null), [])
+  const clearSafetyAlert = useCallback(() => setSafetyAlert(null), [])
+  const clearOtpData = useCallback(() => setOtpData(null), [])
 
   // ─── Feature 4: Reconnect sync registration ──────────────────────────────────
   /**

@@ -107,17 +107,17 @@ export default function ProfileTab() {
 
       const result = fromCamera
         ? await ImagePicker.launchCameraAsync({
-            mediaTypes: ['images'],
-            allowsEditing: true,
-            aspect: [1, 1],
-            quality: 0.85,
-          })
+          mediaTypes: ['images'],
+          allowsEditing: true,
+          aspect: [1, 1],
+          quality: 0.85,
+        })
         : await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images'],
-            allowsEditing: true,
-            aspect: [1, 1],
-            quality: 0.85,
-          })
+          mediaTypes: ['images'],
+          allowsEditing: true,
+          aspect: [1, 1],
+          quality: 0.85,
+        })
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
         setUploading(true)

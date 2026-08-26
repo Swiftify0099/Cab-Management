@@ -136,7 +136,7 @@ class DriverSoundServiceImpl {
   public async setSelectedSirenId(id: string): Promise<void> {
     if (!DRIVER_SIRENS.some(s => s.id === id)) return
     this.selectedSirenId = id
-    await AsyncStorage.setItem(STORAGE_KEY_SIREN, id).catch(() => {})
+    await AsyncStorage.setItem(STORAGE_KEY_SIREN, id).catch(() => { })
     this.notifyState()
   }
 
@@ -157,15 +157,15 @@ class DriverSoundServiceImpl {
     if (this.activePlayer && typeof this.activePlayer.setVolume === 'function') {
       try {
         this.activePlayer.setVolume(this.isMuted ? 0 : this.volume)
-      } catch {}
+      } catch { }
     }
-    await AsyncStorage.setItem(STORAGE_KEY_VOLUME, this.volume.toString()).catch(() => {})
+    await AsyncStorage.setItem(STORAGE_KEY_VOLUME, this.volume.toString()).catch(() => { })
     this.notifyState()
   }
 
   public async setVibrationEnabled(enabled: boolean): Promise<void> {
     this.vibrationEnabled = enabled
-    await AsyncStorage.setItem(STORAGE_KEY_VIBRATE, enabled ? 'true' : 'false').catch(() => {})
+    await AsyncStorage.setItem(STORAGE_KEY_VIBRATE, enabled ? 'true' : 'false').catch(() => { })
   }
 
   public isVibrationEnabled(): boolean {
@@ -174,7 +174,7 @@ class DriverSoundServiceImpl {
 
   public async setSoundEnabled(enabled: boolean): Promise<void> {
     this.soundEnabled = enabled
-    await AsyncStorage.setItem(STORAGE_KEY_SOUND_ENABLED, enabled ? 'true' : 'false').catch(() => {})
+    await AsyncStorage.setItem(STORAGE_KEY_SOUND_ENABLED, enabled ? 'true' : 'false').catch(() => { })
   }
 
   public isSoundEnabled(): boolean {
@@ -232,7 +232,7 @@ class DriverSoundServiceImpl {
           if (typeof setAudioModeAsync === 'function') {
             await setAudioModeAsync({
               playsInSilentMode: true,
-            }).catch(() => {})
+            }).catch(() => { })
           }
 
           const source = siren.file || { uri: siren.uri }
@@ -275,7 +275,7 @@ class DriverSoundServiceImpl {
 
     try {
       Vibration.cancel()
-    } catch {}
+    } catch { }
 
     if (this.activePlayer) {
       try {
@@ -307,7 +307,7 @@ class DriverSoundServiceImpl {
     if (this.activePlayer && typeof this.activePlayer.setVolume === 'function') {
       try {
         this.activePlayer.setVolume(this.isMuted ? 0 : this.volume)
-      } catch {}
+      } catch { }
     }
     this.notifyState()
     return this.isMuted
@@ -325,14 +325,14 @@ class DriverSoundServiceImpl {
     // Short tactile feedback
     try {
       Vibration.vibrate(200)
-    } catch {}
+    } catch { }
 
     try {
       const expoAudio = await this.loadExpoAudio()
       if (expoAudio) {
         const { createAudioPlayer, setAudioModeAsync } = expoAudio
         if (typeof setAudioModeAsync === 'function') {
-          await setAudioModeAsync({ playsInSilentMode: true }).catch(() => {})
+          await setAudioModeAsync({ playsInSilentMode: true }).catch(() => { })
         }
 
         const source = siren.file || { uri: siren.uri }
@@ -376,6 +376,13 @@ class DriverSoundServiceImpl {
     }, 5000)
   }
 
+  public async playAcceptedSound(): Promise<void> {
+    try {
+      this.stopIncomingAlert()
+      Vibration.vibrate([0, 100, 50, 150])
+    } catch {}
+  }
+
   /**
    * Dynamic loader for expo-audio
    */
@@ -392,13 +399,6 @@ class DriverSoundServiceImpl {
         return null
       }
     }
-  }
-
-  public async playAcceptedSound(): Promise<void> {
-    this.stopIncomingAlert()
-    try {
-      Vibration.vibrate([0, 100, 50, 150])
-    } catch {}
   }
 
   public subscribe(listener: SoundStateListener): () => void {
@@ -424,7 +424,7 @@ class DriverSoundServiceImpl {
     this.listeners.forEach(fn => {
       try {
         fn(state)
-      } catch {}
+      } catch { }
     })
   }
 }

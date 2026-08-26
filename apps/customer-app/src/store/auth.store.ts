@@ -10,9 +10,16 @@ interface AuthUser {
   phone: string
   isNewUser: boolean
   profileComplete: boolean
-  full_name?: string
+  fullName?: string
+  name?: string
   email?: string
+  gender?: string
+  dob?: string
+  profilePhotoUrl?: string
+  avatarUrl?: string
   avatar_url?: string
+  profile_photo?: string
+  emergency_contact?: string
 }
 
 interface AuthState {
@@ -23,8 +30,8 @@ interface AuthState {
   // Actions
   login: (user: AuthUser, accessToken: string, refreshToken: string) => Promise<void>
   logout: () => Promise<void>
+  setUser: (user: Partial<AuthUser> | null) => void
   setProfileComplete: () => void
-  setUser: (user: AuthUser | null | any) => void
   initialize: () => Promise<void>
 }
 
@@ -62,13 +69,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ user: null, isAuthenticated: false })
   },
 
-  setUser: (userOrFn: any) => {
-    const current = get().user
-    const nextUser = typeof userOrFn === 'function' ? userOrFn(current) : userOrFn
-    set({ user: nextUser })
-    if (nextUser) {
-      SecureStore.setItemAsync('auth_user', JSON.stringify(nextUser)).catch(() => {})
+  setUser: (updatedUser) => {
+    if (!updatedUser) {
+      set({ user: null })
+      return
     }
+    const current = get().user
+    const merged = { ...(current || ({} as AuthUser)), ...updatedUser }
+    set({ user: merged })
+    SecureStore.setItemAsync('auth_user', JSON.stringify(merged)).catch(() => {})
   },
 
   setProfileComplete: () => {

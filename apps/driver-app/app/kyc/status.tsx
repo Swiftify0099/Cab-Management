@@ -113,7 +113,7 @@ export default function DocumentStatusScreen() {
           else if (user.id) setDriverId(`DRV-${String(user.id).replace(/-/g, '').slice(0, 4).toUpperCase()}`)
           if (user.profile_photo_url || user.avatar_url) setDriverPhoto(user.profile_photo_url || user.avatar_url)
         }
-      } catch {}
+      } catch { }
     }
     loadCachedUser()
   }, [])

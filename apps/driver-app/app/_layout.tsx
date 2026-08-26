@@ -17,6 +17,9 @@ import { PermissionGate } from '../src/components/PermissionGate'
 import { useStartupPermissions } from '../src/hooks/useStartupPermissions'
 import { useDriverNotifications } from '../src/hooks/useDriverNotifications'
 import { ThemeProvider } from '../src/theme'
+// Ensure Background Location Task is defined at module parse time
+import '../src/services/driverBackgroundLocationService'
+import { DriverLifecycleService } from '../src/services/driverLifecycleService'
 
 // Keep the splash screen visible while permissions are being checked.
 // This prevents the flash of unstyled content between splash and PermissionGate.
@@ -24,8 +27,13 @@ SplashScreen.preventAutoHideAsync()
 
 // ── Inner component: runs after permissions are confirmed ──────────────────────
 function AppReady() {
-  // P3.2 — Register for push notifications ONLY after app is fully initialised
+  // Register for push notifications ONLY after app is fully initialised
   useDriverNotifications()
+
+  // Initialize lifecycle & connection watchdog
+  useEffect(() => {
+    DriverLifecycleService.init()
+  }, [])
 
   // Hide splash now that we have the correct screen to show
   useEffect(() => {

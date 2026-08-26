@@ -21,6 +21,7 @@ import { api } from '../../src/api/client'
 import { useTheme } from '../../src/theme'
 import IncomingRequestScreen from '../incoming-request'
 import { useDriverSocket } from '../../src/hooks/useDriverSocket'
+import { RideRequestService } from '../../src/services/rideRequestService'
 import {
   AvailabilityService,
   AvailabilityStateData,
@@ -49,7 +50,6 @@ import { AICopilotModal } from '../../src/components/ai/AICopilotModal'
 import { PendingRequestsModal } from '../../src/components/matching/PendingRequestsModal'
 import { AISmartDriverService } from '../../src/services/aiSmartDriverService'
 import { DriverAIInsights } from '../../src/types/aiSmartDriver'
-import { RideRequestService } from '../../src/services/rideRequestService'
 
 
 const STATUS_COLORS: Record<string, string> = {
@@ -202,7 +202,7 @@ export default function DriverHomeScreen() {
             return prev
           })
         }
-      } catch {}
+      } catch { }
     }
 
     pollOffers()
@@ -215,7 +215,7 @@ export default function DriverHomeScreen() {
       await DestinationModeService.setDestinationMode({ turn_off: true })
       const updated = await DestinationModeService.getStatus()
       setDestinationStatus(updated)
-    } catch {}
+    } catch { }
   }
 
   const handleOnlineToggle = async () => {
@@ -267,12 +267,14 @@ export default function DriverHomeScreen() {
   const activeTrips = trips.filter(t => ['published', 'in_progress'].includes(t.status))
   const pastTrips = trips.filter(t => ['completed', 'cancelled'].includes(t.status)).slice(0, 3)
 
+  const isOnline = availabilityData.state === 'ONLINE' || availabilityData.state === 'GOING_ONLINE'
+
   return (
     <View style={[styles.root, { backgroundColor: theme.colors.background }]}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
-      {/* ⚡ Socket Reconnecting Banner — shown when server is offline/sleeping */}
-      {!connected && (
+      {/* ⚡ Socket Reconnecting Banner — shown only when driver is ONLINE but disconnected */}
+      {isOnline && !connected && (
         <View style={{
           position: 'absolute', top: 0, left: 0, right: 0, zIndex: 9998,
           backgroundColor: '#92400E', paddingVertical: 6, paddingHorizontal: 16,
@@ -401,7 +403,7 @@ export default function DriverHomeScreen() {
                 <View style={[styles.livePulseDot, { backgroundColor: '#0284C7' }]} />
               </View>
               <Text style={[styles.radarSub, { color: theme.colors.textSecondary }]}>
-                {availabilityData.currentZone || 'My Area'} • Unassigned riders ({'>'}5m) • Tap to Accept
+                {availabilityData.currentZone || 'My Area'} • Unassigned riders (&gt;5m) • Tap to Accept
               </Text>
             </View>
             <View style={[styles.openRadarBtn, { backgroundColor: '#E0F2FE' }]}>

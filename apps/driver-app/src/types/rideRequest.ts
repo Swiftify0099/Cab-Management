@@ -65,12 +65,12 @@ export interface RideOfferPayload {
   expires_at: string
   timeout_sec: number
   paid?: boolean
+  pickup_notes?: string
   customer?: {
     id?: string
     name?: string
     rating?: number
   }
-  pickup_notes?: string
 }
 
 export interface RideOfferResponsePayload {

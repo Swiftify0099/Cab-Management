@@ -77,19 +77,39 @@ class AvailabilityServiceClass {
     this.restorePersistedState()
   }
 
-  private async restorePersistedState() {
+  public async restorePersistedState() {
     try {
       const cached = await AsyncStorage.getItem(STORAGE_KEY)
       if (cached) {
         const parsed = JSON.parse(cached)
-        // Safety: default to OFFLINE on app cold start unless actively restored
+        const isOnline = parsed.state === 'ONLINE'
         this.stateData = {
           ...this.stateData,
-          state: parsed.state === 'ONLINE' ? 'ONLINE' : 'OFFLINE',
+          state: isOnline ? 'ONLINE' : 'OFFLINE',
           currentZone: parsed.currentZone || this.stateData.currentZone,
         }
+
+        if (isOnline) {
+          // Proactively start background service & socket heartbeat on restore
+          const { DriverBackgroundLocationService } = require('./driverBackgroundLocationService')
+          DriverBackgroundLocationService.startBackgroundTracking().catch(() => {})
+
+          const { DriverSocketService } = require('./driverSocketService')
+          DriverSocketService.ensureConnected().catch(() => {})
+
+          this.startSocketHeartbeat()
+
+          // Verify with backend
+          api.patch('/driver/status', {
+            status: 'online',
+            lat: this.stateData.lat,
+            lng: this.stateData.lng,
+          }).catch(() => {})
+        }
       }
-    } catch {}
+    } catch (err) {
+      console.warn('[AvailabilityService] restorePersistedState error:', err)
+    }
   }
 
   public subscribe(listener: StateListener): () => void {
@@ -257,6 +277,14 @@ class AvailabilityServiceClass {
         lng: this.stateData.lng,
       }).catch(() => {})
 
+      // Background tracking & Presence service
+      const { DriverBackgroundLocationService } = require('./driverBackgroundLocationService')
+      DriverBackgroundLocationService.startBackgroundTracking().catch(() => {})
+
+      // Ensure socket is connected and joined
+      const { DriverSocketService } = require('./driverSocketService')
+      DriverSocketService.ensureConnected().catch(() => {})
+
       // Socket.IO event emission
       if (this.socketRef) {
         this.socketRef.emit('DRIVER_ONLINE', {
@@ -298,6 +326,9 @@ class AvailabilityServiceClass {
 
     try {
       await api.patch('/driver/status', { status: 'offline' }).catch(() => {})
+
+      const { DriverBackgroundLocationService } = require('./driverBackgroundLocationService')
+      await DriverBackgroundLocationService.stopBackgroundTracking().catch(() => {})
 
       if (this.socketRef) {
         this.socketRef.emit('DRIVER_OFFLINE', {

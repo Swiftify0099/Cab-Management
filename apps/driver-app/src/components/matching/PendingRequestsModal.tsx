@@ -164,7 +164,7 @@ export function PendingRequestsModal({
     setClaimingId(req.ride_request_id)
     try {
       DriverSoundService.playAcceptedSound()
-      
+
       // Attempt API claim
       try {
         await api.post('/matching/rides/claim-pending', {
@@ -177,7 +177,7 @@ export function PendingRequestsModal({
             offer_id: req.ride_request_id,
             accepted: true,
           })
-        } catch {}
+        } catch { }
       }
 
       Alert.alert(
@@ -223,7 +223,7 @@ export function PendingRequestsModal({
               <View>
                 <Text style={styles.title}>Pending Requests in My Area</Text>
                 <Text style={styles.subtitle}>
-                  Unassigned rider requests waiting {'>'} 5 mins
+                  Unassigned rider requests waiting &gt; 5 mins
                 </Text>
               </View>
             </View>

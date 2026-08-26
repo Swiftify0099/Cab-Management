@@ -13,6 +13,7 @@
  */
 import { io, Socket } from 'socket.io-client'
 import * as SecureStore from 'expo-secure-store'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import * as Location from 'expo-location'
 import * as Notifications from 'expo-notifications'
 import { Vibration } from 'react-native'
@@ -130,6 +131,8 @@ class DriverSocketServiceClass {
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null
   private listeners: Set<SocketStateListener> = new Set()
   private customEventListeners: Map<string, Set<(...args: any[]) => void>> = new Map()
+  private lastOfferId: string | null = null
+  private lastOfferTime: number = 0
 
   // State snapshot
   private state = {
@@ -145,8 +148,41 @@ class DriverSocketServiceClass {
     this.init()
   }
 
+  public async resolveDriverId(): Promise<string> {
+    if (this.driverUserId && this.driverUserId !== 'unknown') {
+      return this.driverUserId
+    }
+    try {
+      const raw = await SecureStore.getItemAsync('user_data')
+      if (raw) {
+        const u = JSON.parse(raw)
+        const id = u.id || u.user_id || u.driver_id
+        if (id) {
+          this.driverUserId = id
+          return id
+        }
+      }
+      const asyncId = await AsyncStorage.getItem('user_id')
+      if (asyncId) {
+        this.driverUserId = asyncId
+        return asyncId
+      }
+      const token = await SecureStore.getItemAsync('access_token')
+      if (token && token !== 'demo_token') {
+        const { jwtDecode } = require('jwt-decode')
+        const decoded: any = jwtDecode(token)
+        const id = decoded.sub || decoded.user_id || decoded.id
+        if (id) {
+          this.driverUserId = id
+          return id
+        }
+      }
+    } catch {}
+    return this.driverUserId
+  }
+
   public async init() {
-    if (this.socket || this.isConnecting) return
+    if (this.socket?.connected || this.isConnecting) return
     this.isConnecting = true
 
     try {
@@ -156,23 +192,17 @@ class DriverSocketServiceClass {
         return
       }
 
-      try {
-        const raw = await SecureStore.getItemAsync('user_data')
-        if (raw) {
-          const u = JSON.parse(raw)
-          this.driverUserId = u.id || u.user_id || u.driver_id || 'unknown'
-        }
-      } catch {}
+      await this.resolveDriverId()
 
       const s = io(WS_URL, {
         path: '/socket.io/',
         transports: ['websocket', 'polling'],
         auth: { token: `Bearer ${token}` },
         reconnection: true,
-        reconnectionDelay: 2000,
-        reconnectionDelayMax: 15000,
+        reconnectionDelay: 1500,
+        reconnectionDelayMax: 10000,
         randomizationFactor: 0.3,
-        reconnectionAttempts: 20,
+        reconnectionAttempts: Infinity,
         timeout: 15000,
       })
 
@@ -185,23 +215,49 @@ class DriverSocketServiceClass {
     }
   }
 
+  public async ensureConnected() {
+    if (this.socket?.connected) return
+    if (!this.socket) {
+      await this.init()
+      return
+    }
+    if (!this.socket.connected && !this.isConnecting) {
+      try {
+        const token = await SecureStore.getItemAsync('access_token')
+        if (token) {
+          this.socket.auth = { token: `Bearer ${token}` }
+          this.socket.connect()
+        }
+      } catch (err) {
+        console.warn('[DriverSocketService] ensureConnected error:', err)
+      }
+    }
+  }
+
   private bindSocketEvents(s: Socket) {
     s.on('connect', async () => {
       console.log('[DriverSocketService] Socket connected:', s.id)
       this.state.connected = true
       this.notify()
 
+      await this.resolveDriverId()
+
       try {
         const { AvailabilityService } = require('./availabilityService')
         AvailabilityService.setSocketInstance(s)
         AvailabilityService.handleNetworkChange(true)
-      } catch {}
 
-      s.emit('DRIVER_ONLINE', {
-        driver_id: this.driverUserId,
-        user_id: this.driverUserId,
-        timestamp: Date.now(),
-      })
+        const availState = AvailabilityService.getStateData()
+        if (availState.state !== 'OFFLINE') {
+          s.emit('DRIVER_ONLINE', {
+            driver_id: this.driverUserId,
+            user_id: this.driverUserId,
+            lat: availState.lat,
+            lng: availState.lng,
+            timestamp: Date.now(),
+          })
+        }
+      } catch {}
 
       this.startHeartbeat()
       this.reconcileStateWithBackend()
@@ -220,33 +276,64 @@ class DriverSocketServiceClass {
       this.stopHeartbeat()
       this.notify()
 
-      try {
-        const { AvailabilityService } = require('./availabilityService')
-        AvailabilityService.handleNetworkChange(false)
-      } catch {}
+      // Gracefully attempt automatic reconnect
+      if (reason === 'io server disconnect' || reason === 'transport close') {
+        setTimeout(() => {
+          this.ensureConnected()
+        }, 1000)
+      }
+    })
+
+    s.on('connect_error', (err) => {
+      console.warn('[DriverSocketService] Socket connection error:', err?.message || err)
+      this.state.connected = false
+      this.notify()
     })
 
     s.on('reconnect_attempt', (attempt: number) => {
       console.log(`[DriverSocketService] Reconnecting attempt ${attempt}...`)
     })
 
-    s.on('reconnect', (attempt: number) => {
+    s.on('reconnect', async (attempt: number) => {
       console.log(`[DriverSocketService] Reconnected after ${attempt} attempts`)
       this.state.connected = true
       this.notify()
-      s.emit('DRIVER_ONLINE', {
-        driver_id: this.driverUserId,
-        user_id: this.driverUserId,
-        timestamp: Date.now(),
-      })
+
+      await this.resolveDriverId()
+
+      try {
+        const { AvailabilityService } = require('./availabilityService')
+        AvailabilityService.handleNetworkChange(true)
+        const availState = AvailabilityService.getStateData()
+        if (availState.state !== 'OFFLINE') {
+          s.emit('DRIVER_ONLINE', {
+            driver_id: this.driverUserId,
+            user_id: this.driverUserId,
+            lat: availState.lat,
+            lng: availState.lng,
+            timestamp: Date.now(),
+          })
+        }
+      } catch {}
+
       this.startHeartbeat()
       this.reconcileStateWithBackend()
     })
 
     // ── Incoming Ride Request Events ──────────────────────────────────────────
     const handleIncomingOffer = (data: any, isPreferred = false) => {
-      console.log('[DriverSocketService] Incoming Ride Offer:', data.offer_id || data.ride_request_id)
       const offerId = data.offer_id || data.ride_request_id || data.booking_id || `off-${Date.now()}`
+
+      // Deduplication guard: ignore duplicate event within 8 seconds
+      const now = Date.now()
+      if (this.lastOfferId === offerId && now - this.lastOfferTime < 8000) {
+        console.log('[DriverSocketService] Skipping duplicate offer event:', offerId)
+        return
+      }
+      this.lastOfferId = offerId
+      this.lastOfferTime = now
+
+      console.log('[DriverSocketService] Incoming Ride Offer:', offerId)
       const normalized: IncomingRideRequestPayload = {
         offer_id: offerId,
         ride_request_id: data.ride_request_id || data.booking_id || offerId,

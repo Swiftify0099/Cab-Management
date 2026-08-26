@@ -474,7 +474,7 @@ export default function TrackTripScreen() {
   // Feature 8/9: Masked Driver Call
   const handleMaskedCall = () => {
     if (booking?.driver?.phone) {
-      Linking.openURL(`tel:${booking.driver.phone}`).catch(() => {})
+      Linking.openURL(`tel:${booking.driver.phone}`).catch(() => { })
     } else {
       Alert.alert('Masked Driver Call', 'Connecting via virtual privacy proxy...')
     }
@@ -595,7 +595,7 @@ export default function TrackTripScreen() {
           message_text: text,
         })
       }
-    } catch {} finally {
+    } catch { } finally {
       setSendingMsg(false)
     }
   }
@@ -710,8 +710,8 @@ export default function TrackTripScreen() {
                     freshness === 'LIVE'
                       ? theme.colors.success
                       : freshness === 'RECENT'
-                      ? theme.colors.warning
-                      : theme.colors.error,
+                        ? theme.colors.warning
+                        : theme.colors.error,
                 },
               ]}
             />
@@ -719,8 +719,8 @@ export default function TrackTripScreen() {
               {freshness === 'LIVE'
                 ? t('track.title', 'Live Ride Tracking')
                 : freshness === 'RECENT'
-                ? 'Recent Location'
-                : 'Updating GPS...'}
+                  ? 'Recent Location'
+                  : 'Updating GPS...'}
             </AppText>
           </View>
 
@@ -788,10 +788,10 @@ export default function TrackTripScreen() {
                       {st === 'ASSIGNED'
                         ? 'Assigned'
                         : st === 'ARRIVED'
-                        ? 'Arrived'
-                        : st === 'IN_PROGRESS'
-                        ? 'On Trip'
-                        : 'Done'}
+                          ? 'Arrived'
+                          : st === 'IN_PROGRESS'
+                            ? 'On Trip'
+                            : 'Done'}
                     </AppText>
                   </View>
                   {idx < 3 && (
