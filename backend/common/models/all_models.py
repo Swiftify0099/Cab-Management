@@ -64,10 +64,19 @@ class DriverStatus(str, PyEnum):
 class TripStatus(str, PyEnum):
     DRAFT = "draft"
     PUBLISHED = "published"
-    FULL = "full"
+    ACTIVE = "active"
+    REQUESTED = "requested"
+    MATCHED = "matched"
+    ACCEPTED = "accepted"
+    DRIVER_EN_ROUTE = "driver_en_route"
+    DRIVER_NEARBY = "driver_nearby"
+    TRIP_STARTED = "trip_started"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
+    EXPIRED = "expired"
+    FULL = "full"
+    REJECTED = "rejected"
 
 
 class BookingStatus(str, PyEnum):
@@ -806,25 +815,58 @@ class Trip(Base, UUIDMixin, TimestampMixin):
     pickup_location: Mapped[object] = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=False)
     pickup_latitude: Mapped[float] = mapped_column(Float, nullable=False)
     pickup_longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    pickup_address: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    pickup_city: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     destination_location: Mapped[object] = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=False)
     destination_latitude: Mapped[float] = mapped_column(Float, nullable=False)
     destination_longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    destination_address: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    destination_city: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     departure_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     estimated_arrival: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    
+    # Capacity & Booking Metrics
     total_seats: Mapped[int] = mapped_column(Integer, nullable=False)
     available_seats: Mapped[int] = mapped_column(Integer, nullable=False)
+    occupied_seats: Mapped[int] = mapped_column(Integer, default=0)
     window_seats: Mapped[int] = mapped_column(Integer, default=0)
     available_window_seats: Mapped[int] = mapped_column(Integer, default=0)
     window_seat_charge: Mapped[Decimal] = mapped_column(Numeric(8, 2), default=0)
+    is_full: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+
+    # Multi-Service Architecture
+    service_type: Mapped[str] = mapped_column(String(50), default="cab", index=True)  # cab, transport, organization, parcel, hotel, airport, packers
+    visibility_mode: Mapped[str] = mapped_column(String(50), default="SPECIFIC_CITY") # SPECIFIC_CITY, HEX_ZONE, ALL_CITY
+    recurrence_type: Mapped[str] = mapped_column(String(50), default="SPECIFIC_DATE", index=True) # DAILY, SPECIFIC_DATE, SCHEDULED
+    
+    # Route Deviation & Proximity Config
+    max_route_deviation_km: Mapped[float] = mapped_column(Float, default=3.0)
+    max_pickup_radius_km: Mapped[float] = mapped_column(Float, default=5.0)
+    max_pickup_deviation_left_km: Mapped[float] = mapped_column(Float, default=3.0)
+    max_pickup_deviation_right_km: Mapped[float] = mapped_column(Float, default=3.0)
+    allowed_drop_deviation_km: Mapped[float] = mapped_column(Float, default=3.0)
+
+    # Restrictions & Flags
     family_trip_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     women_only: Mapped[bool] = mapped_column(Boolean, default=False)
     parcel_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     non_stop: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[TripStatus] = mapped_column(Enum(TripStatus), default=TripStatus.DRAFT, index=True)
+    
+    # Pricing
     base_fare: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     per_km_rate: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False)
+    min_fare: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    is_negotiable: Mapped[bool] = mapped_column(Boolean, default=False)
     distance_km: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # Vehicle & Associations
     vehicle_type: Mapped[str] = mapped_column(String(50), nullable=False, server_default="sedan")
+    vehicle_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("vehicles.id"), nullable=True)
+    organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    schedule_template_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    service_metadata: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+
     polyline: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Encoded Google Maps polyline
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -835,6 +877,86 @@ class Trip(Base, UUIDMixin, TimestampMixin):
     bookings: Mapped[List["Booking"]] = relationship(back_populates="trip")
     route_stops: Mapped[List["RouteStop"]] = relationship(back_populates="trip", order_by="RouteStop.sequence_order")
     live_tracking: Mapped[Optional["LiveTracking"]] = relationship(back_populates="trip", uselist=False)
+
+
+class DriverSavedLocation(Base, UUIDMixin, TimestampMixin):
+    """Driver-saved frequent pickup/drop locations for intercity trips."""
+    __tablename__ = "driver_saved_locations"
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"), nullable=False, index=True)
+    location_type: Mapped[str] = mapped_column(String(20), default="both")  # pickup, drop, both
+    label: Mapped[str] = mapped_column(String(100), nullable=False)  # e.g., 'Swargate Hub', 'BKC Office'
+    address: Mapped[str] = mapped_column(String(500), nullable=False)
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    city: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    state: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    postal_code: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    landmark: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class Organization(Base, UUIDMixin, TimestampMixin):
+    """Registered educational or corporate organization (College, School, Company)."""
+    __tablename__ = "organizations"
+
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    code: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    org_type: Mapped[str] = mapped_column(String(50), default="college")  # college, school, corporate, company
+    address: Mapped[str] = mapped_column(String(500), nullable=False)
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    city: Mapped[str] = mapped_column(String(100), nullable=False)
+    contact_phone: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    contact_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class OrganizationMember(Base, UUIDMixin, TimestampMixin):
+    """Student or employee registered with an organization and assigned pickup point."""
+    __tablename__ = "organization_members"
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    member_type: Mapped[str] = mapped_column(String(30), default="student")  # student, employee, faculty
+    registration_no: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)  # Roll number or Employee ID
+    pickup_address: Mapped[str] = mapped_column(String(500), nullable=False)
+    pickup_latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    pickup_longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    drop_address: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    route_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class OrganizationRoute(Base, UUIDMixin, TimestampMixin):
+    """Pre-configured route for an organization with designated stops and timetable."""
+    __tablename__ = "organization_routes"
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    route_name: Mapped[str] = mapped_column(String(255), nullable=False)  # e.g., 'Route 4 — Kothrud to Campus'
+    assigned_driver_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("drivers.id"), nullable=True)
+    assigned_vehicle_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("vehicles.id"), nullable=True)
+    stop_points: Mapped[list] = mapped_column(JSONB, default=list)  # list of {name, lat, lng, time, order}
+    scheduled_start_time: Mapped[str] = mapped_column(String(20), nullable=False)  # e.g., '07:30 AM'
+    scheduled_end_time: Mapped[str] = mapped_column(String(20), nullable=False)    # e.g., '08:45 AM'
+    capacity: Mapped[int] = mapped_column(Integer, default=30)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class TripScheduleTemplate(Base, UUIDMixin, TimestampMixin):
+    """Recurring trip template (Annual/Daily/Weekly) for generating daily trip runs."""
+    __tablename__ = "trip_schedule_templates"
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"), nullable=False, index=True)
+    service_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    recurrence_type: Mapped[str] = mapped_column(String(30), default="daily")  # daily, weekdays, weekly
+    days_of_week: Mapped[list] = mapped_column(JSONB, default=lambda: [1, 2, 3, 4, 5])  # 1=Mon .. 7=Sun
+    excluded_dates: Mapped[list] = mapped_column(JSONB, default=list)  # holidays in 'YYYY-MM-DD'
+    start_time: Mapped[str] = mapped_column(String(20), nullable=False)  # '08:00'
+    end_time: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    template_config: Mapped[dict] = mapped_column(JSONB, nullable=False)  # Full Trip configuration snapshot
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_instance_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
 
 
 class RouteStop(Base, UUIDMixin, TimestampMixin):

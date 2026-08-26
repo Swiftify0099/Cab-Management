@@ -1,40 +1,60 @@
-﻿/**
- * Create Trip Screen — Driver publishes a new intercity route.
- * Stepper Flow with Visibility Preferences in Step 1, Map Search,
- * Conditional Hex/Zone Drawing, and Direct Home Dashboard Navigation.
+/**
+ * Multi-Step Intercity Trip Creation Wizard — Driver SuperApp
+ * ─────────────────────────────────────────────────────────────
+ * 5-Step Flow:
+ *   Step 1: Visibility & Route (Specific City with Saved Locations & Pinpoint Map Picker / Hex Zone)
+ *   Step 2: Service & Trip Configuration (Cab, Transport, Organization, Parcel, Hotel, Airport, Packers & Movers)
+ *   Step 3: Fare & Restrictions (Base fare, Min fare, Negotiable toggle, Women Only, Parcel capability)
+ *   Step 4: Vehicle, Capacity & Additional Options
+ *   Step 5: Review & Publish Preview
+ *
+ * State is safely persisted in AsyncStorage to prevent data loss on accidental navigation.
  */
-import { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import {
-  View, Text, ScrollView, TextInput, TouchableOpacity, FlatList,
-  StyleSheet, ActivityIndicator, Alert, Switch, Dimensions, Platform, Modal
+  View,
+  Text,
+  ScrollView,
+  TextInput,
+  TouchableOpacity,
+  FlatList,
+  StyleSheet,
+  ActivityIndicator,
+  Alert,
+  Switch,
+  Dimensions,
+  Platform,
+  Modal,
 } from 'react-native'
 import { router } from 'expo-router'
-import { SafeAreaView } from 'react-native-safe-area-context'
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { LinearGradient } from 'expo-linear-gradient'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import DateTimePicker from '@react-native-community/datetimepicker'
-import { api } from '../src/api/client'
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
+import { api } from '../src/api/client'
 import { getDirections } from '../src/services/googleMaps'
-import type { RouteData, AutocompletePrediction } from '../src/services/googleMaps'
-import { reverseGeocode, geocodeCity, getPlaceAutocomplete } from '../src/utils/maps'
+import type { RouteData } from '../src/services/googleMaps'
+import LocationPickerModal, { SelectedLocationData } from '../src/components/map/LocationPickerModal'
 import {
-  CoverageService,
-  VisibilityMode,
-  ServiceCityItem,
-  ServiceZoneItem,
-} from '../src/services/coverageService'
+  SUPPORTED_SERVICES,
+  ServiceTypeKey,
+  DEFAULT_SERVICE_METADATA,
+} from '../src/services/tripServiceStrategy'
 
-// Lazy-import MapView to avoid crash if native module isn't ready
+const WIZARD_DRAFT_KEY = '@driver_trip_wizard_draft_v2'
+const { width: SCREEN_W } = Dimensions.get('window')
+
 let MapView: any = null
 let Marker: any = null
-let Polygon: any = null
 let Polyline: any = null
+let Polygon: any = null
 try {
   const maps = require('react-native-maps')
   MapView = maps.default
   Marker = maps.Marker
-  Polygon = maps.Polygon
   Polyline = maps.Polyline
+  Polygon = maps.Polygon
 } catch (e) {
   console.warn('[CreateTrip] react-native-maps not available:', e)
 }
@@ -54,928 +74,1561 @@ function decodePolyline(encoded: string): { latitude: number; longitude: number 
   return points
 }
 
-const VEHICLE_TYPES = [
-  { value: 'sedan', label: 'Sedan', icon: 'car-side', seats: 4 },
-  { value: 'suv', label: 'SUV', icon: 'car-estate', seats: 6 },
-  { value: 'mini', label: 'Mini', icon: 'car-hatchback', seats: 4 },
-  { value: 'tempo_traveller', label: 'Tempo', icon: 'van-passenger', seats: 12 },
-]
-
-interface DriverVehicle {
+interface SavedLocationItem {
   id: string
-  vehicle_type: string
+  label: string
+  address: string
+  latitude: number
+  longitude: number
+  city?: string
+  location_type?: string
+}
+
+interface VehicleItem {
+  id: string
   make: string
   model: string
   registration_number: string
+  vehicle_type: string
   total_seats: number
-  is_verified: boolean
-  icon?: string
 }
 
+const DEFAULT_SAVED_LOCATIONS: SavedLocationItem[] = [
+  { id: '1', label: 'Swargate Bus Station', address: 'Swargate, Pune, Maharashtra 411042', latitude: 18.5018, longitude: 73.8580, city: 'Pune' },
+  { id: '2', label: 'Shivajinagar Station', address: 'Shivajinagar, Pune, Maharashtra 411005', latitude: 18.5314, longitude: 73.8446, city: 'Pune' },
+  { id: '3', label: 'Dadar TT Circle', address: 'Dadar East, Mumbai, Maharashtra 400014', latitude: 19.0178, longitude: 72.8478, city: 'Mumbai' },
+  { id: '4', label: 'BKC Business Hub', address: 'Bandra Kurla Complex, Mumbai 400051', latitude: 19.0657, longitude: 72.8687, city: 'Mumbai' },
+]
+
 export default function CreateTripScreen() {
-  const [isMounted, setIsMounted] = useState(false)
-  const [step, setStep] = useState(1) // 1 to 4
-  
-  useEffect(() => {
-    const t = setTimeout(() => setIsMounted(true), 300)
-    return () => clearTimeout(t)
-  }, [])
+  const insets = useSafeAreaInsets()
+  const [step, setStep] = useState<number>(1) // 1 to 5
+  const [loading, setLoading] = useState<boolean>(false)
+  const [publishing, setPublishing] = useState<boolean>(false)
 
-  const [form, setForm] = useState({
-    pickup_lat: 18.5204,
-    pickup_lng: 73.8567,
-    destination_lat: 19.0760,
-    destination_lng: 72.8777,
-    pickup_city_display: 'Pune',
-    destination_city_display: 'Mumbai',
-    departure_time: '',
-    total_seats: 4,
-    vehicle_type: 'sedan',
-    base_fare: '450',
-    per_km_rate: '3.5',
-    parcel_enabled: false,
-    women_only: false,
-    window_seats: 0,
-    window_seat_charge: '30',
-    notes: '',
+  // Step 1: Visibility & Route
+  const [visibilityMode, setVisibilityMode] = useState<'SPECIFIC_CITY' | 'HEX_ZONE'>('SPECIFIC_CITY')
+  const [pickupData, setPickupData] = useState<SelectedLocationData>({
+    latitude: 18.5204,
+    longitude: 73.8567,
+    address: 'Swargate Bus Stand, Pune, Maharashtra',
+    city: 'Pune',
+    state: 'Maharashtra',
   })
-  
-  const [loading, setLoading] = useState(false)
+  const [dropData, setDropData] = useState<SelectedLocationData>({
+    latitude: 19.0760,
+    longitude: 72.8777,
+    address: 'Dadar TT Circle, Mumbai, Maharashtra',
+    city: 'Mumbai',
+    state: 'Maharashtra',
+  })
+
+  // Location Picker Modal & Saved Locations Bottom Sheet
+  const [locationPickerTarget, setLocationPickerTarget] = useState<'pickup' | 'drop' | null>(null)
+  const [savedLocModalTarget, setSavedLocModalTarget] = useState<'pickup' | 'drop' | null>(null)
+  const [savedLocations, setSavedLocations] = useState<SavedLocationItem[]>(DEFAULT_SAVED_LOCATIONS)
+
+  // Route & Corridor Parameters
+  const [maxRouteDeviationKm, setMaxRouteDeviationKm] = useState<string>('3.0')
+  const [maxPickupRadiusKm, setMaxPickupRadiusKm] = useState<string>('5.0')
+  const [maxDeviationLeftKm, setMaxDeviationLeftKm] = useState<string>('3.0')
+  const [maxDeviationRightKm, setMaxDeviationRightKm] = useState<string>('3.0')
   const [routeData, setRouteData] = useState<RouteData | null>(null)
-  const [fetchingRoute, setFetchingRoute] = useState(false)
-  const [predictions, setPredictions] = useState<AutocompletePrediction[]>([])
-  const [activeSearch, setActiveSearch] = useState<'pickup' | 'destination' | null>(null)
-  const [myVehicles, setMyVehicles] = useState<DriverVehicle[]>([])
-  const [vehiclesLoading, setVehiclesLoading] = useState(false)
+  const [fetchingRoute, setFetchingRoute] = useState<boolean>(false)
 
-  // Map Drawing State (Used ONLY when in Specific Hex / Zone Mode)
-  const [pickupPolygon, setPickupPolygon] = useState<{latitude:number;longitude:number}[]>([])
-  const [destinationPolygon, setDestinationPolygon] = useState<{latitude:number;longitude:number}[]>([])
-  const [drawingMode, setDrawingMode] = useState<'pickup' | 'destination' | null>(null)
+  // Step 2: Service Selection & Dynamic Metadata
+  const [selectedService, setSelectedService] = useState<ServiceTypeKey>('cab')
+  const [serviceMeta, setServiceMeta] = useState<any>(DEFAULT_SERVICE_METADATA.cab)
+  const [recurrenceType, setRecurrenceType] = useState<'DAILY' | 'SPECIFIC_DATE' | 'SCHEDULED'>('DAILY')
+  const [departureDate, setDepartureDate] = useState<Date>(new Date(Date.now() + 3600 * 1000 * 2))
+  const [showDatePicker, setShowDatePicker] = useState<boolean>(false)
+  const [showTimePicker, setShowTimePicker] = useState<boolean>(false)
 
-  // Date/Time
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null)
-  const [showDatePicker, setShowDatePicker] = useState(false)
-  const [showTimePicker, setShowTimePicker] = useState(false)
+  // Step 3: Fare & Restrictions
+  const [baseFare, setBaseFare] = useState<string>('450')
+  const [perKmRate, setPerKmRate] = useState<string>('3.5')
+  const [minFare, setMinFare] = useState<string>('350')
+  const [isNegotiable, setIsNegotiable] = useState<boolean>(true)
+  const [womenOnly, setWomenOnly] = useState<boolean>(false)
+  const [parcelEnabled, setParcelEnabled] = useState<boolean>(true)
 
-  // Driver Request Visibility Mode Preferences (Step 1)
-  const [visibilityMode, setVisibilityMode] = useState<VisibilityMode>('all_city')
-  const [availableCities, setAvailableCities] = useState<ServiceCityItem[]>([])
-  const [selectedCityIds, setSelectedCityIds] = useState<string[]>([])
-  const [zonesByCity, setZonesByCity] = useState<Record<string, ServiceZoneItem[]>>({})
-  const [selectedZoneIds, setSelectedZoneIds] = useState<string[]>([])
-  const [coverageLoading, setCoverageLoading] = useState(false)
+  // Step 4: Vehicle & Capacity Allocation
+  const [myVehicles, setMyVehicles] = useState<VehicleItem[]>([
+    { id: 'v1', make: 'Maruti Suzuki', model: 'Dzire Prime', registration_number: 'MH 12 AB 1234', vehicle_type: 'sedan', total_seats: 4 },
+    { id: 'v2', make: 'Toyota', model: 'Innova Crysta', registration_number: 'MH 14 CD 5678', vehicle_type: 'suv', total_seats: 6 },
+  ])
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string>('v1')
+  const [totalSeats, setTotalSeats] = useState<number>(4)
+  const [notes, setNotes] = useState<string>('')
 
-  // Load coverage data on mount
+  // ─── Load & Persist Draft ──────────────────────────────────────────────────
+
   useEffect(() => {
-    setCoverageLoading(true)
-    Promise.all([
-      CoverageService.getAvailableCities(),
-      CoverageService.getDriverCoverage(),
-    ])
-      .then(async ([cities, coverage]) => {
-        setAvailableCities(cities)
-        if (coverage?.visibility_mode) {
-          setVisibilityMode(coverage.visibility_mode)
-        }
-
-        const selectedIds = coverage?.covered_cities
-          ?.filter(c => c.is_selected || coverage.visibility_mode === 'all_city')
-          .map(c => c.city_id) || []
-        setSelectedCityIds(selectedIds.length > 0 ? selectedIds : cities.map(c => c.city_id))
-
-        // Preload zones
-        const zoneMap: Record<string, ServiceZoneItem[]> = {}
-        for (const city of cities) {
-          const zones = await CoverageService.getCityZones(city.city_id)
-          zoneMap[city.city_id] = zones
-        }
-        setZonesByCity(zoneMap)
-      })
-      .catch(err => console.warn('[CreateTrip] Coverage load error:', err))
-      .finally(() => setCoverageLoading(false))
+    AsyncStorage.getItem(WIZARD_DRAFT_KEY).then((data) => {
+      if (data) {
+        try {
+          const draft = JSON.parse(data)
+          if (draft.pickupData) setPickupData(draft.pickupData)
+          if (draft.dropData) setDropData(draft.dropData)
+          if (draft.selectedService) {
+            setSelectedService(draft.selectedService)
+            setServiceMeta(draft.serviceMeta || DEFAULT_SERVICE_METADATA[draft.selectedService as ServiceTypeKey])
+          }
+          if (draft.baseFare) setBaseFare(draft.baseFare)
+          if (draft.recurrenceType) setRecurrenceType(draft.recurrenceType)
+          if (draft.totalSeats) setTotalSeats(draft.totalSeats)
+        } catch {}
+      }
+    })
+    // Fetch server saved locations
+    api.get('/trips/saved-locations').then((res: any) => {
+      if (res.data?.data && Array.isArray(res.data.data) && res.data.data.length > 0) {
+        setSavedLocations(res.data.data)
+      }
+    }).catch(() => {})
   }, [])
 
-  // Load driver's verified vehicles for Step 2
+  // Auto-save draft on changes
+  const saveDraft = useCallback(() => {
+    const draft = {
+      pickupData,
+      dropData,
+      selectedService,
+      serviceMeta,
+      recurrenceType,
+      baseFare,
+      totalSeats,
+      womenOnly,
+      parcelEnabled,
+      isNegotiable,
+    }
+    AsyncStorage.setItem(WIZARD_DRAFT_KEY, JSON.stringify(draft)).catch(() => {})
+  }, [pickupData, dropData, selectedService, serviceMeta, recurrenceType, baseFare, totalSeats, womenOnly, parcelEnabled, isNegotiable])
+
   useEffect(() => {
-    if (step !== 2 || myVehicles.length > 0) return
-    setVehiclesLoading(true)
-    
-    api.get('/driver/my-vehicles')
-      .then(res => {
-        const data = res.data?.data || []
-        if (data.length > 0) {
-          setMyVehicles(data)
-          const first = data.find((v: any) => v.is_verified) || data[0]
-          if (first) {
-            update('vehicle_type', first.vehicle_type)
-            update('total_seats', first.total_seats || first.seat_capacity || 4)
-          }
-          return
-        }
-        throw new Error('No API vehicles')
-      })
-      .catch(async () => {
-        try {
-          const { VehicleService: VS } = require('../src/services/vehicleService')
-          const vsList = await VS.getVehicles()
-          const approved = vsList.filter((v: any) => v.status === 'ACTIVE' || v.status === 'APPROVED' || v.status === 'INACTIVE')
-          if (approved.length > 0) {
-            const mapped = approved.map((v: any) => ({
-              id: v.id,
-              vehicle_type: v.vehicle_type,
-              make: v.make,
-              model: v.model,
-              registration_number: v.registration_number,
-              total_seats: v.seat_capacity,
-              is_verified: true,
-            }))
-            setMyVehicles(mapped)
-            const activeVeh = approved.find((v: any) => v.is_active) || approved[0]
-            if (activeVeh) {
-              update('vehicle_type', activeVeh.vehicle_type)
-              update('total_seats', activeVeh.seat_capacity)
-            }
-          }
-        } catch {}
-      })
-      .finally(() => setVehiclesLoading(false))
-  }, [step])
+    saveDraft()
+  }, [saveDraft])
 
-  const update = (key: string, value: any) => setForm(p => ({ ...p, [key]: value }))
-
-  // Reverse Geocode when map markers move
-  const handleMarkerDrag = async (type: 'pickup' | 'destination', coord: { latitude: number, longitude: number }) => {
-    if (type === 'pickup') {
-      update('pickup_lat', coord.latitude)
-      update('pickup_lng', coord.longitude)
-    } else {
-      update('destination_lat', coord.latitude)
-      update('destination_lng', coord.longitude)
-    }
-
-    const res = await reverseGeocode(coord.latitude, coord.longitude)
-    if (res) {
-      if (type === 'pickup') update('pickup_city_display', res.city)
-      else update('destination_city_display', res.city)
-    }
-  }
-
-  // Geocode search text
-  const handleSearchTextChange = async (type: 'pickup' | 'destination', text: string) => {
-    update(type === 'pickup' ? 'pickup_city_display' : 'destination_city_display', text)
-    setActiveSearch(type)
-    if (text.length > 2) {
-      const results = await getPlaceAutocomplete(text)
-      setPredictions(results)
-    } else {
-      setPredictions([])
-    }
-  }
-
-  const handleSelectPrediction = async (prediction: AutocompletePrediction) => {
-    if (!activeSearch) return
-    const type = activeSearch
-    setActiveSearch(null)
-    setPredictions([])
-    
-    update(type === 'pickup' ? 'pickup_city_display' : 'destination_city_display', prediction.description)
-    
-    const res = await geocodeCity(prediction.description)
-    if (res) {
-      if (type === 'pickup') {
-        update('pickup_lat', res.lat)
-        update('pickup_lng', res.lon)
-      } else {
-        update('destination_lat', res.lat)
-        update('destination_lng', res.lon)
-      }
-    }
-  }
-
-  // Fetch Route whenever lat/lng changes
-  const fetchRoute = useCallback(async () => {
-    if (!form.pickup_lat || !form.destination_lat) return
+  // Fetch Google Directions Polyline when coordinates change
+  const fetchRoutePolyline = useCallback(async () => {
+    if (!pickupData.latitude || !dropData.latitude) return
     setFetchingRoute(true)
     try {
-      const data = await getDirections(
-        { lat: form.pickup_lat, lng: form.pickup_lng },
-        { lat: form.destination_lat, lng: form.destination_lng },
+      const res = await getDirections(
+        { lat: pickupData.latitude, lng: pickupData.longitude },
+        { lat: dropData.latitude, lng: dropData.longitude }
       )
-      if (data) setRouteData(data)
+      if (res) {
+        setRouteData(res)
+        // Auto-calculate suggested base fare
+        const estFare = Math.max(300, Math.round(res.distanceKm * 3.2))
+        setBaseFare(String(estFare))
+        setMinFare(String(Math.round(estFare * 0.8)))
+      }
     } catch (e) {
-      console.warn('[CreateTrip] Route fetch failed:', e)
+      console.warn('Failed to calculate route polyline', e)
     } finally {
       setFetchingRoute(false)
     }
-  }, [form.pickup_lat, form.pickup_lng, form.destination_lat, form.destination_lng])
+  }, [pickupData, dropData])
 
   useEffect(() => {
-    if (form.pickup_lat && form.destination_lat) {
-      const t = setTimeout(fetchRoute, 1000)
-      return () => clearTimeout(t)
-    }
-  }, [form.pickup_lat, form.pickup_lng, form.destination_lat, form.destination_lng])
+    fetchRoutePolyline()
+  }, [fetchRoutePolyline])
 
-  const handleMapPress = useCallback((event: any) => {
-    if (!drawingMode || visibilityMode !== 'specific_hex') return
-    const coord = event.nativeEvent.coordinate
-    if (drawingMode === 'pickup') setPickupPolygon(prev => [...prev, coord])
-    else setDestinationPolygon(prev => [...prev, coord])
-  }, [drawingMode, visibilityMode])
+  // ─── Step Navigation & Validation ──────────────────────────────────────────
 
-  const handleFinishDrawing = () => {
-    const poly = drawingMode === 'pickup' ? pickupPolygon : destinationPolygon
-    if (poly.length > 0 && poly.length < 3) {
-      Alert.alert('Too few points', 'Tap at least 3 points on the map to define a zone or reset.')
-      return
+  const handleNextStep = () => {
+    if (step === 1) {
+      if (!pickupData.address || !dropData.address) {
+        Alert.alert('Incomplete Route', 'Please specify both pickup and destination locations.')
+        return
+      }
+    } else if (step === 2) {
+      if (selectedService === 'organization' && !serviceMeta.organization_name) {
+        setServiceMeta({ ...serviceMeta, organization_name: 'COEP Technological University', organization_id: 'org-coep-1' })
+      }
+    } else if (step === 3) {
+      if (!baseFare || parseFloat(baseFare) <= 0) {
+        Alert.alert('Invalid Fare', 'Please specify a valid base fare.')
+        return
+      }
     }
-    setDrawingMode(null)
+    setStep((prev) => Math.min(prev + 1, 5))
   }
 
-  const removePolygonPoint = (type: 'pickup' | 'destination', index: number) => {
-    if (type === 'pickup') {
-      setPickupPolygon(prev => prev.filter((_, i) => i !== index))
-    } else {
-      setDestinationPolygon(prev => prev.filter((_, i) => i !== index))
-    }
+  const handlePrevStep = () => {
+    setStep((prev) => Math.max(prev - 1, 1))
   }
 
-  // Publish / Save Trip and navigate directly back to Home Dashboard
-  const handleCreate = async () => {
-    setLoading(true)
+  // ─── Publish Trip Action ───────────────────────────────────────────────────
+
+  const handlePublishTrip = async () => {
+    setPublishing(true)
     try {
-      const isoTime = form.departure_time 
-        ? new Date(form.departure_time).toISOString() 
-        : new Date(Date.now() + 3600000).toISOString()
-
-      // Update driver's request visibility preferences
-      try {
-        await CoverageService.updateDriverCoverage({
-          visibility_mode: visibilityMode,
-          city_ids: selectedCityIds,
-        })
-      } catch (covErr) {
-        console.warn('[CreateTrip] Failed to update visibility mode preference:', covErr)
+      const payload = {
+        pickup_lat: pickupData.latitude,
+        pickup_lng: pickupData.longitude,
+        destination_lat: dropData.latitude,
+        destination_lng: dropData.longitude,
+        pickup_address: pickupData.address,
+        destination_address: dropData.address,
+        pickup_city: pickupData.city || 'Pune',
+        destination_city: dropData.city || 'Mumbai',
+        departure_time: departureDate.toISOString(),
+        total_seats: totalSeats,
+        vehicle_type: myVehicles.find((v) => v.id === selectedVehicleId)?.vehicle_type || 'sedan',
+        vehicle_id: selectedVehicleId,
+        base_fare: parseFloat(baseFare),
+        per_km_rate: parseFloat(perKmRate),
+        min_fare: minFare ? parseFloat(minFare) : undefined,
+        is_negotiable: isNegotiable,
+        service_type: selectedService,
+        visibility_mode: visibilityMode,
+        recurrence_type: recurrenceType,
+        max_route_deviation_km: parseFloat(maxRouteDeviationKm) || 3.0,
+        max_pickup_radius_km: parseFloat(maxPickupRadiusKm) || 5.0,
+        max_pickup_deviation_left_km: parseFloat(maxDeviationLeftKm) || 3.0,
+        max_pickup_deviation_right_km: parseFloat(maxDeviationRightKm) || 3.0,
+        women_only: womenOnly,
+        parcel_enabled: parcelEnabled,
+        service_metadata: serviceMeta,
+        encoded_polyline: routeData?.encodedPolyline,
+        distance_km: routeData?.distanceKm || 150.0,
+        notes: notes,
       }
 
-      await api.post(`/trips/`, {
-        pickup_lat: form.pickup_lat,
-        pickup_lng: form.pickup_lng,
-        destination_lat: form.destination_lat,
-        destination_lng: form.destination_lng,
-        pickup_city: form.pickup_city_display,
-        destination_city: form.destination_city_display,
-        departure_time: isoTime,
-        total_seats: form.total_seats,
-        vehicle_type: form.vehicle_type,
-        base_fare: Number(form.base_fare),
-        per_km_rate: Number(form.per_km_rate),
-        parcel_enabled: form.parcel_enabled,
-        women_only: form.women_only,
-        window_seats: form.window_seats,
-        window_seat_charge: Number(form.window_seat_charge),
-        notes: form.notes.trim() || null,
-        encoded_polyline: routeData?.encodedPolyline || null,
-        distance_km: routeData?.distanceKm || null,
-        duration_minutes: routeData?.durationMinutes || null,
-        pickup_polygon: visibilityMode === 'specific_hex' && pickupPolygon.length >= 3 
-          ? pickupPolygon.map(c => ({ lat: c.latitude, lng: c.longitude })) 
-          : null,
-        destination_polygon: visibilityMode === 'specific_hex' && destinationPolygon.length >= 3 
-          ? destinationPolygon.map(c => ({ lat: c.latitude, lng: c.longitude })) 
-          : null,
-        visibility_mode: visibilityMode,
-        selected_city_ids: selectedCityIds,
-        selected_zone_ids: selectedZoneIds,
-      })
+      const res = await api.post('/trips/publish-intercity', payload)
+      await AsyncStorage.removeItem(WIZARD_DRAFT_KEY)
 
       Alert.alert(
-        'Trip Created Successfully! 🎉',
-        `Your trip from ${form.pickup_city_display} to ${form.destination_city_display} is now listed. You can start the trip from your Dashboard.`
+        '🎉 Trip Published Successfully!',
+        `Your ${SUPPORTED_SERVICES.find((s) => s.key === selectedService)?.title} trip is now active and matching eligible customers.`,
+        [
+          {
+            text: 'View Dashboard',
+            onPress: () => router.replace('/(tabs)/'),
+          },
+        ]
       )
-      
-      // Navigate to Home Dashboard with created trip visible
-      router.replace('/(tabs)')
-    } catch (err: any) {
-      const status = err?.response?.status
-      const detail = err?.response?.data?.detail
-      let msg = 'Could not publish trip. Please try again.'
-
-      if (!err?.response) {
-        // Network timeout or server sleep (Render free tier)
-        msg = 'Server is waking up. Please wait 30 seconds and try again.'
-      } else if (status === 422) {
-        // Validation error — show which field failed
-        const errors = err?.response?.data?.detail
-        if (Array.isArray(errors)) {
-          const fieldErrors = errors.map((e: any) => `${e.loc?.slice(-1)[0]}: ${e.msg}`).join('\n')
-          msg = `Validation error:\n${fieldErrors}`
-        } else {
-          msg = typeof detail === 'string' ? detail : 'Invalid trip data. Check all fields.'
-        }
-      } else if (status === 401) {
-        msg = 'Session expired. Please log in again.'
-      } else if (status === 403) {
-        msg = 'Driver account not fully verified. Please complete KYC first.'
-      } else if (status === 500) {
-        msg = 'Server error. Our team has been notified. Please try again in a moment.'
-      } else if (typeof detail === 'string') {
-        msg = detail
-      }
-
-      console.error('[CreateTrip] Publish failed:', status, detail, err?.message)
-      Alert.alert('Publish Failed', msg)
+    } catch (e: any) {
+      const msg = e.response?.data?.message || e.message || 'Failed to publish trip. Please try again.'
+      Alert.alert('Publish Error', msg)
     } finally {
-      setLoading(false)
+      setPublishing(false)
     }
   }
 
-  const nextStep = () => {
-    if (step === 1 && !routeData) {
-      Alert.alert('Route not found', 'Please ensure valid pickup and destination points on the map.')
-      return
-    }
-    if (step === 2 && !form.departure_time) {
-      Alert.alert('Missing Info', 'Please select a departure time.')
-      return
-    }
-    if (step === 3 && (!form.base_fare || Number(form.base_fare) < 50)) {
-      Alert.alert('Missing Info', 'Please enter a valid base fare (min ₹50).')
-      return
-    }
-    if (step < 4) setStep(step + 1)
-  }
+  // ─── Render Step 1: Visibility & Route ──────────────────────────────────────
 
-  const STEP_LABELS = ['Visibility & Route', 'Vehicle & Date', 'Pricing & Prefs', 'Review & Publish']
-
-  return (
-    <View style={styles.container}>
-      {/* Professional Gradient Header */}
-      <LinearGradient colors={['#0F172A', '#1E3A5F', '#0284C7']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.header}>
-        <SafeAreaView edges={['top']}>
-          <View style={styles.headerTop}>
-            <TouchableOpacity onPress={() => step > 1 ? setStep(step - 1) : router.back()} style={[styles.backBtn, { backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 12 }]}>
-              <Feather name="arrow-left" size={22} color="#F8FAFC" />
-            </TouchableOpacity>
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={[styles.headerTitle, { fontSize: 17 }]}>Publish Intercity Trip</Text>
-              <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, fontWeight: '500' }}>
-                Step {step} of 4 — {STEP_LABELS[step - 1]}
+  const renderStep1 = () => {
+    return (
+      <View style={styles.stepContainer}>
+        {/* Visibility Option Toggle */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionHeading}>Route Visibility Mode</Text>
+          <View style={styles.modeToggleRow}>
+            <TouchableOpacity
+              style={[styles.modeTab, visibilityMode === 'SPECIFIC_CITY' && styles.modeTabActive]}
+              onPress={() => setVisibilityMode('SPECIFIC_CITY')}
+              activeOpacity={0.8}
+            >
+              <MaterialCommunityIcons
+                name="city"
+                size={18}
+                color={visibilityMode === 'SPECIFIC_CITY' ? '#FFFFFF' : '#64748B'}
+              />
+              <Text style={[styles.modeTabText, visibilityMode === 'SPECIFIC_CITY' && styles.modeTabTextActive]}>
+                Specific City
               </Text>
-            </View>
-            <View style={{ backgroundColor: 'rgba(255,255,255,0.15)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 }}>
-              <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '800' }}>{step}/4</Text>
-            </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.modeTab, visibilityMode === 'HEX_ZONE' && styles.modeTabActive]}
+              onPress={() => setVisibilityMode('HEX_ZONE')}
+              activeOpacity={0.8}
+            >
+              <MaterialCommunityIcons
+                name="hexagon-slice-6"
+                size={18}
+                color={visibilityMode === 'HEX_ZONE' ? '#FFFFFF' : '#64748B'}
+              />
+              <Text style={[styles.modeTabText, visibilityMode === 'HEX_ZONE' && styles.modeTabTextActive]}>
+                Hexagonal Zone
+              </Text>
+            </TouchableOpacity>
           </View>
+        </View>
 
-          {/* Professional Progress Bar */}
-          <View style={{ paddingHorizontal: 20, paddingTop: 14, paddingBottom: 10 }}>
-            <View style={{ flexDirection: 'row', gap: 6 }}>
-              {[1, 2, 3, 4].map(s => (
-                <View key={s} style={{ flex: 1 }}>
-                  <View style={[{
-                    height: 4,
-                    borderRadius: 2,
-                    backgroundColor: step >= s ? '#38BDF8' : 'rgba(255,255,255,0.2)',
-                  }]} />
-                  <Text style={{ color: step >= s ? '#38BDF8' : 'rgba(255,255,255,0.4)', fontSize: 9, fontWeight: '700', marginTop: 3, textAlign: 'center' }}>
-                    {step > s ? '✓' : s}
-                  </Text>
-                </View>
-              ))}
+        {/* Pickup & Destination Selectors */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionHeading}>Origin & Destination</Text>
+
+          {/* Pickup Control */}
+          <View style={styles.locBlock}>
+            <View style={styles.locHeaderRow}>
+              <View style={[styles.dotIndicator, { backgroundColor: '#10B981' }]} />
+              <Text style={styles.locTitle}>PICKUP LOCATION</Text>
             </View>
-          </View>
-        </SafeAreaView>
-      </LinearGradient>
-
-      <View style={styles.content}>
-        {/* ================= STEP 1: ROUTE, MAP & VISIBILITY PREFERENCE ================= */}
-        {step === 1 && (
-          <View style={styles.stepContainer}>
-            {/* Visibility Mode Selector Strip at top */}
-            <View style={styles.stepHeader}>
-              <Text style={styles.stepTitle}>1. Visibility & Route</Text>
-              <Text style={styles.stepSub}>Select your request visibility mode & search pickup / drop locations.</Text>
-              
-              <View style={styles.visibilityTabsRow}>
-                <TouchableOpacity
-                  style={[styles.visTab, visibilityMode === 'all_city' && styles.visTabActive]}
-                  onPress={() => setVisibilityMode('all_city')}
-                >
-                  <Feather name="globe" size={14} color={visibilityMode === 'all_city' ? '#FFF' : '#3B82F6'} />
-                  <Text style={[styles.visTabText, visibilityMode === 'all_city' && styles.visTabTextActive]}>
-                    All City
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.visTab, visibilityMode === 'specific_city' && styles.visTabActive]}
-                  onPress={() => setVisibilityMode('specific_city')}
-                >
-                  <Feather name="map-pin" size={14} color={visibilityMode === 'specific_city' ? '#FFF' : '#3B82F6'} />
-                  <Text style={[styles.visTabText, visibilityMode === 'specific_city' && styles.visTabTextActive]}>
-                    Specific City
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.visTab, visibilityMode === 'specific_hex' && styles.visTabActive]}
-                  onPress={() => setVisibilityMode('specific_hex')}
-                >
-                  <MaterialCommunityIcons name="hexagon-slice-6" size={14} color={visibilityMode === 'specific_hex' ? '#FFF' : '#3B82F6'} />
-                  <Text style={[styles.visTabText, visibilityMode === 'specific_hex' && styles.visTabTextActive]}>
-                    Hex / Zone
-                  </Text>
-                </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.locInputBox}
+              onPress={() => setLocationPickerTarget('pickup')}
+              activeOpacity={0.8}
+            >
+              <Feather name="map-pin" size={18} color="#10B981" style={{ marginRight: 10 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.locMainText} numberOfLines={1}>
+                  {pickupData.city || 'Select Pickup Location'}
+                </Text>
+                <Text style={styles.locSubText} numberOfLines={2}>
+                  {pickupData.address}
+                </Text>
               </View>
+              <Feather name="chevron-right" size={20} color="#94A3B8" />
+            </TouchableOpacity>
 
-              {/* City chips if specific_city is active */}
-              {visibilityMode === 'specific_city' && (
-                <View style={styles.cityChipsSection}>
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B', marginBottom: 4 }}>
-                    Select Covered Cities ({selectedCityIds.length}):
-                  </Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ maxHeight: 38 }}>
-                    <View style={{ flexDirection: 'row', gap: 6 }}>
-                      {availableCities.map(c => {
-                        const isSel = selectedCityIds.includes(c.city_id)
-                        return (
-                          <TouchableOpacity
-                            key={c.city_id}
-                            style={[styles.cityChip, isSel && styles.cityChipActive]}
-                            onPress={() => {
-                              setSelectedCityIds(prev =>
-                                isSel ? prev.filter(id => id !== c.city_id) : [...prev, c.city_id]
-                              )
-                            }}
-                          >
-                            <Text style={[styles.cityChipText, isSel && styles.cityChipTextActive]}>
-                              {isSel ? '✓ ' : ''}{c.name}
-                            </Text>
-                          </TouchableOpacity>
-                        )
-                      })}
-                    </View>
-                  </ScrollView>
-                </View>
-              )}
-
-              {/* Zone chips if specific_hex is active */}
-              {visibilityMode === 'specific_hex' && (
-                <View style={styles.cityChipsSection}>
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B', marginBottom: 4 }}>
-                    Specific Hex Mode: Draw custom polygons on map below or pick zones.
-                  </Text>
-                </View>
-              )}
+            {/* Quick Actions for Pickup */}
+            <View style={styles.quickActionsRow}>
+              <TouchableOpacity
+                style={styles.quickActionChip}
+                onPress={() => setSavedLocModalTarget('pickup')}
+              >
+                <Feather name="bookmark" size={13} color="#3B82F6" />
+                <Text style={styles.quickActionText}>Saved Locations</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.quickActionChip}
+                onPress={() => setLocationPickerTarget('pickup')}
+              >
+                <MaterialCommunityIcons name="crosshairs-gps" size={13} color="#10B981" />
+                <Text style={styles.quickActionText}>Pin on Map</Text>
+              </TouchableOpacity>
             </View>
+          </View>
 
-            {/* Map & Search Bar */}
-            <View style={styles.mapContainer}>
-              {!isMounted || !MapView ? (
-                <View style={styles.mapPlaceholder}><ActivityIndicator color="#3B82F6" /></View>
-              ) : (
-                <MapView
-                  style={styles.map}
-                  scrollEnabled={!drawingMode}
-                  initialRegion={{
-                    latitude: (form.pickup_lat + form.destination_lat) / 2,
-                    longitude: (form.pickup_lng + form.destination_lng) / 2,
-                    latitudeDelta: Math.abs(form.pickup_lat - form.destination_lat) * 2 || 2,
-                    longitudeDelta: Math.abs(form.pickup_lng - form.destination_lng) * 2 || 2,
-                  }}
-                  onPress={handleMapPress}
-                >
-                  {Polyline && routeData?.encodedPolyline && (
-                    <Polyline coordinates={decodePolyline(routeData.encodedPolyline)} strokeColor="#3B82F6" strokeWidth={5} />
-                  )}
-                  {visibilityMode === 'specific_hex' && Polygon && pickupPolygon.length >= 3 && (
-                    <Polygon coordinates={pickupPolygon} fillColor="rgba(34,197,94,0.18)" strokeColor="#22C55E" strokeWidth={2} />
-                  )}
-                  {visibilityMode === 'specific_hex' && Polygon && destinationPolygon.length >= 3 && (
-                    <Polygon coordinates={destinationPolygon} fillColor="rgba(239,68,68,0.18)" strokeColor="#EF4444" strokeWidth={2} />
-                  )}
-                  
-                  {visibilityMode === 'specific_hex' && drawingMode === 'pickup' && pickupPolygon.map((pt, i) => Marker && (
-                    <Marker key={`p${i}`} coordinate={pt} onPress={() => removePolygonPoint('pickup', i)}>
-                      <View style={styles.dotP} />
-                    </Marker>
-                  ))}
-                  {visibilityMode === 'specific_hex' && drawingMode === 'destination' && destinationPolygon.map((pt, i) => Marker && (
-                    <Marker key={`d${i}`} coordinate={pt} onPress={() => removePolygonPoint('destination', i)}>
-                      <View style={styles.dotD} />
-                    </Marker>
-                  ))}
+          <View style={styles.routeDivider} />
 
-                  {Marker && <Marker coordinate={{ latitude: form.pickup_lat, longitude: form.pickup_lng }} draggable onDragEnd={(e: any) => handleMarkerDrag('pickup', e.nativeEvent.coordinate)} pinColor="green" />}
-                  {Marker && <Marker coordinate={{ latitude: form.destination_lat, longitude: form.destination_lng }} draggable onDragEnd={(e: any) => handleMarkerDrag('destination', e.nativeEvent.coordinate)} pinColor="red" />}
-                </MapView>
-              )}
+          {/* Drop Control */}
+          <View style={styles.locBlock}>
+            <View style={styles.locHeaderRow}>
+              <View style={[styles.dotIndicator, { backgroundColor: '#EF4444' }]} />
+              <Text style={styles.locTitle}>DROP LOCATION</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.locInputBox}
+              onPress={() => setLocationPickerTarget('drop')}
+              activeOpacity={0.8}
+            >
+              <Feather name="map-pin" size={18} color="#EF4444" style={{ marginRight: 10 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.locMainText} numberOfLines={1}>
+                  {dropData.city || 'Select Drop Location'}
+                </Text>
+                <Text style={styles.locSubText} numberOfLines={2}>
+                  {dropData.address}
+                </Text>
+              </View>
+              <Feather name="chevron-right" size={20} color="#94A3B8" />
+            </TouchableOpacity>
 
-              {/* Map Floating Overlays */}
-              <View style={styles.mapOverlays}>
-                {/* Search Bar */}
-                <View style={styles.searchCard}>
-                  <View style={styles.searchRow}>
-                    <View style={styles.greenDot} />
-                    <TextInput 
-                      style={styles.searchInput} 
-                      placeholder="Search Pickup Location..." 
-                      value={form.pickup_city_display} 
-                      onChangeText={v => handleSearchTextChange('pickup', v)} 
-                    />
-                  </View>
-                  <View style={styles.searchDivider} />
-                  <View style={styles.searchRow}>
-                    <View style={styles.redDot} />
-                    <TextInput 
-                      style={styles.searchInput} 
-                      placeholder="Search Destination..." 
-                      value={form.destination_city_display} 
-                      onChangeText={v => handleSearchTextChange('destination', v)} 
-                    />
-                  </View>
-                  {fetchingRoute && <ActivityIndicator size="small" color="#3B82F6" style={{position:'absolute', right:16, top: 40}} />}
-                  {routeData && !fetchingRoute && (
-                    <View style={styles.routeDistanceBadge}>
-                      <Text style={styles.routeDistanceText}>{routeData.distanceKm} km · {routeData.durationMinutes} min</Text>
-                    </View>
-                  )}
-                </View>
+            {/* Quick Actions for Drop */}
+            <View style={styles.quickActionsRow}>
+              <TouchableOpacity
+                style={styles.quickActionChip}
+                onPress={() => setSavedLocModalTarget('drop')}
+              >
+                <Feather name="bookmark" size={13} color="#3B82F6" />
+                <Text style={styles.quickActionText}>Saved Locations</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.quickActionChip}
+                onPress={() => setLocationPickerTarget('drop')}
+              >
+                <MaterialCommunityIcons name="crosshairs-gps" size={13} color="#EF4444" />
+                <Text style={styles.quickActionText}>Pin on Map</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
 
-                {/* Autocomplete Dropdown */}
-                {activeSearch && predictions.length > 0 && (
-                  <View style={styles.predictionsCard}>
-                    <FlatList
-                      data={predictions}
-                      keyExtractor={item => item.placeId}
-                      keyboardShouldPersistTaps="handled"
-                      renderItem={({item}) => (
-                        <TouchableOpacity style={styles.predictionItem} onPress={() => handleSelectPrediction(item)}>
-                          <Feather name="map-pin" size={16} color="#64748B" />
-                          <View style={{ marginLeft: 10, flex: 1 }}>
-                            <Text style={styles.predictionMain} numberOfLines={1}>{item.mainText}</Text>
-                            <Text style={styles.predictionSub} numberOfLines={1}>{item.secondaryText}</Text>
-                          </View>
-                        </TouchableOpacity>
-                      )}
-                    />
-                  </View>
-                )}
-
-                {/* Polygon Drawing Toolbar — ONLY visible when in Specific Hex Mode */}
-                {visibilityMode === 'specific_hex' && (
-                  drawingMode ? (
-                    <View style={styles.drawingToolbar}>
-                      <Text style={styles.drawingText}>{drawingMode === 'pickup' ? 'Drawing Pickup Zone' : 'Drawing Dropoff Zone'}...</Text>
-                      <TouchableOpacity style={styles.btnFinish} onPress={handleFinishDrawing}>
-                        <Text style={styles.btnTextLight}>Done</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : (
-                    <View style={styles.drawingToolbarRow}>
-                      <TouchableOpacity style={styles.btnDraw} onPress={() => setDrawingMode('pickup')}>
-                        <Feather name="edit-2" size={14} color="#fff" />
-                        <Text style={styles.btnTextLight}>{pickupPolygon.length >= 3 ? '✓ Pickup Zone' : '+ Pickup Zone'}</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={[styles.btnDraw, { backgroundColor: '#EF4444' }]} onPress={() => setDrawingMode('destination')}>
-                        <Feather name="edit-2" size={14} color="#fff" />
-                        <Text style={styles.btnTextLight}>{destinationPolygon.length >= 3 ? '✓ Dropoff Zone' : '+ Dropoff Zone'}</Text>
-                      </TouchableOpacity>
-                    </View>
-                  )
-                )}
+        {/* Route Preview Mini Map */}
+        {routeData && (
+          <View style={styles.sectionCard}>
+            <View style={styles.routeStatsRow}>
+              <View>
+                <Text style={styles.statLabel}>DISTANCE</Text>
+                <Text style={styles.statVal}>{routeData.distanceKm} km</Text>
+              </View>
+              <View>
+                <Text style={styles.statLabel}>DURATION</Text>
+                <Text style={styles.statVal}>{routeData.durationMinutes} min</Text>
+              </View>
+              <View>
+                <Text style={styles.statLabel}>CORRIDOR BUFFER</Text>
+                <Text style={styles.statVal}>±{maxRouteDeviationKm} km</Text>
               </View>
             </View>
           </View>
         )}
 
-        {/* ================= STEP 2: DEPARTURE & VEHICLE ================= */}
-        {step === 2 && (
-          <ScrollView style={styles.stepContainer} contentContainerStyle={{ padding: 20 }}>
-            <Text style={styles.stepTitle}>2. Departure & Vehicle</Text>
-            
-            <Text style={styles.label}>When are you leaving? *</Text>
-            <TouchableOpacity style={styles.datePickerBtn} onPress={() => { setShowDatePicker(true) }}>
-              <Feather name="calendar" size={20} color="#3B82F6" />
-              <Text style={selectedDate ? styles.dateText : styles.placeholder}>
-                {selectedDate ? selectedDate.toLocaleString('en-IN', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Select Date & Time'}
-              </Text>
-            </TouchableOpacity>
+        {/* Directional Route Configuration */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionHeading}>Directional Deviation & Matching Radius</Text>
+          <Text style={styles.sectionSubtext}>
+            Only match customers within your preferred highway corridor without long detours.
+          </Text>
 
-            {(Platform.OS === 'android' && showDatePicker) && (
-              <DateTimePicker 
-                value={selectedDate || new Date()} 
-                mode="date" 
-                display="calendar" 
-                onChange={(_: any, date?: Date) => { 
-                  setShowDatePicker(false); 
-                  if(date) { 
-                    setSelectedDate(date); 
-                    setShowTimePicker(true); 
-                  } 
-                }} 
+          <View style={styles.configInputsRow}>
+            <View style={styles.configField}>
+              <Text style={styles.fieldLabel}>Corridor Buffer (km)</Text>
+              <TextInput
+                style={styles.fieldInput}
+                value={maxRouteDeviationKm}
+                onChangeText={setMaxRouteDeviationKm}
+                keyboardType="numeric"
               />
-            )}
-            {(Platform.OS === 'android' && showTimePicker) && (
-              <DateTimePicker 
-                value={selectedDate || new Date()} 
-                mode="time" 
-                display="default" 
-                onChange={(_: any, time?: Date) => { 
-                  setShowTimePicker(false); 
-                  if(time) { 
-                    const d = new Date(selectedDate || new Date()); 
-                    d.setHours(time.getHours(), time.getMinutes()); 
-                    setSelectedDate(d); 
-                    update('departure_time', d.toISOString()) 
-                  } 
-                }} 
+            </View>
+            <View style={styles.configField}>
+              <Text style={styles.fieldLabel}>Max Pickup Radius</Text>
+              <TextInput
+                style={styles.fieldInput}
+                value={maxPickupRadiusKm}
+                onChangeText={setMaxPickupRadiusKm}
+                keyboardType="numeric"
               />
-            )}
+            </View>
+          </View>
+        </View>
+      </View>
+    )
+  }
 
-            <Text style={[styles.label, { marginTop: 24 }]}>Vehicle Selection</Text>
+  // ─── Render Step 2: Service Selection & Dynamic Configuration ───────────────
 
-            {vehiclesLoading ? (
-              <ActivityIndicator color="#3B82F6" style={{ marginVertical: 16 }} />
-            ) : myVehicles.length > 0 ? (
-              <View style={styles.vehicleGrid}>
-                {myVehicles.map(v => {
-                  const meta = VEHICLE_TYPES.find(vt => vt.value === v.vehicle_type) || VEHICLE_TYPES[0]
-                  const isSelected = form.vehicle_type === v.vehicle_type && form.total_seats === v.total_seats
-                  return (
-                    <TouchableOpacity
-                      key={v.id}
-                      onPress={() => {
-                        if (!v.is_verified) {
-                          Alert.alert('Not Verified', `${v.make} ${v.model} is pending verification. Choose a verified vehicle.`)
-                          return
-                        }
-                        update('vehicle_type', v.vehicle_type)
-                        update('total_seats', v.total_seats)
-                      }}
-                      style={[
-                        styles.vCard,
-                        isSelected && styles.vCardActive,
-                        !v.is_verified && { opacity: 0.5 },
-                      ]}
-                    >
-                      <MaterialCommunityIcons
-                        name={meta.icon as any}
-                        size={32}
-                        color={isSelected ? '#2563EB' : '#64748B'}
-                      />
-                      <Text style={[styles.vCardText, isSelected && styles.vCardTextActive]}>
-                        {v.make} {v.model}
-                      </Text>
-                      <Text style={{ fontSize: 10, color: '#94A3B8', marginTop: 2 }}>
-                        {v.registration_number} • {v.total_seats} seats
-                      </Text>
-                      {v.is_verified
-                        ? <View style={styles.verifiedBadge}><Text style={styles.verifiedText}>✓ Verified</Text></View>
-                        : <View style={styles.pendingBadge}><Text style={styles.pendingText}>Pending</Text></View>
-                      }
-                    </TouchableOpacity>
-                  )
-                })}
-              </View>
-            ) : (
-              <View style={styles.vehicleGrid}>
-                {VEHICLE_TYPES.map(v => (
+  const renderStep2 = () => {
+    return (
+      <View style={styles.stepContainer}>
+        {/* Service Type Carousel / Cards */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionHeading}>Select Service Vertical</Text>
+          <Text style={styles.sectionSubtext}>Choose the primary operational category for this trip.</Text>
+
+          <View style={styles.serviceGrid}>
+            {SUPPORTED_SERVICES.map((srv) => {
+              const isSelected = selectedService === srv.key
+              return (
+                <TouchableOpacity
+                  key={srv.key}
+                  style={[styles.serviceCard, isSelected && { borderColor: srv.color, backgroundColor: `${srv.color}10` }]}
+                  onPress={() => {
+                    setSelectedService(srv.key)
+                    setServiceMeta(DEFAULT_SERVICE_METADATA[srv.key])
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <View style={[styles.srvIconCircle, { backgroundColor: `${srv.color}20` }]}>
+                    <MaterialCommunityIcons name={srv.icon as any} size={22} color={srv.color} />
+                  </View>
+                  <Text style={[styles.srvTitle, isSelected && { color: srv.color }]}>{srv.title}</Text>
+                  <Text style={styles.srvDesc} numberOfLines={2}>{srv.subtitle}</Text>
+                  {isSelected && (
+                    <View style={[styles.checkBadge, { backgroundColor: srv.color }]}>
+                      <Feather name="check" size={12} color="#FFFFFF" />
+                    </View>
+                  )}
+                </TouchableOpacity>
+              )
+            })}
+          </View>
+        </View>
+
+        {/* Dynamic Service Specific Settings */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionHeading}>{SUPPORTED_SERVICES.find((s) => s.key === selectedService)?.title} Configuration</Text>
+
+          {selectedService === 'cab' && (
+            <View style={styles.metaForm}>
+              <Text style={styles.fieldLabel}>Trip Purpose</Text>
+              <View style={styles.pillRow}>
+                {['fixed_route', 'commercial', 'contracted', 'personal'].map((p) => (
                   <TouchableOpacity
-                    key={v.value}
-                    onPress={() => { update('vehicle_type', v.value); update('total_seats', v.seats) }}
-                    style={[styles.vCard, form.vehicle_type === v.value && styles.vCardActive]}
+                    key={p}
+                    style={[styles.choicePill, serviceMeta.trip_purpose === p && styles.choicePillActive]}
+                    onPress={() => setServiceMeta({ ...serviceMeta, trip_purpose: p })}
                   >
-                    <MaterialCommunityIcons name={v.icon as any} size={32} color={form.vehicle_type === v.value ? '#2563EB' : '#64748B'} />
-                    <Text style={[styles.vCardText, form.vehicle_type === v.value && styles.vCardTextActive]}>{v.label}</Text>
+                    <Text style={[styles.choicePillText, serviceMeta.trip_purpose === p && styles.choicePillTextActive]}>
+                      {p.replace('_', ' ').toUpperCase()}
+                    </Text>
                   </TouchableOpacity>
                 ))}
               </View>
-            )}
-
-            <View style={{ flexDirection: 'row', gap: 16, marginTop: 20 }}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.label}>Total Passenger Seats</Text>
-                <TextInput style={styles.input} keyboardType="numeric" value={form.total_seats.toString()} onChangeText={v => update('total_seats', parseInt(v)||1)} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.label}>Window Seats</Text>
-                <TextInput style={styles.input} keyboardType="numeric" value={form.window_seats.toString()} onChangeText={v => update('window_seats', parseInt(v)||0)} />
-              </View>
             </View>
-          </ScrollView>
-        )}
+          )}
 
-        {/* ================= STEP 3: PRICING & PREFERENCES ================= */}
-        {step === 3 && (
-          <ScrollView style={styles.stepContainer} contentContainerStyle={{ padding: 20 }}>
-            <Text style={styles.stepTitle}>3. Pricing & Preferences</Text>
+          {selectedService === 'transport' && (
+            <View style={styles.metaForm}>
+              <Text style={styles.fieldLabel}>Accepted Goods Category</Text>
+              <View style={styles.pillRow}>
+                {['general', 'industrial', 'commercial', 'electronics', 'fragile'].map((c) => (
+                  <TouchableOpacity
+                    key={c}
+                    style={[styles.choicePill, serviceMeta.material_category === c && styles.choicePillActive]}
+                    onPress={() => setServiceMeta({ ...serviceMeta, material_category: c })}
+                  >
+                    <Text style={[styles.choicePillText, serviceMeta.material_category === c && styles.choicePillTextActive]}>
+                      {c.toUpperCase()}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
 
-            <View style={{ flexDirection: 'row', gap: 16, marginBottom: 24 }}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.label}>Base Fare (₹/seat) *</Text>
-                <TextInput style={styles.input} keyboardType="numeric" placeholder="e.g. 450" value={form.base_fare} onChangeText={v => update('base_fare', v)} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.label}>Window Surcharge (₹)</Text>
-                <TextInput style={styles.input} keyboardType="numeric" placeholder="0" value={form.window_seat_charge} onChangeText={v => update('window_seat_charge', v)} />
-              </View>
+              <Text style={[styles.fieldLabel, { marginTop: 14 }]}>Max Weight Capacity (kg)</Text>
+              <TextInput
+                style={styles.fieldInput}
+                value={String(serviceMeta.weight_capacity_kg || 500)}
+                onChangeText={(v) => setServiceMeta({ ...serviceMeta, weight_capacity_kg: parseInt(v) || 0 })}
+                keyboardType="numeric"
+              />
             </View>
+          )}
 
-            <View style={styles.toggleCard}>
-              <View style={styles.toggleRow}>
-                <View style={{ flex: 1 }}><Text style={styles.toggleLabel}>Accept Parcels & Luggage</Text><Text style={styles.toggleSub}>Allow customers to send parcel deliveries</Text></View>
-                <Switch value={form.parcel_enabled} onValueChange={v => update('parcel_enabled', v)} trackColor={{ true: '#3B82F6' }} />
+          {selectedService === 'organization' && (
+            <View style={styles.metaForm}>
+              <Text style={styles.fieldLabel}>Registered Organization / College</Text>
+              <View style={styles.orgBox}>
+                <Ionicons name="school" size={24} color="#8B5CF6" style={{ marginRight: 10 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.orgNameText}>{serviceMeta.organization_name || 'COEP Technological University'}</Text>
+                  <Text style={styles.orgSubText}>Official Campus Route 4 • 28 Registered Students</Text>
+                </View>
               </View>
-              <View style={styles.divider} />
-              <View style={styles.toggleRow}>
-                <View style={{ flex: 1 }}><Text style={styles.toggleLabel}>Women-Only Trip</Text><Text style={styles.toggleSub}>Restrict bookings to female riders only</Text></View>
-                <Switch value={form.women_only} onValueChange={v => update('women_only', v)} trackColor={{ true: '#EC4899' }} />
-              </View>
-            </View>
-
-            <Text style={[styles.label, { marginTop: 20 }]}>Trip Notes & Instructions</Text>
-            <TextInput 
-              style={[styles.input, { height: 80, textAlignVertical: 'top' }]} 
-              multiline 
-              placeholder="Any pickup notes or landmark details..." 
-              value={form.notes} 
-              onChangeText={v => update('notes', v)} 
-            />
-          </ScrollView>
-        )}
-
-        {/* ================= STEP 4: REVIEW & PUBLISH ================= */}
-        {step === 4 && (
-          <ScrollView style={styles.stepContainer} contentContainerStyle={{ padding: 20 }}>
-            <Text style={styles.stepTitle}>4. Review & Publish</Text>
-            
-            <View style={styles.summaryCard}>
-              <View style={styles.summaryRoute}>
-                <View style={styles.greenDot} />
-                <Text style={styles.summaryCity}>{form.pickup_city_display}</Text>
-                <Feather name="arrow-right" size={16} color="#94A3B8" style={{ marginHorizontal: 10 }} />
-                <View style={styles.redDot} />
-                <Text style={styles.summaryCity}>{form.destination_city_display}</Text>
-              </View>
-              <Text style={styles.summaryTime}>
-                {selectedDate ? selectedDate.toLocaleString('en-IN', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Next Available'}
+              <Text style={styles.orgNoteText}>
+                💡 Students registered for this route will automatically receive high-priority alerts when you reach within 3 KM.
               </Text>
-              <View style={styles.divider} />
-              
-              <View style={styles.summaryGrid}>
-                <View style={styles.summaryItem}><Feather name="truck" size={16} color="#64748B"/><Text style={styles.summaryValue}>{form.vehicle_type}</Text></View>
-                <View style={styles.summaryItem}><Feather name="users" size={16} color="#64748B"/><Text style={styles.summaryValue}>{form.total_seats} Seats Capacity</Text></View>
-                <View style={styles.summaryItem}><Feather name="map" size={16} color="#64748B"/><Text style={styles.summaryValue}>{routeData?.distanceKm || 0} km</Text></View>
-                <View style={styles.summaryItem}><Feather name="tag" size={16} color="#64748B"/><Text style={styles.summaryValue}>₹{form.base_fare}/seat</Text></View>
-              </View>
+            </View>
+          )}
 
-              {/* Visibility Preference Summary Row */}
-              <View style={styles.summaryVisibilityRow}>
-                <Feather name="eye" size={16} color="#2563EB" />
-                <Text style={styles.summaryVisibilityText}>
-                  Request Mode: <Text style={{ fontWeight: '700' }}>
-                    {visibilityMode === 'all_city' ? 'All City' : visibilityMode === 'specific_city' ? `Specific City (${selectedCityIds.length})` : `Specific Hex / Zone`}
-                  </Text>
-                </Text>
+          {selectedService === 'parcel' && (
+            <View style={styles.metaForm}>
+              <Text style={styles.fieldLabel}>Max Package Weight (kg)</Text>
+              <TextInput
+                style={styles.fieldInput}
+                value={String(serviceMeta.max_weight_kg || 15)}
+                onChangeText={(v) => setServiceMeta({ ...serviceMeta, max_weight_kg: parseInt(v) || 0 })}
+                keyboardType="numeric"
+              />
+            </View>
+          )}
+
+          {selectedService === 'hotel' && (
+            <View style={styles.metaForm}>
+              <Text style={styles.fieldLabel}>Hotel / Resort Name</Text>
+              <TextInput
+                style={styles.fieldInput}
+                placeholder="e.g. JW Marriott / The Westin Pune"
+                value={serviceMeta.hotel_name || ''}
+                onChangeText={(v) => setServiceMeta({ ...serviceMeta, hotel_name: v })}
+              />
+            </View>
+          )}
+
+          {selectedService === 'airport' && (
+            <View style={styles.metaForm}>
+              <Text style={styles.fieldLabel}>Airport & Terminal</Text>
+              <TextInput
+                style={styles.fieldInput}
+                value={serviceMeta.airport_name || 'Pune International Airport (PNQ)'}
+                onChangeText={(v) => setServiceMeta({ ...serviceMeta, airport_name: v })}
+              />
+            </View>
+          )}
+
+          {selectedService === 'packers' && (
+            <View style={styles.metaForm}>
+              <Text style={styles.fieldLabel}>Relocation Size</Text>
+              <View style={styles.pillRow}>
+                {['1bhk', '2bhk', '3bhk', 'office'].map((m) => (
+                  <TouchableOpacity
+                    key={m}
+                    style={[styles.choicePill, serviceMeta.move_type === m && styles.choicePillActive]}
+                    onPress={() => setServiceMeta({ ...serviceMeta, move_type: m })}
+                  >
+                    <Text style={[styles.choicePillText, serviceMeta.move_type === m && styles.choicePillTextActive]}>
+                      {m.toUpperCase()}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
               </View>
             </View>
+          )}
+        </View>
 
-            <Text style={styles.summaryInfo}>
-              After publishing, you will return to your Dashboard where you can view member capacity (0/{form.total_seats}) and start the trip.
+        {/* Schedule & Recurrence Engine */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionHeading}>Trip Schedule & Recurrence</Text>
+          <View style={styles.pillRow}>
+            {[
+              { key: 'DAILY', label: 'Daily Route', icon: 'repeat' },
+              { key: 'SPECIFIC_DATE', label: 'Specific Date', icon: 'calendar' },
+              { key: 'SCHEDULED', label: 'Scheduled', icon: 'clock' },
+            ].map((rec) => (
+              <TouchableOpacity
+                key={rec.key}
+                style={[styles.choicePill, recurrenceType === rec.key && styles.choicePillActive]}
+                onPress={() => setRecurrenceType(rec.key as any)}
+              >
+                <Feather name={rec.icon as any} size={14} color={recurrenceType === rec.key ? '#FFFFFF' : '#64748B'} style={{ marginRight: 6 }} />
+                <Text style={[styles.choicePillText, recurrenceType === rec.key && styles.choicePillTextActive]}>
+                  {rec.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <TouchableOpacity
+            style={styles.dateTimeBtn}
+            onPress={() => setShowTimePicker(true)}
+          >
+            <Feather name="clock" size={18} color="#3B82F6" style={{ marginRight: 10 }} />
+            <Text style={styles.dateTimeText}>
+              Departure Time: {departureDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </Text>
-          </ScrollView>
-        )}
-      </View>
-
-      {/* Footer Navigation */}
-      <View style={styles.footer}>
-        {step > 1 && (
-          <TouchableOpacity style={styles.btnSecondary} onPress={() => setStep(step - 1)}>
-            <Text style={styles.btnTextDark}>Back</Text>
           </TouchableOpacity>
-        )}
-        <TouchableOpacity style={styles.btnPrimary} onPress={step === 4 ? handleCreate : nextStep} disabled={loading}>
-          {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnTextLight}>{step === 4 ? 'Publish Trip' : 'Next Step'}</Text>}
+
+          {showTimePicker && (
+            <DateTimePicker
+              value={departureDate}
+              mode="time"
+              display="default"
+              onChange={(evt, date) => {
+                setShowTimePicker(false)
+                if (date) setDepartureDate(date)
+              }}
+            />
+          )}
+        </View>
+      </View>
+    )
+  }
+
+  // ─── Render Step 3: Fare & Restrictions ─────────────────────────────────────
+
+  const renderStep3 = () => {
+    return (
+      <View style={styles.stepContainer}>
+        {/* Pricing Card */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionHeading}>Pricing & Fares</Text>
+          <Text style={styles.sectionSubtext}>Define base fare per passenger seat or cargo parcel.</Text>
+
+          <View style={styles.configInputsRow}>
+            <View style={styles.configField}>
+              <Text style={styles.fieldLabel}>Base Fare (₹)</Text>
+              <TextInput
+                style={styles.fieldInput}
+                value={baseFare}
+                onChangeText={setBaseFare}
+                keyboardType="numeric"
+              />
+            </View>
+            <View style={styles.configField}>
+              <Text style={styles.fieldLabel}>Min Acceptable (₹)</Text>
+              <TextInput
+                style={styles.fieldInput}
+                value={minFare}
+                onChangeText={setMinFare}
+                keyboardType="numeric"
+              />
+            </View>
+          </View>
+
+          <View style={styles.switchRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.switchTitle}>Allow Fare Negotiation</Text>
+              <Text style={styles.switchDesc}>Customers can send offers within your acceptable price range.</Text>
+            </View>
+            <Switch
+              value={isNegotiable}
+              onValueChange={setIsNegotiable}
+              trackColor={{ false: '#334155', true: '#3B82F6' }}
+            />
+          </View>
+        </View>
+
+        {/* Restrictions & Constraints */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionHeading}>Trip Restrictions & Preferences</Text>
+
+          <View style={styles.switchRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.switchTitle}>Women Only Ride</Text>
+              <Text style={styles.switchDesc}>Only match verified female passengers for safety.</Text>
+            </View>
+            <Switch
+              value={womenOnly}
+              onValueChange={setWomenOnly}
+              trackColor={{ false: '#334155', true: '#EC4899' }}
+            />
+          </View>
+
+          <View style={styles.switchRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.switchTitle}>Accept Parcel & Luggage</Text>
+              <Text style={styles.switchDesc}>Allow package deliveries and luggage along this route.</Text>
+            </View>
+            <Switch
+              value={parcelEnabled}
+              onValueChange={setParcelEnabled}
+              trackColor={{ false: '#334155', true: '#10B981' }}
+            />
+          </View>
+        </View>
+      </View>
+    )
+  }
+
+  // ─── Render Step 4: Vehicle & Capacity ──────────────────────────────────────
+
+  const renderStep4 = () => {
+    return (
+      <View style={styles.stepContainer}>
+        {/* Fleet Vehicle Picker */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionHeading}>Assigned Vehicle</Text>
+          {myVehicles.map((veh) => {
+            const isSelected = selectedVehicleId === veh.id
+            return (
+              <TouchableOpacity
+                key={veh.id}
+                style={[styles.vehCard, isSelected && styles.vehCardSelected]}
+                onPress={() => {
+                  setSelectedVehicleId(veh.id)
+                  setTotalSeats(veh.total_seats)
+                }}
+                activeOpacity={0.8}
+              >
+                <View style={styles.vehIconBox}>
+                  <MaterialCommunityIcons name="car-side" size={24} color={isSelected ? '#3B82F6' : '#94A3B8'} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.vehModelText}>{veh.make} {veh.model}</Text>
+                  <Text style={styles.vehPlateText}>{veh.registration_number} • {veh.total_seats} Total Seats</Text>
+                </View>
+                {isSelected && <Feather name="check-circle" size={20} color="#3B82F6" />}
+              </TouchableOpacity>
+            )
+          })}
+        </View>
+
+        {/* Seat Capacity Control */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionHeading}>Available Seat Capacity</Text>
+          <Text style={styles.sectionSubtext}>Adjust total seats offered for this trip run.</Text>
+
+          <View style={styles.counterRow}>
+            <TouchableOpacity
+              style={styles.counterBtn}
+              onPress={() => setTotalSeats((s) => Math.max(1, s - 1))}
+            >
+              <Feather name="minus" size={20} color="#FFFFFF" />
+            </TouchableOpacity>
+            <View style={styles.counterValBox}>
+              <Text style={styles.counterValText}>{totalSeats}</Text>
+              <Text style={styles.counterValSub}>Seats Available</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.counterBtn}
+              onPress={() => setTotalSeats((s) => Math.min(20, s + 1))}
+            >
+              <Feather name="plus" size={20} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Driver Notes */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionHeading}>Pickup Instructions / Driver Notes</Text>
+          <TextInput
+            style={[styles.fieldInput, { height: 80, textAlignVertical: 'top' }]}
+            placeholder="e.g. AC available, Non-smoking vehicle, punctual departure from Swargate"
+            placeholderTextColor="#64748B"
+            multiline
+            value={notes}
+            onChangeText={setNotes}
+          />
+        </View>
+      </View>
+    )
+  }
+
+  // ─── Render Step 5: Review & Publish Preview ────────────────────────────────
+
+  const renderStep5 = () => {
+    const srv = SUPPORTED_SERVICES.find((s) => s.key === selectedService)
+    const veh = myVehicles.find((v) => v.id === selectedVehicleId)
+
+    return (
+      <View style={styles.stepContainer}>
+        <View style={styles.reviewBanner}>
+          <Text style={styles.reviewBannerTitle}>Ready to Publish Intercity Trip</Text>
+          <Text style={styles.reviewBannerSub}>Review all parameters before activating live matching.</Text>
+        </View>
+
+        {/* Summary Card */}
+        <View style={styles.sectionCard}>
+          <View style={styles.reviewRow}>
+            <Text style={styles.revLabel}>Service Vertical</Text>
+            <View style={styles.revValBadge}>
+              <Text style={styles.revValBadgeText}>{srv?.title}</Text>
+            </View>
+          </View>
+
+          <View style={styles.revDivider} />
+
+          <View style={styles.reviewRow}>
+            <Text style={styles.revLabel}>Route</Text>
+            <Text style={styles.revValueText}>{pickupData.city} → {dropData.city}</Text>
+          </View>
+          <Text style={styles.revSubAddress} numberOfLines={1}>📍 {pickupData.address}</Text>
+          <Text style={styles.revSubAddress} numberOfLines={1}>🏁 {dropData.address}</Text>
+
+          <View style={styles.revDivider} />
+
+          <View style={styles.reviewRow}>
+            <Text style={styles.revLabel}>Schedule</Text>
+            <Text style={styles.revValueText}>
+              {recurrenceType} • {departureDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </Text>
+          </View>
+
+          <View style={styles.revDivider} />
+
+          <View style={styles.reviewRow}>
+            <Text style={styles.revLabel}>Base Fare / Seat</Text>
+            <Text style={[styles.revValueText, { color: '#3B82F6', fontWeight: '800' }]}>₹{baseFare}</Text>
+          </View>
+
+          <View style={styles.revDivider} />
+
+          <View style={styles.reviewRow}>
+            <Text style={styles.revLabel}>Capacity</Text>
+            <Text style={styles.revValueText}>{totalSeats} Seats ({veh?.make} {veh?.model})</Text>
+          </View>
+
+          <View style={styles.revDivider} />
+
+          <View style={styles.reviewRow}>
+            <Text style={styles.revLabel}>Restrictions</Text>
+            <Text style={styles.revValueText}>
+              {womenOnly ? 'Women Only • ' : 'All Genders • '}
+              {parcelEnabled ? 'Parcels OK' : 'No Parcels'}
+            </Text>
+          </View>
+        </View>
+
+        {/* Big Publish CTA */}
+        <TouchableOpacity
+          style={[styles.publishCTA, publishing && { opacity: 0.7 }]}
+          onPress={handlePublishTrip}
+          disabled={publishing}
+          activeOpacity={0.85}
+        >
+          <LinearGradient
+            colors={['#2563EB', '#1D4ED8']}
+            style={styles.publishGradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+          >
+            {publishing ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <>
+                <Text style={styles.publishCTAText}>Publish Intercity Trip</Text>
+                <Feather name="arrow-right" size={20} color="#FFFFFF" style={{ marginLeft: 8 }} />
+              </>
+            )}
+          </LinearGradient>
         </TouchableOpacity>
       </View>
-    </View>
+    )
+  }
+
+  // ─── Main Wizard Layout ────────────────────────────────────────────────────
+
+  return (
+    <SafeAreaView edges={['top']} style={styles.safeArea}>
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.headerBackBtn}>
+          <Feather name="arrow-left" size={22} color="#FFFFFF" />
+        </TouchableOpacity>
+        <View style={{ flex: 1, marginLeft: 12 }}>
+          <Text style={styles.headerTitle}>Publish Intercity Trip</Text>
+          <Text style={styles.headerStepText}>Step {step} of 5</Text>
+        </View>
+      </View>
+
+      {/* Stepper Progress Bar */}
+      <View style={styles.stepperContainer}>
+        {[1, 2, 3, 4, 5].map((s) => (
+          <View
+            key={s}
+            style={[
+              styles.stepIndicatorBar,
+              s <= step ? styles.stepIndicatorActive : styles.stepIndicatorInactive,
+            ]}
+          />
+        ))}
+      </View>
+
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {step === 1 && renderStep1()}
+        {step === 2 && renderStep2()}
+        {step === 3 && renderStep3()}
+        {step === 4 && renderStep4()}
+        {step === 5 && renderStep5()}
+      </ScrollView>
+
+      {/* Bottom Floating Navigation Buttons */}
+      {step < 5 && (
+        <View style={[styles.bottomNav, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+          {step > 1 ? (
+            <TouchableOpacity style={styles.prevBtn} onPress={handlePrevStep} activeOpacity={0.8}>
+              <Feather name="arrow-left" size={18} color="#94A3B8" />
+              <Text style={styles.prevBtnText}>Back</Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={{ width: 80 }} />
+          )}
+
+          <TouchableOpacity style={styles.nextBtn} onPress={handleNextStep} activeOpacity={0.85}>
+            <Text style={styles.nextBtnText}>Continue</Text>
+            <Feather name="arrow-right" size={18} color="#FFFFFF" style={{ marginLeft: 6 }} />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Interactive Map Location Picker Modal (matching reference screenshot) */}
+      <LocationPickerModal
+        visible={locationPickerTarget !== null}
+        title={locationPickerTarget === 'pickup' ? 'Select Pickup Location' : 'Select Destination Location'}
+        initialLocation={locationPickerTarget === 'pickup' ? pickupData : dropData}
+        onClose={() => setLocationPickerTarget(null)}
+        onConfirm={(loc) => {
+          if (locationPickerTarget === 'pickup') {
+            setPickupData(loc)
+          } else {
+            setDropData(loc)
+          }
+        }}
+      />
+
+      {/* Saved Locations Selector Modal */}
+      <Modal
+        visible={savedLocModalTarget !== null}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setSavedLocModalTarget(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalSheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Saved Location</Text>
+              <TouchableOpacity onPress={() => setSavedLocModalTarget(null)}>
+                <Feather name="x" size={22} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+
+            <FlatList
+              data={savedLocations}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.savedLocRow}
+                  onPress={() => {
+                    const locData: SelectedLocationData = {
+                      latitude: item.latitude,
+                      longitude: item.longitude,
+                      address: item.address,
+                      city: item.city,
+                    }
+                    if (savedLocModalTarget === 'pickup') setPickupData(locData)
+                    else setDropData(locData)
+                    setSavedLocModalTarget(null)
+                  }}
+                >
+                  <View style={styles.savedLocIconBox}>
+                    <Feather name="map-pin" size={18} color="#3B82F6" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.savedLocLabel}>{item.label}</Text>
+                    <Text style={styles.savedLocAddr} numberOfLines={2}>{item.address}</Text>
+                  </View>
+                  <Feather name="chevron-right" size={18} color="#64748B" />
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
   )
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
-  header: { paddingBottom: 0, overflow: 'hidden' },
-  headerTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, marginBottom: 16 },
-  backBtn: { padding: 4 },
-  headerTitle: { fontSize: 20, fontWeight: '700', color: '#FFF' },
-  stepperContainer: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
-  stepDot: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#334155', justifyContent: 'center', alignItems: 'center' },
-  stepDotActive: { backgroundColor: '#3B82F6' },
-  stepDotText: { color: '#FFF', fontSize: 12, fontWeight: '700' },
-  stepLine: { width: 40, height: 3, backgroundColor: '#334155', marginHorizontal: 8, borderRadius: 2 },
-  stepLineActive: { backgroundColor: '#3B82F6' },
-  
-  content: { flex: 1 },
-  stepContainer: { flex: 1 },
-  stepHeader: { padding: 14, paddingBottom: 10, backgroundColor: '#FFF', borderBottomWidth: 1, borderColor: '#F1F5F9' },
-  stepTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', marginBottom: 2 },
-  stepSub: { fontSize: 12, color: '#64748B' },
-  
-  // Step 1 Visibility Tabs
-  visibilityTabsRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
-  visTab: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 6, paddingVertical: 8, paddingHorizontal: 6, borderRadius: 10,
-    backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE',
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#0A0F1D',
   },
-  visTabActive: { backgroundColor: '#2563EB', borderColor: '#1D4ED8' },
-  visTabText: { fontSize: 12, fontWeight: '700', color: '#2563EB' },
-  visTabTextActive: { color: '#FFF' },
-  cityChipsSection: { marginTop: 8 },
-  cityChip: {
-    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 16,
-    backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0',
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.06)',
   },
-  cityChipActive: { backgroundColor: '#3B82F6', borderColor: '#2563EB' },
-  cityChipText: { fontSize: 11, color: '#475569', fontWeight: '600' },
-  cityChipTextActive: { color: '#FFF', fontWeight: '700' },
-
-  // Map Step
-  mapContainer: { flex: 1, position: 'relative' },
-  map: { flex: 1 },
-  mapPlaceholder: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#E2E8F0' },
-  mapOverlays: { position: 'absolute', top: 12, left: 16, right: 16, bottom: 16, justifyContent: 'space-between', pointerEvents: 'box-none' },
-  // Search Bar
-  searchCard: { backgroundColor: 'rgba(255,255,255,0.96)', borderRadius: 14, padding: 10, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 8, elevation: 5 },
-  searchRow: { flexDirection: 'row', alignItems: 'center' },
-  searchInput: { flex: 1, height: 38, fontSize: 14, color: '#1E293B', marginLeft: 8 },
-  searchDivider: { height: 1, backgroundColor: '#E2E8F0', marginVertical: 4, marginLeft: 18 },
-  routeDistanceBadge: { marginTop: 6, backgroundColor: '#EFF6FF', alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
-  routeDistanceText: { fontSize: 11, color: '#3B82F6', fontWeight: '700' },
-  predictionsCard: { backgroundColor: '#FFF', borderRadius: 14, marginTop: 6, paddingVertical: 6, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 8, elevation: 5, maxHeight: 180 },
-  predictionItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
-  predictionMain: { fontSize: 14, fontWeight: '500', color: '#1E293B' },
-  predictionSub: { fontSize: 11, color: '#64748B', marginTop: 2 },
-  
-  drawingToolbarRow: { flexDirection: 'row', gap: 10, alignSelf: 'center', marginBottom: 6 },
-  drawingToolbar: { backgroundColor: '#1E293B', padding: 12, borderRadius: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  drawingText: { color: '#FFF', fontWeight: '600', fontSize: 13 },
-  
-  // UI Elements
-  label: { fontSize: 13, fontWeight: '700', color: '#334155', marginBottom: 6 },
-  input: { backgroundColor: '#FFF', borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 12, padding: 14, fontSize: 15, color: '#0F172A' },
-  datePickerBtn: { backgroundColor: '#FFF', borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 12, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  placeholder: { color: '#94A3B8', fontSize: 15 },
-  dateText: { color: '#0F172A', fontSize: 15, fontWeight: '600' },
-  vehicleGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  vCard: { flex: 1, minWidth: '45%', backgroundColor: '#FFF', borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 14, padding: 16, alignItems: 'center', gap: 6 },
-  vCardActive: { borderColor: '#3B82F6', backgroundColor: '#EFF6FF' },
-  vCardText: { fontSize: 13, fontWeight: '600', color: '#64748B' },
-  vCardTextActive: { color: '#2563EB' },
-  
-  // Toggles
-  toggleCard: { backgroundColor: '#FFF', borderRadius: 14, padding: 2, borderWidth: 1, borderColor: '#E2E8F0', marginTop: 8 },
-  toggleRow: { flexDirection: 'row', alignItems: 'center', padding: 14 },
-  toggleLabel: { fontSize: 14, fontWeight: '600', color: '#1E293B' },
-  toggleSub: { fontSize: 11, color: '#64748B', marginTop: 2 },
-  divider: { height: 1, backgroundColor: '#F1F5F9', marginHorizontal: 14 },
-
-  // Summary
-  summaryCard: { backgroundColor: '#FFF', borderRadius: 16, padding: 18, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 16 },
-  summaryRoute: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
-  summaryCity: { fontSize: 16, fontWeight: '700', color: '#0F172A' },
-  summaryTime: { fontSize: 14, color: '#3B82F6', fontWeight: '600', marginBottom: 14 },
-  summaryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 16, marginTop: 14 },
-  summaryItem: { flexDirection: 'row', alignItems: 'center', gap: 6, width: '45%' },
-  summaryValue: { fontSize: 13, fontWeight: '600', color: '#334155' },
-  summaryInfo: { fontSize: 13, color: '#64748B', textAlign: 'center', paddingHorizontal: 16, lineHeight: 20 },
-
-  // Footers & Buttons
-  footer: { backgroundColor: '#FFF', padding: 16, borderTopWidth: 1, borderColor: '#E2E8F0', flexDirection: 'row', gap: 10 },
-  btnPrimary: { flex: 1, backgroundColor: '#0284C7', borderRadius: 14, padding: 16, alignItems: 'center', shadowColor: '#0284C7', shadowOpacity: 0.4, shadowRadius: 10, elevation: 6 },
-  btnSecondary: { backgroundColor: '#F1F5F9', borderRadius: 14, padding: 16, alignItems: 'center', paddingHorizontal: 24 },
-  btnTextLight: { color: '#FFF', fontSize: 15, fontWeight: '700' },
-  btnTextDark: { color: '#334155', fontSize: 15, fontWeight: '700' },
-  btnDraw: { backgroundColor: '#22C55E', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 6, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 4, elevation: 4 },
-  btnFinish: { backgroundColor: '#22C55E', borderRadius: 8, paddingHorizontal: 16, paddingVertical: 8 },
-  
-  // Dots
-  greenDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#22C55E' },
-  redDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#EF4444' },
-  dotP: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#22C55E', borderWidth: 1.5, borderColor: '#fff' },
-  dotD: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#EF4444', borderWidth: 1.5, borderColor: '#fff' },
-
-  // Badges
-  verifiedBadge: { marginTop: 4, backgroundColor: '#D1FAE5', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, alignSelf: 'center' },
-  verifiedText: { color: '#065F46', fontSize: 10, fontWeight: '700' },
-  pendingBadge: { marginTop: 4, backgroundColor: '#FEF9C3', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, alignSelf: 'center' },
-  pendingText: { color: '#92400E', fontSize: 10, fontWeight: '700' },
-  summaryVisibilityRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: '#EFF6FF', padding: 10, borderRadius: 10, marginTop: 14,
+  headerBackBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  summaryVisibilityText: { fontSize: 12, color: '#1E40AF' },
+  headerTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  headerStepText: {
+    fontSize: 12,
+    color: '#3B82F6',
+    fontWeight: '600',
+  },
+  stepperContainer: {
+    flexDirection: 'row',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  stepIndicatorBar: {
+    flex: 1,
+    height: 4,
+    borderRadius: 2,
+  },
+  stepIndicatorActive: {
+    backgroundColor: '#3B82F6',
+  },
+  stepIndicatorInactive: {
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  scrollContent: {
+    padding: 16,
+    paddingBottom: 110,
+  },
+  stepContainer: {
+    gap: 16,
+  },
+  sectionCard: {
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  sectionHeading: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 4,
+  },
+  sectionSubtext: {
+    fontSize: 12,
+    color: '#94A3B8',
+    marginBottom: 12,
+  },
+  modeToggleRow: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    borderRadius: 12,
+    padding: 4,
+    marginTop: 8,
+  },
+  modeTab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 10,
+    gap: 8,
+  },
+  modeTabActive: {
+    backgroundColor: '#3B82F6',
+  },
+  modeTabText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  modeTabTextActive: {
+    color: '#FFFFFF',
+  },
+  locBlock: {
+    marginVertical: 4,
+  },
+  locHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+    gap: 6,
+  },
+  dotIndicator: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  locTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#94A3B8',
+    letterSpacing: 0.5,
+  },
+  locInputBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  locMainText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  locSubText: {
+    fontSize: 12,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  quickActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 8,
+  },
+  quickActionChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  quickActionText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#E2E8F0',
+  },
+  routeDivider: {
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    marginVertical: 14,
+  },
+  routeStatsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  statLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#94A3B8',
+    letterSpacing: 0.5,
+  },
+  statVal: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginTop: 2,
+  },
+  configInputsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+  },
+  configField: {
+    flex: 1,
+  },
+  fieldLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#94A3B8',
+    marginBottom: 6,
+  },
+  fieldInput: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    color: '#FFFFFF',
+    fontSize: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  serviceGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 8,
+  },
+  serviceCard: {
+    width: (SCREEN_W - 54) / 2,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  srvIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  srvTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 2,
+  },
+  srvDesc: {
+    fontSize: 11,
+    color: '#94A3B8',
+    lineHeight: 15,
+  },
+  checkBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  metaForm: {
+    marginTop: 4,
+  },
+  pillRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 4,
+  },
+  choicePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  choicePillActive: {
+    backgroundColor: '#3B82F6',
+    borderColor: '#3B82F6',
+  },
+  choicePillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#94A3B8',
+  },
+  choicePillTextActive: {
+    color: '#FFFFFF',
+  },
+  orgBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(139,92,246,0.1)',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(139,92,246,0.3)',
+    marginTop: 4,
+  },
+  orgNameText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  orgSubText: {
+    fontSize: 12,
+    color: '#C4B5FD',
+    marginTop: 2,
+  },
+  orgNoteText: {
+    fontSize: 12,
+    color: '#94A3B8',
+    marginTop: 8,
+    lineHeight: 16,
+  },
+  dateTimeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 12,
+  },
+  dateTimeText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.06)',
+  },
+  switchTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  switchDesc: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  vehCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  vehCardSelected: {
+    borderColor: '#3B82F6',
+    backgroundColor: 'rgba(59,130,246,0.1)',
+  },
+  vehIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  vehModelText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  vehPlateText: {
+    fontSize: 12,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  counterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 20,
+    marginTop: 10,
+  },
+  counterBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#3B82F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  counterValBox: {
+    alignItems: 'center',
+    width: 120,
+  },
+  counterValText: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  counterValSub: {
+    fontSize: 12,
+    color: '#94A3B8',
+  },
+  reviewBanner: {
+    backgroundColor: 'rgba(59,130,246,0.12)',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(59,130,246,0.3)',
+  },
+  reviewBannerTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#60A5FA',
+  },
+  reviewBannerSub: {
+    fontSize: 12,
+    color: '#93C5FD',
+    marginTop: 2,
+  },
+  reviewRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  revLabel: {
+    fontSize: 13,
+    color: '#94A3B8',
+    fontWeight: '600',
+  },
+  revValBadge: {
+    backgroundColor: 'rgba(59,130,246,0.2)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  revValBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#60A5FA',
+  },
+  revValueText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  revSubAddress: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 4,
+  },
+  revDivider: {
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    marginVertical: 10,
+  },
+  publishCTA: {
+    borderRadius: 14,
+    overflow: 'hidden',
+    marginTop: 10,
+  },
+  publishGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+  },
+  publishCTAText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  bottomNav: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#0B1120',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.08)',
+  },
+  prevBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    gap: 6,
+  },
+  prevBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#94A3B8',
+  },
+  nextBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#3B82F6',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  nextBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    backgroundColor: '#1E293B',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    maxHeight: '70%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  savedLocRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.06)',
+  },
+  savedLocIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(59,130,246,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  savedLocLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  savedLocAddr: {
+    fontSize: 12,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
 })

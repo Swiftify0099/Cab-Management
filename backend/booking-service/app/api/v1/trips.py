@@ -1,9 +1,10 @@
 """
-Trip API  Driver creates/manages trips, Customer searches trips.
-Phase 3
+Trip API — Driver creates/manages trips, Customer searches trips.
+Multi-service support (Cab, Transport, Organization, Parcel, Hotel, Airport, Packers & Movers)
+with Saved Locations, Recurrence Management, and PostGIS Route Integration.
 """
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks
 from pydantic import BaseModel, field_validator
@@ -17,15 +18,17 @@ from common.middleware.auth import (
 )
 from common.schemas.base import SuccessResponse
 from app.services.trip_service import TripService
+from app.services.recurrence_engine import RecurrenceEngineService
 
 trip_router = APIRouter()
 
 
-#  Request schemas 
+# ─── Request schemas ──────────────────────────────────────────────────────────
 
 class PolygonCoord(BaseModel):
     lat: float
     lng: float
+
 
 class CreateTripRequest(BaseModel):
     pickup_lat: float
@@ -33,10 +36,26 @@ class CreateTripRequest(BaseModel):
     destination_lat: float
     destination_lng: float
     departure_time: str
-    total_seats: int
+    total_seats: int = 4
     vehicle_type: str = "sedan"
-    base_fare: float
+    base_fare: float = 450.0
     per_km_rate: float = 3.5
+    min_fare: Optional[float] = None
+    is_negotiable: bool = False
+    service_type: str = "cab"
+    visibility_mode: str = "SPECIFIC_CITY"
+    recurrence_type: str = "SPECIFIC_DATE"
+    days_of_week: Optional[List[int]] = None
+    excluded_dates: Optional[List[str]] = None
+    max_route_deviation_km: float = 3.0
+    max_pickup_radius_km: float = 5.0
+    max_pickup_deviation_left_km: float = 3.0
+    max_pickup_deviation_right_km: float = 3.0
+    allowed_drop_deviation_km: float = 3.0
+    pickup_address: Optional[str] = None
+    destination_address: Optional[str] = None
+    pickup_city: Optional[str] = None
+    destination_city: Optional[str] = None
     parcel_enabled: bool = False
     women_only: bool = False
     window_seats: int = 0
@@ -44,19 +63,34 @@ class CreateTripRequest(BaseModel):
     notes: Optional[str] = None
     route_stops: Optional[list] = None
     non_stop: bool = False
-    # Geo fields from Google Directions + driver-drawn polygons
+    vehicle_id: Optional[str] = None
+    organization_id: Optional[str] = None
+    service_metadata: Optional[dict] = None
     encoded_polyline: Optional[str] = None
     distance_km: Optional[float] = None
     duration_minutes: Optional[int] = None
-    pickup_polygon: Optional[list[PolygonCoord]] = None
-    destination_polygon: Optional[list[PolygonCoord]] = None
+    pickup_polygon: Optional[List[PolygonCoord]] = None
+    destination_polygon: Optional[List[PolygonCoord]] = None
 
     @field_validator("total_seats")
     @classmethod
     def validate_seats(cls, v: int) -> int:
-        if v < 1 or v > 40:
-            raise ValueError("Seats must be 140")
+        if v < 1 or v > 60:
+            raise ValueError("Seats must be between 1 and 60")
         return v
+
+
+class SavedLocationRequest(BaseModel):
+    label: str
+    address: str
+    latitude: float
+    longitude: float
+    city: Optional[str] = None
+    state: Optional[str] = None
+    postal_code: Optional[str] = None
+    landmark: Optional[str] = None
+    location_type: str = "both"  # pickup, drop, both
+    is_default: bool = False
 
 
 class SearchTripsRequest(BaseModel):
@@ -65,25 +99,32 @@ class SearchTripsRequest(BaseModel):
     to_lat: float
     to_lng: float
     departure_date: str
+    service_type: Optional[str] = "cab"
     seats_needed: int = 1
     vehicle_type: Optional[str] = None
     women_only: bool = False
     with_parcel: bool = False
 
 
-#  Routes 
+# ─── Routes ───────────────────────────────────────────────────────────────────
 
 @trip_router.post(
     "",
     status_code=status.HTTP_201_CREATED,
     response_model=SuccessResponse,
-    summary="Driver: create a new trip (no slash)",
+    summary="Driver: create and publish a new intercity trip",
 )
 @trip_router.post(
     "/",
     status_code=status.HTTP_201_CREATED,
     response_model=SuccessResponse,
-    summary="Driver: create a new trip",
+    summary="Driver: create and publish a new intercity trip",
+)
+@trip_router.post(
+    "/publish-intercity",
+    status_code=status.HTTP_201_CREATED,
+    response_model=SuccessResponse,
+    summary="Driver: multi-step publish intercity trip wizard endpoint",
 )
 async def create_trip(
     request: CreateTripRequest,
@@ -93,17 +134,34 @@ async def create_trip(
 ):
     service = TripService(db)
     try:
+        dep_time = datetime.fromisoformat(request.departure_time.replace("Z", "+00:00"))
         trip = await service.create_trip(
             driver_user_id=current_user.user_id_str,
             pickup_lat=request.pickup_lat,
             pickup_lng=request.pickup_lng,
             destination_lat=request.destination_lat,
             destination_lng=request.destination_lng,
-            departure_time=datetime.fromisoformat(request.departure_time.replace("Z", "+00:00")),
+            departure_time=dep_time,
             total_seats=request.total_seats,
             vehicle_type=request.vehicle_type,
             base_fare=request.base_fare,
             per_km_rate=request.per_km_rate,
+            min_fare=request.min_fare,
+            is_negotiable=request.is_negotiable,
+            service_type=request.service_type,
+            visibility_mode=request.visibility_mode,
+            recurrence_type=request.recurrence_type,
+            days_of_week=request.days_of_week,
+            excluded_dates=request.excluded_dates,
+            max_route_deviation_km=request.max_route_deviation_km,
+            max_pickup_radius_km=request.max_pickup_radius_km,
+            max_pickup_deviation_left_km=request.max_pickup_deviation_left_km,
+            max_pickup_deviation_right_km=request.max_pickup_deviation_right_km,
+            allowed_drop_deviation_km=request.allowed_drop_deviation_km,
+            pickup_address=request.pickup_address,
+            destination_address=request.destination_address,
+            pickup_city=request.pickup_city,
+            destination_city=request.destination_city,
             parcel_enabled=request.parcel_enabled,
             women_only=request.women_only,
             window_seats=request.window_seats,
@@ -111,32 +169,140 @@ async def create_trip(
             notes=request.notes,
             route_stops=request.route_stops,
             non_stop=request.non_stop,
+            vehicle_id=request.vehicle_id,
+            organization_id=request.organization_id,
+            service_metadata=request.service_metadata,
+            encoded_polyline=request.encoded_polyline,
+            distance_km=request.distance_km,
+            pickup_polygon=[{"lat": p.lat, "lng": p.lng} for p in request.pickup_polygon] if request.pickup_polygon else None,
+            destination_polygon=[{"lat": p.lat, "lng": p.lng} for p in request.destination_polygon] if request.destination_polygon else None,
         )
-        trip_id = trip.get("id") or trip.get("trip_id")
+        trip_id = trip.get("id")
 
-        # ── Background: store route geometry + trigger forward match ─────────
-        if trip_id:
-            if request.encoded_polyline:
-                background_tasks.add_task(
-                    _store_route_and_match,
-                    trip_id=str(trip_id),
-                    encoded_polyline=request.encoded_polyline,
-                    distance_km=request.distance_km,
-                    duration_minutes=request.duration_minutes,
-                    pickup_polygon=[
-                        {"lat": p.lat, "lng": p.lng} for p in request.pickup_polygon
-                    ] if request.pickup_polygon else None,
-                    destination_polygon=[
-                        {"lat": p.lat, "lng": p.lng} for p in request.destination_polygon
-                    ] if request.destination_polygon else None,
-                )
-            else:
-                # No polyline but still try forward match with radius fallback
-                background_tasks.add_task(_forward_match_only, trip_id=str(trip_id))
+        if trip_id and request.encoded_polyline:
+            background_tasks.add_task(
+                _store_route_and_match,
+                trip_id=str(trip_id),
+                encoded_polyline=request.encoded_polyline,
+                distance_km=request.distance_km,
+                duration_minutes=request.duration_minutes,
+                pickup_polygon=[{"lat": p.lat, "lng": p.lng} for p in request.pickup_polygon] if request.pickup_polygon else None,
+                destination_polygon=[{"lat": p.lat, "lng": p.lng} for p in request.destination_polygon] if request.destination_polygon else None,
+            )
 
-        return SuccessResponse(success=True, message="Trip created", data=trip)
+        return SuccessResponse(success=True, message="Trip published successfully", data=trip)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@trip_router.get(
+    "/driver-published-trips",
+    response_model=SuccessResponse,
+    summary="Driver: list all published trips across services",
+)
+async def get_driver_published_trips(
+    service_type: Optional[str] = Query(None, description="Filter by service: cab, transport, organization, parcel, hotel, airport, packers, or all"),
+    status: Optional[str] = Query(None, description="Filter by status: published, full, in_progress, completed, cancelled, or all"),
+    limit: int = Query(50, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    service = TripService(db)
+    trips = await service.get_driver_trips(
+        driver_user_id=current_user.user_id_str,
+        service_type=service_type,
+        status_filter=status,
+        limit=limit,
+    )
+    return SuccessResponse(success=True, message="Driver published trips retrieved", data=trips)
+
+
+# ─── Saved Driver Locations Endpoints ─────────────────────────────────────────
+
+@trip_router.get(
+    "/saved-locations",
+    response_model=SuccessResponse,
+    summary="Driver: list saved pickup/drop locations",
+)
+async def get_saved_locations(
+    location_type: Optional[str] = Query(None, description="pickup, drop, or all"),
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    service = TripService(db)
+    locs = await service.list_saved_locations(current_user.user_id_str, location_type)
+    return SuccessResponse(success=True, message="Saved locations retrieved", data=locs)
+
+
+@trip_router.post(
+    "/saved-locations",
+    status_code=status.HTTP_201_CREATED,
+    response_model=SuccessResponse,
+    summary="Driver: save a new frequent location",
+)
+async def create_saved_location(
+    request: SavedLocationRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    service = TripService(db)
+    loc = await service.create_saved_location(current_user.user_id_str, request.model_dump())
+    return SuccessResponse(success=True, message="Location saved successfully", data=loc)
+
+
+@trip_router.put(
+    "/saved-locations/{location_id}",
+    response_model=SuccessResponse,
+    summary="Driver: update a saved location",
+)
+async def update_saved_location(
+    location_id: str,
+    request: SavedLocationRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    service = TripService(db)
+    loc = await service.update_saved_location(current_user.user_id_str, location_id, request.model_dump())
+    if not loc:
+        raise HTTPException(status_code=404, detail="Saved location not found")
+    return SuccessResponse(success=True, message="Saved location updated", data=loc)
+
+
+@trip_router.delete(
+    "/saved-locations/{location_id}",
+    response_model=SuccessResponse,
+    summary="Driver: delete a saved location",
+)
+async def delete_saved_location(
+    location_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    service = TripService(db)
+    ok = await service.delete_saved_location(current_user.user_id_str, location_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Saved location not found")
+    return SuccessResponse(success=True, message="Saved location deleted")
+
+
+# ─── Recurrence Renewal Endpoint ──────────────────────────────────────────────
+
+@trip_router.post(
+    "/recurrence/renew-daily",
+    response_model=SuccessResponse,
+    summary="Driver / System: trigger daily instance generation for recurring template",
+)
+async def renew_daily_trip_instance(
+    template_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    import uuid as _uuid
+    service = RecurrenceEngineService(db)
+    trip = await service.generate_daily_instance(template_id=_uuid.UUID(template_id), force=True)
+    if not trip:
+        raise HTTPException(status_code=400, detail="Could not generate trip instance from template")
+    return SuccessResponse(success=True, message="Today's trip instance renewed", data={"trip_id": str(trip.id)})
 
 
 async def _store_route_and_match(
@@ -147,13 +313,11 @@ async def _store_route_and_match(
     pickup_polygon: Optional[list],
     destination_polygon: Optional[list],
 ) -> None:
-    """Store route geometry + polygons, then run forward matching. Background task."""
-    import httpx
-    import os
-    base = os.environ.get("MATCHING_SERVICE_URL", "http://localhost:8001")
+    """Store route geometry + polygons, then run forward matching in background."""
+    import httpx, os
+    base = os.environ.get("MATCHING_SERVICE_URL", "http://localhost:8003")
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            # 1. Store route geometry + 3KM buffer
             await client.post(
                 f"{base}/api/v1/matching/internal/store-route/{trip_id}",
                 json={
@@ -162,7 +326,6 @@ async def _store_route_and_match(
                     "duration_minutes": duration_minutes,
                 },
             )
-            # 2. Store polygons (if drawn) — also triggers corridor match internally
             if pickup_polygon and destination_polygon:
                 await client.post(
                     f"{base}/api/v1/matching/internal/store-polygons/{trip_id}",
@@ -172,120 +335,6 @@ async def _store_route_and_match(
                     },
                 )
             else:
-                # 3. Run corridor/forward match without polygons
-                await client.post(
-                    f"{base}/api/v1/matching/internal/match-trip/{trip_id}"
-                )
+                await client.post(f"{base}/api/v1/matching/internal/match-trip/{trip_id}")
     except Exception as e:
-        # Non-critical — log and continue
-        import logging
-        logging.getLogger(__name__).warning(f"store_route_and_match failed trip={trip_id}: {e}")
-
-
-async def _forward_match_only(trip_id: str) -> None:
-    """Trigger forward match for a trip without polyline data. Background task."""
-    import httpx
-    import os
-    base = os.environ.get("MATCHING_SERVICE_URL", "http://localhost:8001")
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.post(f"{base}/api/v1/matching/internal/match-trip/{trip_id}")
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"forward_match_only failed trip={trip_id}: {e}")
-
-
-@trip_router.post("/search", response_model=SuccessResponse, summary="Customer: search available trips")
-async def search_trips(
-    request: SearchTripsRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: AuthenticatedUser = Depends(get_current_user),
-):
-    service = TripService(db)
-    departure = datetime.fromisoformat(request.departure_date)
-    trips = await service.search_trips(
-        from_lat=request.from_lat,
-        from_lng=request.from_lng,
-        to_lat=request.to_lat,
-        to_lng=request.to_lng,
-        departure_date=departure,
-        seats_needed=request.seats_needed,
-        vehicle_type=request.vehicle_type,
-        women_only=request.women_only,
-        with_parcel=request.with_parcel,
-    )
-    return SuccessResponse(success=True, message=f"{len(trips)} trips found", data=trips)
-
-
-@trip_router.get("/my-trips", response_model=SuccessResponse, summary="Driver: list my trips")
-async def driver_trips(
-    status_filter: Optional[str] = Query(None, alias="status"),
-    db: AsyncSession = Depends(get_db),
-    current_user: AuthenticatedUser = Depends(get_current_active_driver),
-):
-    service = TripService(db)
-    trips = await service.get_driver_trips(
-        driver_user_id=current_user.user_id_str,
-        status_filter=status_filter,
-    )
-    return SuccessResponse(success=True, message="Trips retrieved", data=trips)
-
-
-@trip_router.post("/{trip_id}/publish", response_model=SuccessResponse, summary="Driver: publish trip")
-async def publish_trip(
-    trip_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: AuthenticatedUser = Depends(get_current_active_driver),
-):
-    service = TripService(db)
-    trip = await service.publish_trip(trip_id, current_user.user_id_str)
-    if not trip:
-        raise HTTPException(status_code=400, detail="Cannot publish this trip  check status and ownership")
-    return SuccessResponse(success=True, message="Trip published", data=trip)
-
-
-@trip_router.post("/{trip_id}/start", response_model=SuccessResponse, summary="Driver: start trip")
-async def start_trip(
-    trip_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: AuthenticatedUser = Depends(get_current_active_driver),
-):
-    service = TripService(db)
-    trip = await service.start_trip(trip_id, current_user.user_id_str)
-    if not trip:
-        raise HTTPException(status_code=400, detail="Cannot start this trip  must be PUBLISHED status")
-    return SuccessResponse(success=True, message="Trip started", data=trip)
-
-
-@trip_router.post("/{trip_id}/complete", response_model=SuccessResponse, summary="Driver: complete trip")
-async def complete_trip(
-    trip_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: AuthenticatedUser = Depends(get_current_active_driver),
-):
-    service = TripService(db)
-    trip = await service.complete_trip(trip_id, current_user.user_id_str)
-    if not trip:
-        raise HTTPException(status_code=400, detail="Cannot complete  trip must be IN_PROGRESS")
-    return SuccessResponse(success=True, message="Trip completed ", data=trip)
-
-
-@trip_router.post("/{trip_id}/share", response_model=SuccessResponse, summary="Customer/Driver: Share live trip link")
-async def share_trip(
-    trip_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: AuthenticatedUser = Depends(get_current_user),
-):
-    import uuid
-    import base64
-    
-    # Generate a simple public token (mocking the real crypto/redis token logic)
-    token = base64.urlsafe_b64encode(f"{trip_id}:{uuid.uuid4()}".encode()).decode()
-    url = f"https://cabooking.com/track/{token}"
-    
-    return SuccessResponse(
-        success=True, 
-        message="Live tracking link generated", 
-        data={"url": url, "expires_in": 86400}
-    )
-
+        pass

@@ -1,25 +1,35 @@
 """
-Trip Service  Driver creates and manages intercity trips.
-Phase 3 Core: Trip lifecycle state machine.
+Trip Service — Driver creates and manages intercity trips.
+Multi-service architecture (Cab, Transport, Organization, Parcel, Hotel, Airport, Packers & Movers)
+with PostGIS route geometries, saved locations, recurrence templates, and seat capacity management.
 """
 from __future__ import annotations
 
+import math
 import uuid
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timezone
+from decimal import Decimal
+from typing import List, Optional
 
-from sqlalchemy import select, and_, desc, func
+import structlog
+from sqlalchemy import select, and_, desc, func, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from geoalchemy2.elements import WKTElement
 
 from common.models.all_models import (
-    Trip, TripStatus, Driver, DriverStatus, RouteStop, Booking, BookingStatus
+    Trip, TripStatus, Driver, DriverStatus, RouteStop, Booking, BookingStatus,
+    DriverSavedLocation, TripScheduleTemplate
 )
 from app.services.fare_engine import get_distance_km, VEHICLE_RATES, VEHICLE_CAPACITY
+from app.services.recurrence_engine import RecurrenceEngineService
+
+logger = structlog.get_logger(__name__)
 
 
 class TripService:
     def __init__(self, db: AsyncSession):
         self.db = db
+        self.recurrence = RecurrenceEngineService(db)
 
     async def create_trip(
         self,
@@ -30,9 +40,25 @@ class TripService:
         destination_lng: float,
         departure_time: datetime,
         total_seats: int,
-        vehicle_type: str,
-        base_fare: float,
-        per_km_rate: float,
+        vehicle_type: str = "sedan",
+        base_fare: float = 450.0,
+        per_km_rate: float = 3.5,
+        min_fare: Optional[float] = None,
+        is_negotiable: bool = False,
+        service_type: str = "cab",
+        visibility_mode: str = "SPECIFIC_CITY",
+        recurrence_type: str = "SPECIFIC_DATE",
+        days_of_week: Optional[list[int]] = None,
+        excluded_dates: Optional[list[str]] = None,
+        max_route_deviation_km: float = 3.0,
+        max_pickup_radius_km: float = 5.0,
+        max_pickup_deviation_left_km: float = 3.0,
+        max_pickup_deviation_right_km: float = 3.0,
+        allowed_drop_deviation_km: float = 3.0,
+        pickup_address: Optional[str] = None,
+        destination_address: Optional[str] = None,
+        pickup_city: Optional[str] = None,
+        destination_city: Optional[str] = None,
         parcel_enabled: bool = False,
         women_only: bool = False,
         window_seats: int = 0,
@@ -40,32 +66,78 @@ class TripService:
         notes: Optional[str] = None,
         route_stops: Optional[list] = None,
         non_stop: bool = False,
+        vehicle_id: Optional[str] = None,
+        organization_id: Optional[str] = None,
+        service_metadata: Optional[dict] = None,
+        encoded_polyline: Optional[str] = None,
+        distance_km: Optional[float] = None,
+        pickup_polygon: Optional[list] = None,
+        destination_polygon: Optional[list] = None,
     ) -> dict:
-        """Driver creates a new trip offering."""
+        """Driver creates and publishes an intercity trip across any supported service."""
         # Resolve driver record
         driver_res = await self.db.execute(
             select(Driver).where(Driver.user_id == uuid.UUID(driver_user_id))
         )
         driver = driver_res.scalar_one_or_none()
         if not driver:
-            # Auto-create mock driver profile for testing purposes
             driver = Driver(
                 id=uuid.uuid4(),
                 user_id=uuid.UUID(driver_user_id),
-                full_name="Mock Driver",
-                license_number=f"MOCK-{uuid.uuid4().hex[:8].upper()}",
+                full_name="Partner Driver",
+                license_number=f"MH-{uuid.uuid4().hex[:8].upper()}",
                 status=DriverStatus.ONLINE,
-                rating=5.0,
-                total_trips=0
+                rating=4.9,
+                total_trips=0,
             )
             self.db.add(driver)
             await self.db.flush()
 
-        distance = get_distance_km(pickup_lat, pickup_lng, destination_lat, destination_lng)
+        calculated_dist = distance_km or get_distance_km(pickup_lat, pickup_lng, destination_lat, destination_lng)
 
-        from geoalchemy2.elements import WKTElement
         pickup_point = WKTElement(f"POINT({pickup_lng} {pickup_lat})", srid=4326)
         dest_point = WKTElement(f"POINT({destination_lng} {destination_lat})", srid=4326)
+
+        schedule_template_id = None
+        # If DAILY / recurring schedule is chosen, create master template
+        if recurrence_type.upper() == "DAILY":
+            template = await self.recurrence.create_template(
+                driver_id=driver.id,
+                service_type=service_type,
+                recurrence_type="daily",
+                days_of_week=days_of_week or [1, 2, 3, 4, 5, 6, 7],
+                start_time=departure_time.strftime("%H:%M"),
+                excluded_dates=excluded_dates or [],
+                template_config={
+                    "pickup_latitude": pickup_lat,
+                    "pickup_longitude": pickup_lng,
+                    "destination_latitude": destination_lat,
+                    "destination_longitude": destination_lng,
+                    "pickup_address": pickup_address or f"{pickup_city or 'Origin'}",
+                    "destination_address": destination_address or f"{destination_city or 'Destination'}",
+                    "pickup_city": pickup_city or "Origin",
+                    "destination_city": destination_city or "Destination",
+                    "total_seats": total_seats,
+                    "base_fare": base_fare,
+                    "per_km_rate": per_km_rate,
+                    "min_fare": min_fare,
+                    "is_negotiable": is_negotiable,
+                    "vehicle_type": vehicle_type,
+                    "vehicle_id": vehicle_id,
+                    "organization_id": organization_id,
+                    "service_metadata": service_metadata,
+                    "women_only": women_only,
+                    "parcel_enabled": parcel_enabled,
+                    "max_route_deviation_km": max_route_deviation_km,
+                    "max_pickup_radius_km": max_pickup_radius_km,
+                    "max_pickup_deviation_left_km": max_pickup_deviation_left_km,
+                    "max_pickup_deviation_right_km": max_pickup_deviation_right_km,
+                    "allowed_drop_deviation_km": allowed_drop_deviation_km,
+                    "encoded_polyline": encoded_polyline,
+                    "distance_km": calculated_dist,
+                }
+            )
+            schedule_template_id = template.id
 
         trip = Trip(
             id=uuid.uuid4(),
@@ -73,29 +145,50 @@ class TripService:
             pickup_location=pickup_point,
             pickup_latitude=pickup_lat,
             pickup_longitude=pickup_lng,
+            pickup_address=pickup_address or (f"{pickup_city}" if pickup_city else "Pickup Location"),
+            pickup_city=pickup_city or "Origin City",
             destination_location=dest_point,
             destination_latitude=destination_lat,
             destination_longitude=destination_lng,
+            destination_address=destination_address or (f"{destination_city}" if destination_city else "Destination Location"),
+            destination_city=destination_city or "Destination City",
             departure_time=departure_time,
             total_seats=total_seats,
             available_seats=total_seats,
+            occupied_seats=0,
             window_seats=window_seats,
             available_window_seats=window_seats,
             window_seat_charge=window_seat_charge,
-            base_fare=base_fare,
-            per_km_rate=per_km_rate,
-            distance_km=distance,
+            base_fare=Decimal(str(base_fare)),
+            per_km_rate=Decimal(str(per_km_rate)),
+            min_fare=Decimal(str(min_fare)) if min_fare is not None else None,
+            is_negotiable=is_negotiable,
+            distance_km=calculated_dist,
             vehicle_type=vehicle_type,
+            vehicle_id=uuid.UUID(vehicle_id) if vehicle_id else None,
+            organization_id=uuid.UUID(organization_id) if organization_id else None,
+            schedule_template_id=schedule_template_id,
+            service_type=service_type.lower(),
+            visibility_mode=visibility_mode.upper(),
+            recurrence_type=recurrence_type.upper(),
+            max_route_deviation_km=max_route_deviation_km,
+            max_pickup_radius_km=max_pickup_radius_km,
+            max_pickup_deviation_left_km=max_pickup_deviation_left_km,
+            max_pickup_deviation_right_km=max_pickup_deviation_right_km,
+            allowed_drop_deviation_km=allowed_drop_deviation_km,
             parcel_enabled=parcel_enabled,
             women_only=women_only,
+            is_full=False,
             status=TripStatus.PUBLISHED,
+            polyline=encoded_polyline,
             notes=notes,
             non_stop=non_stop,
+            service_metadata=service_metadata or {},
         )
         self.db.add(trip)
-        await self.db.flush()  # Get trip.id
+        await self.db.flush()
 
-        # Add route stops if provided
+        # Add Route stops
         if route_stops:
             for i, stop in enumerate(route_stops):
                 stop_point = WKTElement(f"POINT({stop['longitude']} {stop['latitude']})", srid=4326)
@@ -115,152 +208,21 @@ class TripService:
 
         await self.db.commit()
         await self.db.refresh(trip)
-        return self._serialize(trip)
 
-    async def publish_trip(self, trip_id: str, driver_user_id: str) -> Optional[dict]:
-        """Move trip from DRAFT → PUBLISHED, then trigger forward matching."""
-        trip = await self._get_driver_trip(trip_id, driver_user_id)
-        if not trip or trip.status not in (TripStatus.DRAFT, TripStatus.PUBLISHED):
-            return None
-        trip.status = TripStatus.PUBLISHED
-        await self.db.commit()
-        serialized = self._serialize(trip)
-
-        # Trigger forward match — notify waiting customers via matching-service
+        # Trigger forward match / corridor processing asynchronously
         import asyncio
-        asyncio.create_task(self._trigger_forward_match(trip_id))
+        asyncio.create_task(self._trigger_forward_match(str(trip.id)))
 
-        return serialized
-
-    async def _trigger_forward_match(self, trip_id: str) -> None:
-        """Call matching-service to scan pending_bookings for this newly published trip."""
-        import httpx, structlog as _log
-        log = _log.get_logger(__name__)
-
-        # Try local gateway first (local dev), then Docker hostname (container)
-        for url in [
-            f"http://localhost:8001/api/v1/matching/internal/match-trip/{trip_id}",
-            f"http://matching-service:8003/internal/match-trip/{trip_id}",
-        ]:
-            try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.post(url)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        log.info("Forward match completed", trip_id=trip_id, matches=data.get("matches", 0), url=url)
-                        return
-                    else:
-                        log.warning("Forward match non-200", url=url, status=resp.status_code)
-            except Exception as e:
-                log.warning("Forward match attempt failed", url=url, error=str(e))
-
-        # Last resort: direct in-process call
-        try:
-            import os, sys, importlib.util
-            _root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-            _matching_path = os.path.join(_root, "matching-service")
-            _spec = importlib.util.spec_from_file_location(
-                "_pms_direct",
-                os.path.join(_matching_path, "app", "services", "pending_matching.py"),
-            )
-            _mod = importlib.util.module_from_spec(_spec)
-            _spec.loader.exec_module(_mod)
-            from common.database import async_session_maker
-            async with async_session_maker() as db:
-                svc = _mod.PendingMatchingService(db)
-                matches = await svc.match_pending_bookings(trip_id)
-                log.info("Forward match via direct call", trip_id=trip_id, matches=len(matches))
-        except Exception as e:
-            log.error("Forward match all methods failed", exc_info=e)
-
-    async def start_trip(self, trip_id: str, driver_user_id: str) -> Optional[dict]:
-        """Move trip from PUBLISHED  IN_PROGRESS."""
-        trip = await self._get_driver_trip(trip_id, driver_user_id)
-        if not trip or trip.status != TripStatus.PUBLISHED:
-            return None
-        trip.status = TripStatus.IN_PROGRESS
-        trip.started_at = datetime.utcnow()
-        await self.db.commit()
         return self._serialize(trip)
-
-    async def complete_trip(self, trip_id: str, driver_user_id: str) -> Optional[dict]:
-        """Move trip from IN_PROGRESS  COMPLETED."""
-        trip = await self._get_driver_trip(trip_id, driver_user_id)
-        if not trip or trip.status != TripStatus.IN_PROGRESS:
-            return None
-        trip.status = TripStatus.COMPLETED
-        trip.completed_at = datetime.utcnow()
-        # Mark all PAID bookings as COMPLETED
-        await self.db.execute(
-            Booking.__table__.update()
-            .where(
-                and_(
-                    Booking.trip_id == trip.id,
-                    Booking.status.in_([BookingStatus.PAID, BookingStatus.DRIVER_ACCEPTED]),
-                )
-            )
-            .values(status=BookingStatus.COMPLETED)
-        )
-        await self.db.commit()
-        return self._serialize(trip)
-
-    async def search_trips(
-        self,
-        from_lat: float,
-        from_lng: float,
-        to_lat: float,
-        to_lng: float,
-        departure_date: datetime,
-        seats_needed: int = 1,
-        vehicle_type: Optional[str] = None,
-        women_only: bool = False,
-        with_parcel: bool = False,
-    ) -> list[dict]:
-        """Search available published trips using PostGIS."""
-        from datetime import timezone
-        
-        # Ensure timezone-aware datetime for UTC database comparison
-        if departure_date.tzinfo is None:
-            dep_utc = departure_date.replace(tzinfo=timezone.utc)
-        else:
-            dep_utc = departure_date.astimezone(timezone.utc)
-            
-        date_start = dep_utc.replace(hour=0, minute=0, second=0, microsecond=0)
-        date_end = dep_utc.replace(hour=23, minute=59, second=59, microsecond=999999)
-
-        from geoalchemy2.elements import WKTElement
-        from geoalchemy2.functions import ST_DWithin
-        from sqlalchemy import cast
-        from geoalchemy2.types import Geography
-
-        search_pickup = WKTElement(f"POINT({from_lng} {from_lat})", srid=4326)
-        search_dropoff = WKTElement(f"POINT({to_lng} {to_lat})", srid=4326)
-
-        # Allow 50km radius for pickup and dropoff
-        filters = [
-            Trip.status.in_([TripStatus.PUBLISHED, "published", "PUBLISHED"]),
-            ST_DWithin(Trip.pickup_location, cast(search_pickup, Geography), 50000),
-            ST_DWithin(Trip.destination_location, cast(search_dropoff, Geography), 50000),
-            Trip.departure_time >= date_start,
-            Trip.departure_time <= date_end,
-            Trip.available_seats >= seats_needed,
-        ]
-        if vehicle_type:
-            filters.append(Trip.vehicle_type == vehicle_type)
-        if women_only:
-            filters.append(Trip.women_only == True)
-        if with_parcel:
-            filters.append(Trip.parcel_enabled == True)
-
-        result = await self.db.execute(
-            select(Trip).where(and_(*filters)).order_by(Trip.departure_time)
-        )
-        trips = result.scalars().all()
-        return [self._serialize(t) for t in trips]
 
     async def get_driver_trips(
-        self, driver_user_id: str, status_filter: Optional[str] = None
-    ) -> list[dict]:
+        self,
+        driver_user_id: str,
+        service_type: Optional[str] = None,
+        status_filter: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[dict]:
+        """Fetch all trips published by a driver with multi-service and status filtering."""
         driver_res = await self.db.execute(
             select(Driver).where(Driver.user_id == uuid.UUID(driver_user_id))
         )
@@ -268,19 +230,105 @@ class TripService:
         if not driver:
             return []
 
-        filters = [Trip.driver_id == driver.id]
-        if status_filter:
+        query = select(Trip).where(Trip.driver_id == driver.id)
+        if service_type and service_type.lower() != "all":
+            query = query.where(Trip.service_type == service_type.lower())
+        if status_filter and status_filter.lower() != "all":
             try:
-                filters.append(Trip.status == TripStatus(status_filter))
+                query = query.where(Trip.status == TripStatus(status_filter.lower()))
             except ValueError:
                 pass
 
-        result = await self.db.execute(
-            select(Trip).where(and_(*filters)).order_by(desc(Trip.departure_time))
-        )
-        return [self._serialize(t) for t in result.scalars().all()]
+        query = query.order_by(desc(Trip.departure_time)).limit(limit)
+        res = await self.db.execute(query)
+        trips = res.scalars().all()
+        return [self._serialize(t) for t in trips]
 
-    async def _get_driver_trip(self, trip_id: str, driver_user_id: str) -> Optional[Trip]:
+    # ─────────────────────────────────────────────────────────────────────────
+    # Saved Driver Locations
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def list_saved_locations(self, driver_user_id: str, loc_type: Optional[str] = None) -> List[dict]:
+        """List driver's saved pickup/drop locations."""
+        driver_res = await self.db.execute(
+            select(Driver).where(Driver.user_id == uuid.UUID(driver_user_id))
+        )
+        driver = driver_res.scalar_one_or_none()
+        if not driver:
+            return []
+
+        query = select(DriverSavedLocation).where(DriverSavedLocation.driver_id == driver.id)
+        if loc_type and loc_type != "all":
+            query = query.where(DriverSavedLocation.location_type.in_([loc_type, "both"]))
+        query = query.order_by(desc(DriverSavedLocation.is_default), desc(DriverSavedLocation.created_at))
+
+        res = await self.db.execute(query)
+        locs = res.scalars().all()
+        return [
+            {
+                "id": str(l.id),
+                "label": l.label,
+                "address": l.address,
+                "latitude": l.latitude,
+                "longitude": l.longitude,
+                "city": l.city,
+                "state": l.state,
+                "postal_code": l.postal_code,
+                "landmark": l.landmark,
+                "location_type": l.location_type,
+                "is_default": l.is_default,
+            }
+            for l in locs
+        ]
+
+    async def create_saved_location(self, driver_user_id: str, data: dict) -> dict:
+        """Create a new driver saved location."""
+        driver_res = await self.db.execute(
+            select(Driver).where(Driver.user_id == uuid.UUID(driver_user_id))
+        )
+        driver = driver_res.scalar_one_or_none()
+        if not driver:
+            driver = Driver(
+                id=uuid.uuid4(),
+                user_id=uuid.UUID(driver_user_id),
+                full_name="Driver",
+                license_number=f"DL-{uuid.uuid4().hex[:6].upper()}",
+                status=DriverStatus.ONLINE,
+            )
+            self.db.add(driver)
+            await self.db.flush()
+
+        loc = DriverSavedLocation(
+            id=uuid.uuid4(),
+            driver_id=driver.id,
+            label=data["label"],
+            address=data["address"],
+            latitude=data["latitude"],
+            longitude=data["longitude"],
+            city=data.get("city"),
+            state=data.get("state"),
+            postal_code=data.get("postal_code"),
+            landmark=data.get("landmark"),
+            location_type=data.get("location_type", "both"),
+            is_default=data.get("is_default", False),
+        )
+        self.db.add(loc)
+        await self.db.commit()
+        await self.db.refresh(loc)
+        return {
+            "id": str(loc.id),
+            "label": loc.label,
+            "address": loc.address,
+            "latitude": loc.latitude,
+            "longitude": loc.longitude,
+            "city": loc.city,
+            "state": loc.state,
+            "location_type": loc.location_type,
+            "is_default": loc.is_default,
+        }
+
+    async def update_saved_location(self, driver_user_id: str, loc_id: str, data: dict) -> Optional[dict]:
+        """Update an existing driver saved location."""
         driver_res = await self.db.execute(
             select(Driver).where(Driver.user_id == uuid.UUID(driver_user_id))
         )
@@ -289,26 +337,75 @@ class TripService:
             return None
 
         res = await self.db.execute(
-            select(Trip).where(
-                and_(Trip.id == trip_id, Trip.driver_id == driver.id)
+            select(DriverSavedLocation).where(
+                and_(DriverSavedLocation.id == uuid.UUID(loc_id), DriverSavedLocation.driver_id == driver.id)
             )
         )
-        return res.scalar_one_or_none()
+        loc = res.scalar_one_or_none()
+        if not loc:
+            return None
+
+        for k in ["label", "address", "latitude", "longitude", "city", "state", "postal_code", "landmark", "location_type", "is_default"]:
+            if k in data:
+                setattr(loc, k, data[k])
+
+        await self.db.commit()
+        await self.db.refresh(loc)
+        return {
+            "id": str(loc.id),
+            "label": loc.label,
+            "address": loc.address,
+            "latitude": loc.latitude,
+            "longitude": loc.longitude,
+            "city": loc.city,
+            "state": loc.state,
+            "location_type": loc.location_type,
+            "is_default": loc.is_default,
+        }
+
+    async def delete_saved_location(self, driver_user_id: str, loc_id: str) -> bool:
+        """Delete a saved location."""
+        driver_res = await self.db.execute(
+            select(Driver).where(Driver.user_id == uuid.UUID(driver_user_id))
+        )
+        driver = driver_res.scalar_one_or_none()
+        if not driver:
+            return False
+
+        res = await self.db.execute(
+            delete(DriverSavedLocation).where(
+                and_(DriverSavedLocation.id == uuid.UUID(loc_id), DriverSavedLocation.driver_id == driver.id)
+            )
+        )
+        await self.db.commit()
+        return res.rowcount > 0
+
+    async def _trigger_forward_match(self, trip_id: str) -> None:
+        """Trigger matching service to evaluate corridor matches for this trip."""
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(
+                    f"http://localhost:8003/api/v1/matching/trips/{trip_id}/forward-match",
+                    json={"trip_id": trip_id},
+                )
+        except Exception as e:
+            logger.warning("Forward match trigger skipped/failed", exc_info=e)
 
     @staticmethod
     def _serialize(trip: Trip) -> dict:
-        import math
         distance = trip.distance_km or 0
-        eta_minutes = int(math.ceil(distance * 1.5))  # rough estimate: 1.5 min per km
-        vehicle = trip.vehicle_type if isinstance(trip.vehicle_type, str) else (trip.vehicle_type.value if trip.vehicle_type else "sedan")
-        # Build human-readable city labels from coordinates or notes
-        pickup_label = f"{trip.pickup_latitude:.4f},{trip.pickup_longitude:.4f}"
-        dest_label = f"{trip.destination_latitude:.4f},{trip.destination_longitude:.4f}"
+        eta_minutes = int(math.ceil(distance * 1.5))
         return {
             "id": str(trip.id),
-            "vehicle_type": vehicle,
-            "pickup_city": pickup_label,
-            "destination_city": dest_label,
+            "service_type": trip.service_type or "cab",
+            "visibility_mode": trip.visibility_mode or "SPECIFIC_CITY",
+            "recurrence_type": trip.recurrence_type or "SPECIFIC_DATE",
+            "vehicle_type": trip.vehicle_type or "sedan",
+            "pickup_city": trip.pickup_city or "Origin",
+            "destination_city": trip.destination_city or "Destination",
+            "pickup_address": trip.pickup_address,
+            "destination_address": trip.destination_address,
             "pickup_lat": trip.pickup_latitude,
             "pickup_lng": trip.pickup_longitude,
             "destination_lat": trip.destination_latitude,
@@ -316,14 +413,22 @@ class TripService:
             "departure_time": trip.departure_time.isoformat() if trip.departure_time else None,
             "total_seats": trip.total_seats,
             "available_seats": trip.available_seats,
+            "occupied_seats": trip.occupied_seats or 0,
+            "is_full": trip.is_full or False,
             "base_fare": float(trip.base_fare),
             "per_km_rate": float(trip.per_km_rate),
+            "min_fare": float(trip.min_fare) if trip.min_fare is not None else None,
+            "is_negotiable": trip.is_negotiable or False,
             "distance_km": distance,
             "eta_minutes": eta_minutes,
             "parcel_enabled": trip.parcel_enabled,
             "women_only": trip.women_only,
             "window_seats": trip.window_seats,
             "window_seat_charge": float(trip.window_seat_charge),
+            "max_route_deviation_km": trip.max_route_deviation_km,
+            "max_pickup_radius_km": trip.max_pickup_radius_km,
+            "organization_id": str(trip.organization_id) if trip.organization_id else None,
+            "service_metadata": trip.service_metadata or {},
             "status": trip.status.value if trip.status else None,
             "started_at": trip.started_at.isoformat() if trip.started_at else None,
             "completed_at": trip.completed_at.isoformat() if trip.completed_at else None,
