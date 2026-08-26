@@ -233,6 +233,9 @@ class TransportService:
             "weight_kg": weight_kg,
             "volume_cft": volume_cft,
             "helpers_count": helpers,
+            "total_fare": float(total_fare),
+            "driver_earning": float(driver_earning),
+            "platform_commission": float(platform_comm),
             "financials": {
                 "base_fare": float(base_fare),
                 "distance_fare": float(distance_fare),
@@ -455,6 +458,7 @@ class TransportService:
             "order_reference": order.order_reference,
             "status": order.status.value if hasattr(order.status, "value") else str(order.status),
             "pricing_mode": order.pricing_mode,
+            "delivery_otp": order.delivery_otp,
             "route": {
                 "pickup_address": order.pickup_address,
                 "pickup_lat": order.pickup_lat,
@@ -615,6 +619,7 @@ class TransportService:
         )
 
         return {
+            "success": True,
             "quote_id": str(quote.id),
             "order_id": str(order.id),
             "amount": float(quote.amount),
@@ -721,6 +726,7 @@ class TransportService:
         )
 
         return {
+            "success": True,
             "quote_id": str(quote.id),
             "order_id": str(quote.order_id),
             "amount": float(quote.amount),
@@ -1008,6 +1014,36 @@ class TransportService:
         # 4. Release Driver Earnings to Driver Ledger & Wallet
         driver = await self.db.get(Driver, d_uuid)
         if driver:
+            driver.wallet_balance = (driver.wallet_balance or Decimal("0.00")) + order.driver_earning
+            driver.total_earnings = (driver.total_earnings or Decimal("0.00")) + order.driver_earning
+            driver.total_trips = (driver.total_trips or 0) + 1
+
+            try:
+                from common.models.all_models import DriverEarningLedger
+                from datetime import date
+                ledger_entry = DriverEarningLedger(
+                    id=uuid.uuid4(),
+                    driver_id=driver.id,
+                    entry_type="TRANSPORT_EARNING",
+                    amount=order.driver_earning,
+                    currency="INR",
+                    direction="CREDIT",
+                    status="SETTLED",
+                    description=f"Earnings for Transport #{order.order_reference}",
+                    effective_date=date.today(),
+                    metadata_json={
+                        "order_id": str(order.id),
+                        "order_reference": order.order_reference,
+                        "vehicle_category": order.vehicle_category_required,
+                        "total_fare": float(order.total_fare),
+                        "driver_earning": float(order.driver_earning),
+                        "platform_commission": float(order.platform_commission),
+                    },
+                )
+                self.db.add(ledger_entry)
+            except Exception as ex:
+                logger.warning("DriverEarningLedger creation error in transport", error=str(ex))
+
             driver_user = await self.db.get(User, driver.user_id)
             if driver_user:
                 prof_res = await self.db.execute(select(CustomerProfile).where(CustomerProfile.user_id == driver_user.id))
@@ -1077,3 +1113,49 @@ class TransportService:
         )
         orders = res.scalars().all()
         return [await self.get_order_details(str(o.id)) for o in orders]
+
+    # ─────────────────────────────────────────────────────────────────
+    # 10. CANCEL TRANSPORT ORDER
+    # ─────────────────────────────────────────────────────────────────
+    async def cancel_transport_order(
+        self,
+        order_id: str,
+        user_id: str,
+        user_role: str = "CUSTOMER",
+        reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Cancel a transport order before delivery."""
+        o_uuid = uuid.UUID(order_id) if isinstance(order_id, str) else order_id
+        order = await self.db.get(TransportOrder, o_uuid)
+        if not order:
+            raise HTTPException(status_code=404, detail="Transport order not found")
+
+        if order.status in (TransportOrderStatus.DELIVERED, TransportOrderStatus.CANCELLED):
+            return {"success": True, "status": order.status.value, "message": "Already finished"}
+
+        now_utc = datetime.now(timezone.utc)
+        order.status = TransportOrderStatus.CANCELLED
+        order.cancelled_at = now_utc
+        order.cancellation_reason = reason or "Cancelled by user"
+        order.cancelled_by = user_role
+
+        status_event = TransportStatusEvent(
+            id=uuid.uuid4(),
+            order_id=order.id,
+            status=TransportOrderStatus.CANCELLED.value,
+            actor_id=uuid.UUID(user_id) if isinstance(user_id, str) and len(user_id) == 36 else None,
+            actor_role=user_role,
+            notes=f"Order cancelled: {reason or 'No reason specified'}",
+        )
+        self.db.add(status_event)
+        await self.db.commit()
+        await self.db.refresh(order)
+
+        return {
+            "success": True,
+            "order_id": str(order.id),
+            "order_reference": order.order_reference,
+            "status": TransportOrderStatus.CANCELLED.value,
+            "cancelled_at": now_utc.isoformat(),
+            "reason": order.cancellation_reason,
+        }

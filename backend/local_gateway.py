@@ -301,6 +301,38 @@ for k in list(sys.modules.keys()):
         del sys.modules[k]
 sys.path.remove(_outstation_path)
 
+_carpool_path = os.path.join(_ROOT, "carpool-service")
+sys.path.insert(0, _carpool_path)
+try:
+    from app.api.v1.carpool import router as carpool_router
+    _carpool_ok = True
+    print("[CARPOOL]    [OK] carpool")
+except Exception as _e:
+    _carpool_ok = False
+    print(f"[CARPOOL]    [ERR] {_e}")
+
+_carpool_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.startswith("app.")}
+for k in list(sys.modules.keys()):
+    if k == "app" or k.startswith("app."):
+        del sys.modules[k]
+sys.path.remove(_carpool_path)
+
+_packers_path = os.path.join(_ROOT, "packers-service")
+sys.path.insert(0, _packers_path)
+try:
+    from app.api.v1.packers import router as packers_router
+    _packers_ok = True
+    print("[PACKERS]    [OK] packers")
+except Exception as _e:
+    _packers_ok = False
+    print(f"[PACKERS]    [ERR] {_e}")
+
+_packers_mods = {k: v for k, v in sys.modules.items() if k == "app" or k.startswith("app.")}
+for k in list(sys.modules.keys()):
+    if k == "app" or k.startswith("app."):
+        del sys.modules[k]
+sys.path.remove(_packers_path)
+
 _corporate_path = os.path.join(_ROOT, "corporate-service")
 sys.path.insert(0, _corporate_path)
 try:
@@ -444,6 +476,12 @@ if _rental_ok:
 if _outstation_ok:
     app.include_router(outstation_router, prefix="/api/v1/outstation", tags=["Outstation"])
 
+if _carpool_ok:
+    app.include_router(carpool_router, prefix="/api/v1/carpool", tags=["Intercity Carpool"])
+
+if _packers_ok:
+    app.include_router(packers_router, prefix="/api/v1/packers", tags=["Packers & Movers"])
+
 if _corporate_ok:
     app.include_router(corporate_router, prefix="/api/v1/corporate", tags=["Corporate"])
 
@@ -571,19 +609,52 @@ try:
     app = _sio_lib.ASGIApp(sio, other_asgi_app=app, socketio_path='/socket.io')
 
     # â”€â”€ Connection registry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Connection registry ──────────────────────────────────────────
     _sid_to_user: dict = {}
 
     @sio.event
     async def connect(sid, environ, auth):
-        print(f"[WS] Client connected: {sid}")
-        await sio.emit('CONNECTED', {'message': 'Connected to CabBooking Gateway'}, room=sid)
+        """
+        Authenticate client via JWT token and join personal notification room.
+        auth = { token: "Bearer JWT..." }
+        """
+        token = (auth or {}).get("token", "").replace("Bearer ", "")
+        user_id = "unknown"
+        role = "unknown"
+
+        if token:
+            try:
+                from common.utils.jwt import decode_token
+                payload = decode_token(token, expected_type="access")
+                user_id = payload.get("sub", "")
+                role = payload.get("role", "customer")
+            except Exception as _e:
+                print(f"[WS] Auth token decode error for {sid}: {_e}")
+
+        _sid_to_user[sid] = {"role": role, "user_id": user_id}
+        print(f"[WS] Client connected: {sid} (user_id={user_id}, role={role})")
+
+        if role == "driver" and user_id and user_id != "unknown":
+            room = f"driver:{user_id}"
+            await sio.enter_room(sid, room)
+            print(f"[WS] Driver authenticated -> room {room}")
+            await sio.emit("CONNECTED", {"message": "Connected to CabBooking Gateway", "user_id": user_id}, room=sid)
+            await sio.emit("DRIVER_SOCKET_READY", {"status": "ready", "user_id": user_id, "room": room}, room=sid)
+        elif user_id and user_id != "unknown":
+            await sio.enter_room(sid, f"customer:{user_id}")
+            await sio.enter_room(sid, f"user:{user_id}")
+            print(f"[WS] Customer authenticated -> room customer:{user_id}")
+            await sio.emit("CONNECTED", {"message": "Connected to CabBooking Gateway", "user_id": user_id}, room=sid)
+            await sio.emit("CUSTOMER_SOCKET_READY", {"status": "ready", "user_id": user_id, "room": f"customer:{user_id}"}, room=sid)
+        else:
+            await sio.emit("CONNECTED", {"message": "Connected to CabBooking Gateway"}, room=sid)
 
     @sio.event
     async def disconnect(sid):
-        _sid_to_user.pop(sid, None)
-        print(f"[WS] Client disconnected: {sid}")
+        client = _sid_to_user.pop(sid, {})
+        print(f"[WS] Client disconnected: {sid} (user_id={client.get('user_id')})")
 
-    # â”€â”€ Driver online / offline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Driver online / offline ─────────────────────────────────────────
     @sio.event
     async def DRIVER_ONLINE(sid, data):
         driver_id = data.get('driver_id', '')
@@ -591,7 +662,8 @@ try:
             room = f"driver:{driver_id}"
             await sio.enter_room(sid, room)
             _sid_to_user[sid] = {"role": "driver", "id": driver_id}
-            print(f"[WS] Driver {driver_id} online â†’ room {room}")
+            print(f"[WS] Driver {driver_id} online -> room {room}")
+            await sio.emit("DRIVER_SOCKET_READY", {"status": "ready", "driver_id": driver_id, "room": room}, room=sid)
 
     @sio.event
     async def DRIVER_OFFLINE(sid, data):
@@ -599,17 +671,17 @@ try:
         if driver_id:
             await sio.leave_room(sid, f"driver:{driver_id}")
 
-    # â”€â”€ Customer joins their personal notification room â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Customer joins their personal notification room ─────────────────
     @sio.event
     async def JOIN_CUSTOMER_ROOM(sid, data):
         customer_id = data.get('customer_id', '')
         if customer_id:
-            room = f"customer:{customer_id}"
-            await sio.enter_room(sid, room)
+            await sio.enter_room(sid, f"customer:{customer_id}")
+            await sio.enter_room(sid, f"user:{customer_id}")
             _sid_to_user[sid] = {"role": "customer", "id": customer_id}
-            print(f"[WS] Customer {customer_id} joined room {room}")
+            print(f"[WS] Customer {customer_id} joined room customer:{customer_id}")
 
-    # â”€â”€ Driver joins scan room for a specific trip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Driver joins scan room for a specific trip ──────────────────────
     @sio.event
     async def join_driver_scan(sid, data):
         trip_id = data.get('trip_id', '')
@@ -618,7 +690,7 @@ try:
             await sio.enter_room(sid, room)
             print(f"[WS] Driver joined scan room {room}")
 
-    # â”€â”€ Customer joins trip tracking room (two name aliases) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Customer joins trip tracking room (two name aliases) ────────────
     @sio.event
     async def join_trip_room(sid, data):
         trip_id = data.get('trip_id', '')
@@ -638,17 +710,36 @@ try:
         if trip_id:
             await sio.leave_room(sid, f"trip:{trip_id}")
 
-    # â”€â”€ GPS location update (driver â†’ persist + broadcast to trip room) â”€â”€â”€â”€â”€â”€
+    # ── Ride tracking rooms ─────────────────────────────────────────────
+    @sio.event
+    async def join_ride_room(sid, data):
+        ride_id = data.get('ride_id', '')
+        if ride_id:
+            room = f"ride:{ride_id}"
+            await sio.enter_room(sid, room)
+            print(f"[WS] Client {sid} joined ride room {room}")
+
+    @sio.event
+    async def leave_ride_room(sid, data):
+        ride_id = data.get('ride_id', '')
+        if ride_id:
+            await sio.leave_room(sid, f"ride:{ride_id}")
+
+    # ── GPS location update (driver -> persist + broadcast to trip & ride rooms) ──
     @sio.event
     async def LOCATION_UPDATE(sid, data):
         trip_id = data.get('trip_id', '')
+        ride_id = data.get('ride_id', '') or trip_id
         if trip_id:
             await sio.emit('LOCATION_UPDATE', data, room=f"trip:{trip_id}", skip_sid=sid)
+        if ride_id:
+            await sio.emit('LOCATION_UPDATE', data, room=f"ride:{ride_id}", skip_sid=sid)
+            await sio.emit('ride:location', data, room=f"ride:{ride_id}", skip_sid=sid)
         try:
             from common.utils.redis_client import get_redis
             r = await get_redis()
             await r.publish("live:location:updates", _json.dumps({
-                "trip_id":    trip_id or "",
+                "trip_id":    trip_id or ride_id or "",
                 "driver_id":  data.get("driver_id", ""),
                 "latitude":   data.get("lat", 0),
                 "longitude":  data.get("lng", 0),
@@ -659,12 +750,48 @@ try:
         except Exception as _e:
             print(f"[WS] LOCATION_UPDATE Redis publish error: {_e}")
 
-    # â”€â”€ Heartbeat â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Heartbeat & Driver Ping ─────────────────────────────────────────
     @sio.event
     async def heartbeat(sid, data):
-        pass  # silently ack
+        client = _sid_to_user.get(sid, {})
+        driver_id = client.get("id") or client.get("user_id")
+        if driver_id and driver_id != "unknown":
+            try:
+                from common.utils.redis_client import get_redis
+                r = await get_redis()
+                lat = data.get("latitude") or data.get("lat")
+                lng = data.get("longitude") or data.get("lng")
+                if lat and lng:
+                    await r.setex(
+                        f"driver:location:{driver_id}",
+                        35,
+                        _json.dumps({"driver_id": driver_id, "latitude": lat, "longitude": lng}),
+                    )
+            except Exception:
+                pass
+        await sio.emit("HEARTBEAT_ACK", {"ts": data.get("ts")}, room=sid)
 
-    # â”€â”€ Customer GPS update â†’ corridor matching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    @sio.event
+    async def DRIVER_PING(sid, data):
+        client = _sid_to_user.get(sid, {})
+        driver_id = client.get("id") or client.get("user_id") or data.get("driver_id")
+        if driver_id and driver_id != "unknown":
+            try:
+                from common.utils.redis_client import get_redis
+                r = await get_redis()
+                lat = data.get("lat") or data.get("latitude")
+                lng = data.get("lng") or data.get("longitude")
+                if lat and lng:
+                    await r.setex(
+                        f"driver:location:{driver_id}",
+                        35,
+                        _json.dumps({"driver_id": driver_id, "latitude": lat, "longitude": lng}),
+                    )
+            except Exception:
+                pass
+        await sio.emit("PONG", {"ts": data.get("t") or data.get("ts")}, room=sid)
+
+    # ── Customer GPS update -> corridor matching ────────────────────────
     @sio.event
     async def CUSTOMER_LOCATION_UPDATE(sid, data):
         customer_id = data.get('customer_id', '')
@@ -709,7 +836,7 @@ try:
 
         _asyncio.ensure_future(_run_corridor_match())
 
-    # â”€â”€ Driver booking response (accept/reject via WebSocket) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Driver booking response (accept/reject via WebSocket) ───────────
     @sio.event
     async def BOOKING_RESPONSE(sid, data):
         booking_id = data.get('booking_id', '')
@@ -725,125 +852,24 @@ try:
             except Exception as _e:
                 print(f"[WS] BOOKING_RESPONSE error: {_e}")
 
-    # â”€â”€ Redis pub/sub consumer â€” forward events to Socket.IO rooms â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    async def _redis_to_socketio():
-        """
-        Subscribe to all Redis event channels and forward messages
-        to the correct Socket.IO rooms.  Runs as a long-lived background task.
-        Reconnects automatically on Redis disconnect.
-        """
-        from common.utils.redis_client import get_redis
-
-        while True:
+    @sio.event
+    async def ride_request_respond(sid, data):
+        offer_id = data.get('offer_id', '')
+        accepted = data.get('accepted', False)
+        client = _sid_to_user.get(sid, {})
+        driver_id = client.get("user_id") or data.get("driver_id", "")
+        if offer_id:
             try:
+                from common.utils.redis_client import get_redis
                 r = await get_redis()
-                pubsub = r.pubsub()
-                await pubsub.psubscribe(
-                    "driver:*:events",
-                    "customer:*:events",
-                    "driver_scan:*",
-                    "trip:*:events",
-                    "notification:events",
-                )
-                await pubsub.subscribe("corridor:match")
-                print("[WS] Redis pub/sub consumer started â€” forwarding to Socket.IO")
-
-                async for message in pubsub.listen():
-                    if message["type"] not in ("pmessage", "message"):
-                        continue
-                    try:
-                        channel = message.get("channel", b"")
-                        if isinstance(channel, bytes):
-                            channel = channel.decode()
-                        raw = message.get("data", b"")
-                        if isinstance(raw, (bytes, bytearray)):
-                            raw = raw.decode()
-                        payload = _json.loads(raw)
-                        event_name = payload.get("event", "EVENT")
-
-                        # Route to the correct Socket.IO room
-                        if channel.startswith("driver:") and channel.endswith(":events"):
-                            driver_id = channel.split(":")[1]
-                            room = f"driver:{driver_id}"
-                            await sio.emit(event_name, payload, room=room)
-                            print(f"[WSâ†’sio] {event_name} â†’ room {room}")
-
-                        elif channel.startswith("customer:") and channel.endswith(":events"):
-                            cid = channel.split(":")[1]
-                            room = f"customer:{cid}"
-                            await sio.emit(event_name, payload, room=room)
-                            print(f"[WSâ†’sio] {event_name} â†’ room {room}")
-
-                        elif channel.startswith("driver_scan:"):
-                            trip_id = channel.replace("driver_scan:", "")
-                            room = f"driver_scan:{trip_id}"
-                            await sio.emit(event_name, payload, room=room)
-                            print(f"[WSâ†’sio] {event_name} â†’ room {room}")
-
-                        elif channel.startswith("trip:") and channel.endswith(":events"):
-                            trip_id = channel.split(":")[1]
-                            room = f"trip:{trip_id}"
-                            await sio.emit(event_name, payload, room=room)
-
-                    except Exception as _msg_err:
-                        print(f"[WS] pub/sub message error: {_msg_err}")
-
-            except Exception as _conn_err:
-                print(f"[WS] Redis pub/sub disconnected: {_conn_err} â€” retrying in 3s")
-                await _asyncio.sleep(3)
-
-    # â”€â”€ Reliable startup: ASGI lifespan wrapper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    # sio.ASGIApp doesn't forward @app.on_event("startup"), so we wrap the
-    # ASGI callable ourselves and start the Redis consumer on first startup.
-
-    _original_app = app
-
-    async def _lifespan_wrapper(scope, receive, send):
-        global _redis_task_started
-        if scope["type"] == "lifespan":
-            async def _patched_receive():
-                msg = await receive()
-                if msg["type"] == "lifespan.startup" and not _redis_task_started:
-                    _redis_task_started = True
-                    _asyncio.ensure_future(_redis_to_socketio())
-                    print("[WS] Redis consumer started via lifespan.startup")
-                return msg
-            await _original_app(scope, _patched_receive, send)
-        else:
-            # HTTP / WebSocket request â€” start consumer if not yet running
-            if not _redis_task_started:
-                _redis_task_started = True
-                _asyncio.ensure_future(_redis_to_socketio())
-                print("[WS] Redis consumer started via first request")
-            await _original_app(scope, receive, send)
-
-    app = _lifespan_wrapper
-    print("[WS] Socket.IO gateway initialized âœ“")
-
-except ImportError as _sio_err:
-    print(f"[WS] python-socketio not installed: {_sio_err}")
-    print("[WS] Install with: pip install python-socketio[asyncio_client] aioredis")
-except Exception as _sio_init_err:
-    print(f"[WS] Socket.IO init failed: {_sio_init_err}")
-    import traceback
-    traceback.print_exc()
-
+                response_key = f"ride_offer:response:{offer_id}"
+                await r.setex(response_key, 60, "accepted" if accepted else "rejected")
+                print(f"[WS] Driver {driver_id} responded to offer {offer_id}: accepted={accepted}")
+            except Exception as _e:
+                print(f"[WS] ride_request_respond error: {_e}")
+        await sio.emit("RIDE_OFFER_ACK", {"offer_id": offer_id, "accepted": accepted}, room=sid)
 
     # ── Feature 8 & 9: Realtime Communication & Ride State Socket Events ──
-    @sio.event
-    async def join_ride_room(sid, data):
-        ride_id = data.get('ride_id', '')
-        if ride_id:
-            room = f"ride:{ride_id}"
-            await sio.enter_room(sid, room)
-            print(f"[WS] Client {sid} joined ride room {room}")
-
-    @sio.event
-    async def leave_ride_room(sid, data):
-        ride_id = data.get('ride_id', '')
-        if ride_id:
-            await sio.leave_room(sid, f"ride:{ride_id}")
-
     @sio.event
     async def SEND_CHAT_MESSAGE(sid, data):
         ride_id = data.get('ride_id', '')
@@ -862,23 +888,22 @@ except Exception as _sio_init_err:
         if ride_id:
             await sio.emit('communication:location_shared', data, room=f"ride:{ride_id}", skip_sid=sid)
 
-    # ── Feature 10: During Ride Realtime Socket.IO Handlers ──
+    # ── Feature 10: During Ride Realtime Socket.IO Handlers ─────────────
     @sio.event
     async def RIDE_LOCATION_UPDATE(sid, data):
         ride_id = data.get('ride_id', '')
         if ride_id:
-            room = f"ride:{ride_id}"
-            await sio.emit('ride:location', data, room=room, skip_sid=sid)
+            await sio.emit('ride:location', data, room=f"ride:{ride_id}", skip_sid=sid)
+            await sio.emit('LOCATION_UPDATE', data, room=f"ride:{ride_id}", skip_sid=sid)
 
     @sio.event
     async def TRIGGER_RIDE_SOS(sid, data):
         ride_id = data.get('ride_id', '')
         if ride_id:
-            room = f"ride:{ride_id}"
-            await sio.emit('ride:sos', data, room=room)
+            await sio.emit('ride:sos', data, room=f"ride:{ride_id}")
             await sio.emit('emergency:alert', data, room="safety_monitoring")
 
-    # ── Feature 15: Parcel Realtime Tracking & Socket Handlers ──
+    # ── Feature 15: Parcel Realtime Tracking & Socket Handlers ───────────
     @sio.event
     async def join_parcel_room(sid, data):
         parcel_id = data.get('parcel_id', '')
@@ -899,3 +924,109 @@ except Exception as _sio_init_err:
         if parcel_id:
             room = f"parcel:{parcel_id}"
             await sio.emit('parcel:location', data, room=room, skip_sid=sid)
+
+    # ── Redis pub/sub consumer — forward events to Socket.IO rooms ──────
+    async def _redis_to_socketio():
+        """
+        Subscribe to all Redis event channels and forward messages
+        to the correct Socket.IO rooms. Runs as a long-lived background task.
+        Reconnects automatically on Redis disconnect.
+        """
+        from common.utils.redis_client import get_redis
+
+        while True:
+            try:
+                r = await get_redis()
+                pubsub = r.pubsub()
+                await pubsub.psubscribe(
+                    "driver:*:events",
+                    "customer:*:events",
+                    "user:*:events",
+                    "driver_scan:*",
+                    "trip:*:events",
+                    "ride:*:events",
+                    "notification:events",
+                )
+                await pubsub.subscribe("corridor:match")
+                print("[WS] Redis pub/sub consumer started — forwarding to Socket.IO")
+
+                async for message in pubsub.listen():
+                    if message["type"] not in ("pmessage", "message"):
+                        continue
+                    try:
+                        channel = message.get("channel", b"")
+                        if isinstance(channel, bytes):
+                            channel = channel.decode()
+                        raw = message.get("data", b"")
+                        if isinstance(raw, (bytes, bytearray)):
+                            raw = raw.decode()
+                        payload = _json.loads(raw)
+                        event_name = payload.get("event", "EVENT")
+
+                        # Route to the correct Socket.IO room
+                        if channel.startswith("driver:") and channel.endswith(":events"):
+                            driver_id = channel.split(":")[1]
+                            room = f"driver:{driver_id}"
+                            await sio.emit(event_name, payload, room=room)
+                            print(f"[WS->sio] {event_name} -> room {room}")
+
+                        elif (channel.startswith("customer:") or channel.startswith("user:")) and channel.endswith(":events"):
+                            cid = channel.split(":")[1]
+                            await sio.emit(event_name, payload, room=f"customer:{cid}")
+                            await sio.emit(event_name, payload, room=f"user:{cid}")
+                            print(f"[WS->sio] {event_name} -> room customer:{cid}")
+
+                        elif channel.startswith("driver_scan:"):
+                            trip_id = channel.replace("driver_scan:", "")
+                            room = f"driver_scan:{trip_id}"
+                            await sio.emit(event_name, payload, room=room)
+                            print(f"[WS->sio] {event_name} -> room {room}")
+
+                        elif channel.startswith("trip:") and channel.endswith(":events"):
+                            trip_id = channel.split(":")[1]
+                            room = f"trip:{trip_id}"
+                            await sio.emit(event_name, payload, room=room)
+
+                        elif channel.startswith("ride:") and channel.endswith(":events"):
+                            ride_id = channel.split(":")[1]
+                            room = f"ride:{ride_id}"
+                            await sio.emit(event_name, payload, room=room)
+
+                    except Exception as _msg_err:
+                        print(f"[WS] pub/sub message error: {_msg_err}")
+
+            except Exception as _conn_err:
+                print(f"[WS] Redis pub/sub disconnected: {_conn_err} — retrying in 3s")
+                await _asyncio.sleep(3)
+
+    # ── Reliable startup: ASGI lifespan wrapper ──────────────────────────
+    _original_app = app
+
+    async def _lifespan_wrapper(scope, receive, send):
+        global _redis_task_started
+        if scope["type"] == "lifespan":
+            async def _patched_receive():
+                msg = await receive()
+                if msg["type"] == "lifespan.startup" and not _redis_task_started:
+                    _redis_task_started = True
+                    _asyncio.ensure_future(_redis_to_socketio())
+                    print("[WS] Redis consumer started via lifespan.startup")
+                return msg
+            await _original_app(scope, _patched_receive, send)
+        else:
+            if not _redis_task_started:
+                _redis_task_started = True
+                _asyncio.ensure_future(_redis_to_socketio())
+                print("[WS] Redis consumer started via first request")
+            await _original_app(scope, receive, send)
+
+    app = _lifespan_wrapper
+    print("[WS] Socket.IO gateway initialized ✓")
+
+except ImportError as _sio_err:
+    print(f"[WS] python-socketio not installed: {_sio_err}")
+    print("[WS] Install with: pip install python-socketio[asyncio_client] aioredis")
+except Exception as _sio_init_err:
+    print(f"[WS] Socket.IO init failed: {_sio_init_err}")
+    import traceback
+    traceback.print_exc()

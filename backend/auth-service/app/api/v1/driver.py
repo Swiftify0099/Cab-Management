@@ -6,7 +6,7 @@ Driver onboarding API endpoints.
 - Onboarding status
 """
 import uuid
-from typing import List
+from typing import List, Optional, Any, Dict
 
 import structlog
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -34,6 +34,8 @@ from common.models.all_models import (
     DocumentType,
     DriverDocument,
     Driver,
+    DriverStatus,
+    KYCStatus,
     MediaAsset,
     MediaOwnerType,
     MediaType,
@@ -426,12 +428,11 @@ async def onboarding_status(
 # ============================================================
 # DRIVER EARNINGS  (used by earnings tab)
 # ============================================================
+# DRIVER EARNINGS (used by earnings tab)
+# ============================================================
 
 from pydantic import BaseModel as _BaseModel
 from sqlalchemy import func as _func
-
-class _StatusUpdate(_BaseModel):
-    status: str   # 'online' | 'offline'
 
 
 @router.get(
@@ -446,7 +447,6 @@ async def get_driver_earnings(
     """Returns total earnings, today's earnings, and weekly earnings from completed bookings."""
     from common.models.all_models import Booking, BookingStatus, Trip
     from datetime import date, timedelta
-    import uuid as _uuid
 
     # Get driver profile
     driver_result = await db.execute(
@@ -460,14 +460,14 @@ async def get_driver_earnings(
                 "total_earnings": 0,
                 "today_earnings": 0,
                 "week_earnings": 0,
-                "total_trips":    0,
-                "rating":         0.0,
+                "total_trips": 0,
+                "rating": 0.0,
             },
         )
 
     # Aggregate from trips + bookings
-    today     = date.today()
-    week_ago  = today - timedelta(days=7)
+    today = date.today()
+    week_ago = today - timedelta(days=7)
 
     # All completed trips by this driver
     trips_q = await db.execute(
@@ -481,11 +481,10 @@ async def get_driver_earnings(
 
     total_earnings = 0.0
     today_earnings = 0.0
-    week_earnings  = 0.0
-    total_trips    = len(trips)
+    week_earnings = 0.0
+    total_trips = len(trips)
 
     if trip_ids:
-        from sqlalchemy import and_
         bookings_q = await db.execute(
             select(Booking).where(
                 Booking.trip_id.in_(trip_ids),
@@ -495,23 +494,68 @@ async def get_driver_earnings(
         for booking in bookings_q.scalars().all():
             fare = float(booking.total_fare or 0)
             total_earnings += fare
-            # Find the trip's departure date
             trip = next((t for t in trips if t.id == booking.trip_id), None)
             if trip:
                 dep_date = trip.departure_time.date() if trip.departure_time else today
                 if dep_date == today:
                     today_earnings += fare
                 if dep_date >= week_ago:
-                    week_earnings  += fare
+                    week_earnings += fare
 
     return APIResponse(
         message="Earnings fetched",
         data={
             "total_earnings": round(total_earnings, 2),
             "today_earnings": round(today_earnings, 2),
-            "week_earnings":  round(week_earnings,  2),
-            "total_trips":    total_trips,
-            "rating":         float(driver.rating or 4.5),
+            "week_earnings": round(week_earnings, 2),
+            "total_trips": total_trips,
+            "rating": float(driver.rating or 4.5),
+        },
+    )
+
+
+class _StatusUpdate(_BaseModel):
+    status: str   # 'online' | 'offline'
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
+@router.get(
+    "/status",
+    response_model=APIResponse[dict],
+    summary="Get current driver online/offline and verification status",
+)
+async def get_driver_status(
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+    db: AsyncSession = Depends(get_db),
+):
+    """Returns current driver status, online state, and KYC verification status."""
+    driver_result = await db.execute(
+        select(Driver).where(Driver.user_id == current_user.id)
+    )
+    driver = driver_result.scalar_one_or_none()
+    if not driver:
+        return APIResponse(
+            message="Driver status",
+            data={
+                "status": "offline",
+                "is_online": False,
+                "is_active": False,
+                "is_verified": False,
+                "kyc_status": "pending",
+            },
+        )
+
+    is_on = bool(driver.is_online or driver.status == DriverStatus.ONLINE)
+    return APIResponse(
+        message="Driver status fetched",
+        data={
+            "status": "online" if is_on else "offline",
+            "is_online": is_on,
+            "is_active": bool(driver.is_active),
+            "is_verified": bool(driver.is_verified or driver.kyc_status == KYCStatus.APPROVED),
+            "kyc_status": driver.kyc_status.value if hasattr(driver.kyc_status, "value") else str(driver.kyc_status),
+            "rating": float(driver.rating or 5.0),
         },
     )
 
@@ -538,18 +582,65 @@ async def update_driver_status(
         driver = Driver(
             id=_uuid.uuid4(),
             user_id=current_user.id,
-            full_name=current_user.phone,  # placeholder until onboarding
+            full_name=current_user.phone or "Driver Partner",
             license_number=f"PENDING-{str(current_user.id)[:8].upper()}",
             is_active=False,
+            status=DriverStatus.OFFLINE,
         )
         db.add(driver)
 
-    driver.is_active = (data.status == "online")
+    is_online_requested = (data.status.strip().lower() == "online")
+    driver.status = DriverStatus.ONLINE if is_online_requested else DriverStatus.OFFLINE
+    driver.is_online = is_online_requested
+    driver.is_active = is_online_requested
+    driver._is_online = is_online_requested
+    driver._is_active = is_online_requested
+
+    if data.lat is not None and data.lng is not None:
+        try:
+            from sqlalchemy import text as _sql_text
+            await db.execute(
+                _sql_text("UPDATE drivers SET current_location = ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography WHERE id = :id"),
+                {"lng": float(data.lng), "lat": float(data.lat), "id": driver.id}
+            )
+        except Exception as _loc_err:
+            logger.warning("Error updating driver geography location", error=str(_loc_err))
+
     await db.commit()
 
+    # Also update Redis online pool
+    try:
+        from common.utils.redis_client import set_driver_online, set_driver_offline
+        if is_online_requested:
+            await set_driver_online(str(driver.id), {
+                "driver_id": str(driver.id),
+                "user_id": str(current_user.id),
+                "latitude": data.lat,
+                "longitude": data.lng,
+                "status": "online",
+            })
+            if str(current_user.id) != str(driver.id):
+                await set_driver_online(str(current_user.id), {
+                    "driver_id": str(driver.id),
+                    "user_id": str(current_user.id),
+                    "latitude": data.lat,
+                    "longitude": data.lng,
+                    "status": "online",
+                })
+        else:
+            await set_driver_offline(str(driver.id))
+            await set_driver_offline(str(current_user.id))
+    except Exception:
+        pass
+
     return APIResponse(
-        message=f"Driver is now {data.status}",
-        data={"status": data.status},
+        message=f"Driver is now {'online' if is_online_requested else 'offline'}",
+        data={
+            "status": "online" if is_online_requested else "offline",
+            "is_online": is_online_requested,
+            "is_verified": bool(driver.is_verified or driver.kyc_status == KYCStatus.APPROVED),
+            "kyc_status": driver.kyc_status.value if hasattr(driver.kyc_status, "value") else str(driver.kyc_status),
+        },
     )
 
 

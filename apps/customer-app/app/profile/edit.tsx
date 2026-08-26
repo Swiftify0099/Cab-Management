@@ -58,6 +58,7 @@ export default function EditProfileScreen() {
   const [dobDate, setDobDate] = useState<Date | null>(null)
   const [showDatePicker, setShowDatePicker] = useState(false)
   const [photoUri, setPhotoUri] = useState<string | null>(null)
+  const [showPreviewModal, setShowPreviewModal] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
 
   const loadProfile = useCallback(async () => {
@@ -98,8 +99,8 @@ export default function EditProfileScreen() {
       }
 
       const res = fromCamera
-        ? await ImagePicker.launchCameraAsync({ quality: 0.8, allowsEditing: true, aspect: [1, 1] })
-        : await ImagePicker.launchImageLibraryAsync({ quality: 0.8, allowsEditing: true, aspect: [1, 1], mediaTypes: ['images'] })
+        ? await ImagePicker.launchCameraAsync({ quality: 0.85, allowsEditing: true, aspect: [1, 1] })
+        : await ImagePicker.launchImageLibraryAsync({ quality: 0.85, allowsEditing: true, aspect: [1, 1], mediaTypes: ['images'] })
 
       if (!res.canceled && res.assets[0]) {
         const asset = res.assets[0]
@@ -108,13 +109,21 @@ export default function EditProfileScreen() {
 
         const formData = new FormData() as any
         const filename = asset.uri.split('/').pop() || 'avatar.jpg'
-        const type = asset.type || 'image/jpeg'
+        const match = /\.(\w+)$/.exec(filename)
+        const type = match ? `image/${match[1]}` : 'image/jpeg'
         formData.append('photo', { uri: asset.uri, name: filename, type })
 
         const resUpload = await profileApi.uploadPhoto(formData)
-        const newUrl = resUpload.data?.data?.photo_url || resUpload.data?.photo_url
+        const newUrl = resUpload.data?.data?.photo_url || resUpload.data?.data?.preview_url || resUpload.data?.photo_url
         if (newUrl) {
           setPhotoUri(newUrl)
+          if (user) {
+            useAuthStore.getState().setUser({
+              ...user,
+              avatar_url: newUrl,
+              profile_photo: newUrl,
+            })
+          }
         }
         Alert.alert('Photo Updated', 'Your profile photo has been successfully updated on Cloudinary.')
       }
@@ -130,6 +139,13 @@ export default function EditProfileScreen() {
       setUploadingPhoto(true)
       await profileApi.deletePhoto()
       setPhotoUri(null)
+      if (user) {
+        useAuthStore.getState().setUser({
+          ...user,
+          avatar_url: undefined,
+          profile_photo: undefined,
+        })
+      }
       Alert.alert('Photo Removed', 'Your profile photo has been removed.')
     } catch (e: any) {
       Alert.alert('Error', e?.response?.data?.detail || 'Failed to remove photo')
@@ -139,15 +155,17 @@ export default function EditProfileScreen() {
   }
 
   const showPhotoMenu = () => {
-    const options: any[] = [
-      { text: 'Take Photo', onPress: () => handlePickPhoto(true) },
-      { text: 'Choose from Gallery', onPress: () => handlePickPhoto(false) },
-    ]
+    const options: any[] = []
+    if (photoUri) {
+      options.push({ text: 'View Fullscreen Photo', onPress: () => setShowPreviewModal(true) })
+    }
+    options.push({ text: 'Take Photo with Camera', onPress: () => handlePickPhoto(true) })
+    options.push({ text: 'Choose from Photo Gallery', onPress: () => handlePickPhoto(false) })
     if (photoUri) {
       options.push({ text: 'Remove Photo', style: 'destructive', onPress: handleRemovePhoto })
     }
     options.push({ text: 'Cancel', style: 'cancel' })
-    Alert.alert('Profile Photo', 'Update your avatar photo', options)
+    Alert.alert('Profile Photo', 'Update or preview your profile photo', options)
   }
 
   const handleDateChange = (_: any, selectedDate?: Date) => {
@@ -413,11 +431,126 @@ export default function EditProfileScreen() {
           </View>
         </ScrollView>
       )}
+
+      {/* Fullscreen Avatar Preview Modal */}
+      <Modal
+        visible={showPreviewModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowPreviewModal(false)}
+      >
+        <View style={styles.previewModalOverlay}>
+          <View style={[styles.previewModalContent, { backgroundColor: theme.colors.surface }]}>
+            <View style={styles.previewModalHeader}>
+              <AppText variant="h3" bold>Profile Photo Preview</AppText>
+              <TouchableOpacity
+                style={[styles.previewModalClose, { backgroundColor: theme.colors.backgroundAlt }]}
+                onPress={() => setShowPreviewModal(false)}
+              >
+                <Feather name="x" size={20} color={theme.colors.textPrimary} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.previewImageContainer}>
+              {photoUri ? (
+                <Image
+                  source={{ uri: photoUri }}
+                  style={styles.previewImage}
+                  resizeMode="contain"
+                />
+              ) : null}
+            </View>
+
+            <View style={styles.previewFooter}>
+              <TouchableOpacity
+                style={[styles.previewActionBtn, { backgroundColor: theme.colors.primary }]}
+                onPress={() => {
+                  setShowPreviewModal(false)
+                  showPhotoMenu()
+                }}
+              >
+                <Feather name="camera" size={16} color="#fff" />
+                <AppText variant="bodyS" bold color="white" style={{ marginLeft: 6 }}>
+                  Change Photo
+                </AppText>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.previewCloseBtn, { backgroundColor: theme.colors.border }]}
+                onPress={() => setShowPreviewModal(false)}
+              >
+                <AppText variant="bodyS" semibold color="secondary">
+                  Close
+                </AppText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   )
 }
 
 const styles = StyleSheet.create({
+  previewModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  previewModalContent: {
+    width: '100%',
+    borderRadius: 20,
+    padding: 20,
+    overflow: 'hidden',
+  },
+  previewModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  previewModalClose: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewImageContainer: {
+    width: '100%',
+    height: 300,
+    borderRadius: 16,
+    backgroundColor: '#000',
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewImage: {
+    width: '100%',
+    height: '100%',
+  },
+  previewFooter: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 18,
+  },
+  previewActionBtn: {
+    flex: 1,
+    height: 44,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewCloseBtn: {
+    paddingHorizontal: 20,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   root: { flex: 1 },
   header: {
     flexDirection: 'row',

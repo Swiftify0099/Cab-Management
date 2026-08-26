@@ -209,6 +209,7 @@ async def get_document_details(
 async def upload_kyc_document(
     doc_type: str,
     file: UploadFile = File(...),
+    back_file: Optional[UploadFile] = File(None),
     document_number: Optional[str] = Form(None),
     issue_date: Optional[str] = Form(None),
     expires_at: Optional[str] = Form(None),
@@ -252,8 +253,9 @@ async def upload_kyc_document(
 
     secure_url = None
     public_id = None
+    back_secure_url = None
 
-    # 1. Upload to Cloudinary private/authenticated storage (or fallback to storage utility)
+    # 1. Upload front file to Cloudinary private/authenticated storage
     try:
         upload_res = await CloudinaryService.upload_driver_kyc_document(
             driver_id=str(driver.id),
@@ -274,12 +276,35 @@ async def upload_kyc_document(
         secure_url = get_file_url(path)
         public_id = None
 
+    # 1b. Upload optional back file if provided
+    if back_file:
+        try:
+            back_res = await CloudinaryService.upload_driver_kyc_document(
+                driver_id=str(driver.id),
+                doc_type=f"{doc_type}_back",
+                file=back_file,
+                vehicle_id=str(parsed_vehicle_id) if parsed_vehicle_id else None,
+            )
+            back_secure_url = back_res.get("secure_url") or back_res.get("url")
+        except Exception as e:
+            logger.warning("cloudinary_back_upload_failed", error=str(e))
+            try:
+                bpath = await save_upload(
+                    file=back_file,
+                    category="documents",
+                    allowed_types=ALLOWED_DOCUMENT_TYPES,
+                    max_size=10 * 1024 * 1024,
+                )
+                back_secure_url = get_file_url(bpath)
+            except Exception:
+                pass
+
     # 2. Record MediaAsset metadata (Zero file bytes in PostgreSQL)
     media_asset = MediaAsset(
         owner_type=MediaOwnerType.DRIVER,
         owner_id=driver.id,
         media_type=MediaType.KYC_DOCUMENT if not parsed_vehicle_id else MediaType.VEHICLE_DOCUMENT,
-        cloudinary_public_id=public_id,
+        cloudinary_public_id=public_id or f"local_kyc_{uuid.uuid4().hex[:8]}",
         resource_type="image",
         format="jpg",
         mime_type=file.content_type or "image/jpeg",
@@ -293,6 +318,10 @@ async def upload_kyc_document(
     db.add(media_asset)
     await db.flush()
 
+    meta_json = {}
+    if back_secure_url:
+        meta_json["back_url"] = back_secure_url
+
     # 3. Save or update DriverDocument record
     doc = await save_or_update_kyc_document(
         db=db,
@@ -305,6 +334,7 @@ async def upload_kyc_document(
         document_number=document_number.strip() if document_number else None,
         issue_date=parsed_issue,
         expires_at=parsed_expiry,
+        metadata_json=meta_json,
     )
     await db.commit()
 
@@ -318,6 +348,7 @@ async def upload_kyc_document(
             "file_path": secure_url,
             "access_url": secure_url,
             "preview_url": secure_url,
+            "back_url": back_secure_url,
         },
     )
 

@@ -57,6 +57,7 @@ import { SOSConfirmModal } from '../src/components/safety/SOSConfirmModal'
 import { ShareTripSheet } from '../src/components/safety/ShareTripSheet'
 import { SafetyAnomalyModal } from '../src/components/safety/SafetyAnomalyModal'
 import { ReportIncidentModal } from '../src/components/safety/ReportIncidentModal'
+import { DriverInfoModal } from '../src/components/matching/DriverInfoModal'
 
 const { width: SCREEN_W } = Dimensions.get('window')
 
@@ -128,6 +129,7 @@ export default function TrackTripScreen() {
     tripCompleted,
     sosAlert,
     safetyAlert,
+    otpData,
     clearTripCompleted,
     clearSOSAlert,
     clearSafetyAlert,
@@ -142,6 +144,12 @@ export default function TrackTripScreen() {
   const [eta, setEta] = useState<number>(4)
   const [distKm, setDistKm] = useState<number>(3.2)
   const [startOtp, setStartOtp] = useState<string>('4921')
+
+  useEffect(() => {
+    if (otpData?.otp) {
+      setStartOtp(otpData.otp)
+    }
+  }, [otpData])
   const [fare, setFare] = useState<number>(1850)
   const [tolls, setTolls] = useState<Array<{ name: string; amount: number }>>([])
   const [stops, setStops] = useState<IntermediateStop[]>([])
@@ -641,13 +649,14 @@ export default function TrackTripScreen() {
             longitudeDelta: 0.06,
           }}
         >
-          {/* Driver Marker with Dynamic Heading */}
+          {/* Driver Marker with Dynamic Heading - Clickable for Driver Info */}
           <Marker
             coordinate={driverCoord}
             title="Driver"
             anchor={{ x: 0.5, y: 0.5 }}
             rotation={driverHeading}
             flat
+            onPress={() => setShowDriverInfoModal(true)}
           >
             <View style={[styles.driverMarkerPin, { backgroundColor: theme.colors.primary }]}>
               <MaterialCommunityIcons name="car" size={20} color="#FFFFFF" />
@@ -1298,6 +1307,22 @@ export default function TrackTripScreen() {
         onClose={() => setReportIncidentModalVisible(false)}
         rideId={bookingId || tripId || booking?.id || 'bk_demo_4921'}
         driverName={booking?.driver?.full_name || 'Driver Partner'}
+      />
+
+      {/* Driver Info Modal when tapping driver map icon */}
+      <DriverInfoModal
+        visible={showDriverInfoModal}
+        driver={{
+          full_name: booking?.driver?.full_name || 'Driver Partner',
+          rating: booking?.driver?.rating || 4.85,
+          vehicle: booking?.driver?.vehicle_model || 'Swift Dzire (White)',
+          registration_number: booking?.driver?.license_plate || 'MH 12 AB 1234',
+          distance_km: (etaInfo as any)?.distance_km || 1.8,
+          eta_minutes: (etaInfo as any)?.eta_minutes || 5,
+          phone: booking?.driver?.phone,
+          is_favourite: false,
+        }}
+        onClose={() => setShowDriverInfoModal(false)}
       />
     </View>
   )

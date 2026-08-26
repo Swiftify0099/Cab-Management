@@ -27,7 +27,7 @@ import { DateTimePickerAndroid } from '@react-native-community/datetimepicker'
 import { useTheme } from '../../src/contexts/ThemeContext'
 import { useTranslation } from '../../src/i18n'
 import { useAuthStore } from '../../src/store/auth.store'
-import { rideApi, fareApi, familyApi, scheduleApi, smartApi } from '../../src/api/client'
+import { rideApi, fareApi, familyApi, scheduleApi, smartApi, profileApi, favoriteDriverApi, matchingApi } from '../../src/api/client'
 import { getRoutePolyline, reverseGeocodeCoordinate, haversineDistance, geocodeCity } from '../../src/utils/maps'
 import {
   AppText,
@@ -66,11 +66,19 @@ export interface DynamicCategory {
 }
 
 const DEFAULT_CATEGORIES: DynamicCategory[] = [
-  { id: 'cat_hatch', name: 'economy', display_name: 'Mini / Hatchback', base_fare: 50, per_km_rate: 12, per_min_rate: 1.5, min_fare: 80, surge_multiplier: 1.0, icon_name: 'car' },
-  { id: 'cat_sedan', name: 'sedan', display_name: 'Comfort Sedan', base_fare: 75, per_km_rate: 16, per_min_rate: 2.0, min_fare: 120, surge_multiplier: 1.1, icon_name: 'car-side' },
-  { id: 'cat_suv',   name: 'suv',   display_name: 'Spacious SUV (7-Seater)', base_fare: 110, per_km_rate: 22, per_min_rate: 3.0, min_fare: 180, surge_multiplier: 1.0, icon_name: 'car-estate' },
-  { id: 'cat_prem',  name: 'premium', display_name: 'Executive Prime', base_fare: 150, per_km_rate: 28, per_min_rate: 4.0, min_fare: 250, surge_multiplier: 1.0, icon_name: 'car-sports' },
+  { id: 'cat_local', name: 'local', display_name: '🚗 Local Ride', base_fare: 50, per_km_rate: 12, per_min_rate: 1.5, min_fare: 80, surge_multiplier: 1.0, icon_name: 'car' },
+  { id: 'cat_premium', name: 'premium', display_name: '💎 Premium Ride', base_fare: 85, per_km_rate: 18, per_min_rate: 2.5, min_fare: 150, surge_multiplier: 1.0, icon_name: 'car-side' },
+  { id: 'cat_luxury', name: 'luxury', display_name: '👑 Luxury Ride', base_fare: 150, per_km_rate: 28, per_min_rate: 4.0, min_fare: 300, surge_multiplier: 1.0, icon_name: 'car-sports' },
+  { id: 'cat_outstation', name: 'outstation', display_name: '🏙️ Outstation', base_fare: 110, per_km_rate: 14, per_min_rate: 2.0, min_fare: 200, surge_multiplier: 1.0, icon_name: 'car-estate' },
 ]
+
+// Service tier descriptions for UI display
+const SERVICE_TIER_INFO: Record<string, { tagline: string; features: string }> = {
+  local: { tagline: 'Budget-friendly city trips', features: 'AC • 4 Seats' },
+  premium: { tagline: 'High-comfort, top-rated drivers', features: 'AC • Premium Sedan' },
+  luxury: { tagline: 'Executive vehicles & amenities', features: 'AC • Luxury • WiFi' },
+  outstation: { tagline: 'Long-distance intercity travel', features: 'AC • 7 Seats • Stops' },
+}
 
 export default function CabBookingScreen() {
   const { theme, isDark } = useTheme()
@@ -201,6 +209,16 @@ export default function CabBookingScreen() {
   )
   const [bookingLoading, setBookingLoading] = useState<boolean>(false)
 
+  // ── Saved Locations & Favourite Drivers (Production API) ──
+  const [savedAddresses, setSavedAddresses] = useState<any[]>([])
+  const [favoriteDriverIds, setFavoriteDriverIds] = useState<string[]>([])
+  const [dropPinModalVisible, setDropPinModalVisible] = useState<boolean>(false)
+  const [pinCoord, setPinCoord] = useState<{ latitude: number; longitude: number }>({
+    latitude: dropCoord.latitude,
+    longitude: dropCoord.longitude,
+  })
+  const dropMapRef = useRef<MapView>(null)
+
   // ── Feature 27: Smart Vehicle Sizing State ──
   const [passengerCount, setPassengerCount] = useState<number>(1)
   const [luggageCount, setLuggageCount] = useState<number>(0)
@@ -258,6 +276,22 @@ export default function CabBookingScreen() {
         setMinLeadTimeMinutes(45)
         setMaxAdvanceDays(30)
       }
+
+      // Load saved addresses from backend
+      try {
+        const addrRes = await profileApi.getAddresses()
+        const addrs = addrRes.data?.data || addrRes.data || []
+        if (Array.isArray(addrs)) setSavedAddresses(addrs)
+      } catch {}
+
+      // Load favourite driver IDs for priority dispatch
+      try {
+        const favRes = await favoriteDriverApi.list()
+        const favs = favRes.data?.data || favRes.data || []
+        if (Array.isArray(favs)) {
+          setFavoriteDriverIds(favs.map((f: any) => f.driver_id))
+        }
+      } catch {}
     }
     loadBackendData()
   }, [])
@@ -492,6 +526,9 @@ export default function CabBookingScreen() {
           standard_fare: fareBreakdown.total,
           suggested_fare: customOffer,
         },
+        // Favourite driver priority dispatch
+        preferred_driver_ids: favoriteDriverIds.length > 0 ? favoriteDriverIds : undefined,
+        service_type: selectedCategory.name,
       }
 
       const res = await rideApi.createRequest(payload)
@@ -525,7 +562,18 @@ export default function CabBookingScreen() {
       } else {
         router.push({
           pathname: '/matching-waiting',
-          params: { rideRequestId: rideId, bookingId: rideId },
+          params: {
+            rideRequestId: rideId,
+            bookingId: rideId,
+            pickupAddress,
+            dropAddress,
+            pickupLat: pickupCoord.latitude.toString(),
+            pickupLng: pickupCoord.longitude.toString(),
+            dropLat: dropCoord.latitude.toString(),
+            dropLng: dropCoord.longitude.toString(),
+            fare: fareBreakdown.total.toString(),
+            serviceType: selectedCategory.display_name,
+          },
         } as any)
       }
     } catch {
@@ -556,7 +604,18 @@ export default function CabBookingScreen() {
       } else {
         router.push({
           pathname: '/matching-waiting',
-          params: { rideRequestId: requestId, bookingId: requestId },
+          params: {
+            rideRequestId: requestId,
+            bookingId: requestId,
+            pickupAddress,
+            dropAddress,
+            pickupLat: pickupCoord.latitude.toString(),
+            pickupLng: pickupCoord.longitude.toString(),
+            dropLat: dropCoord.latitude.toString(),
+            dropLng: dropCoord.longitude.toString(),
+            fare: fareBreakdown.total.toString(),
+            serviceType: selectedCategory.display_name,
+          },
         } as any)
       }
     } finally {
@@ -782,6 +841,45 @@ export default function CabBookingScreen() {
               </View>
             </View>
 
+            {/* Saved Locations Quick Chips (from backend API) */}
+            {savedAddresses.length > 0 && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 6 }}>
+                {savedAddresses.map((addr: any) => (
+                  <TouchableOpacity
+                    key={addr.id}
+                    style={[styles.savedLocationChip, {
+                      backgroundColor: `${theme.colors.primary}10`,
+                      borderColor: theme.colors.primary,
+                    }]}
+                    onPress={() => {
+                      setPickupAddress(addr.full_address || addr.label)
+                      if (addr.latitude && addr.longitude) {
+                        setPickupCoord({ latitude: addr.latitude, longitude: addr.longitude })
+                      }
+                    }}
+                  >
+                    <Ionicons
+                      name={addr.label?.toLowerCase() === 'home' ? 'home' : addr.label?.toLowerCase() === 'office' ? 'briefcase' : 'location'}
+                      size={14}
+                      color={theme.colors.primary}
+                    />
+                    <AppText variant="caption" bold color="brand">{addr.label}</AppText>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+
+            {/* Use Current Location Button */}
+            <TouchableOpacity
+              style={[styles.gpsButton, { backgroundColor: `${theme.colors.success}12`, borderColor: theme.colors.success }]}
+              onPress={handleUseCurrentLocation}
+            >
+              <Ionicons name="locate" size={18} color={theme.colors.success} />
+              <AppText variant="bodyS" bold color="success">
+                {gpsLoading ? 'Locating...' : '📍 Use Current Location'}
+              </AppText>
+            </TouchableOpacity>
+
             {/* Intermediate Stops */}
             {stops.map((stop, idx) => (
               <View key={stop.id} style={styles.locationInputRow}>
@@ -821,7 +919,7 @@ export default function CabBookingScreen() {
               </View>
             </View>
 
-            {/* Multi-Stop & GPS Quick Chips */}
+            {/* Multi-Stop, GPS, & Drop Pin Quick Chips */}
             <View style={styles.quickActionChips}>
               {stops.length < MAX_STOPS && (
                 <TouchableOpacity
@@ -834,11 +932,14 @@ export default function CabBookingScreen() {
               )}
 
               <TouchableOpacity
-                style={[styles.chip, { borderColor: theme.colors.border, backgroundColor: theme.colors.backgroundAlt }]}
-                onPress={handleUseCurrentLocation}
+                style={[styles.chip, { borderColor: '#EF4444', backgroundColor: '#EF444410' }]}
+                onPress={() => {
+                  setPinCoord({ latitude: dropCoord.latitude, longitude: dropCoord.longitude })
+                  setDropPinModalVisible(true)
+                }}
               >
-                <Ionicons name="locate" size={14} color={theme.colors.primary} />
-                <AppText variant="caption" color="brand">{t('ride.use_current_loc', 'Current GPS')}</AppText>
+                <Ionicons name="pin" size={14} color="#EF4444" />
+                <AppText variant="caption" bold style={{ color: '#EF4444' }}>📌 Drop a Pin</AppText>
               </TouchableOpacity>
             </View>
           </AppCard>
@@ -877,7 +978,7 @@ export default function CabBookingScreen() {
           {/* ── Feature 27: Smart Ride Sizing & Passengers ── */}
           <View style={{ marginTop: 16 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-              <AppText variant="title" bold>Select Vehicle</AppText>
+              <AppText variant="title" bold>Select Service</AppText>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 {/* Passengers Pill Counter */}
                 <View style={[styles.sizingCounterPill, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
@@ -957,7 +1058,7 @@ export default function CabBookingScreen() {
                       />
                     </View>
                     <AppText variant="bodyS" bold style={{ marginTop: 8 }}>{cat.display_name}</AppText>
-                    <AppText variant="caption" color="muted">4-7 Seats • AC</AppText>
+                    <AppText variant="caption" color="muted">{SERVICE_TIER_INFO[cat.name]?.features || 'AC • 4 Seats'}</AppText>
                     {cat.surge_multiplier > 1.0 && (
                       <AppBadge label={`⚡ ${cat.surge_multiplier}x Surge`} variant="warning" size="sm" />
                     )}
@@ -1348,6 +1449,87 @@ export default function CabBookingScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* ── DROP-A-PIN MODAL ── */}
+      <Modal visible={dropPinModalVisible} animationType="slide" onRequestClose={() => setDropPinModalVisible(false)}>
+        <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
+          <SafeAreaView style={{ flex: 1 }}>
+            {/* Header */}
+            <View style={[styles.header, { borderBottomWidth: 1, borderBottomColor: theme.colors.border }]}>
+              <TouchableOpacity onPress={() => setDropPinModalVisible(false)} style={[styles.backBtn, { borderColor: theme.colors.border }]}>
+                <Feather name="x" size={18} color={theme.colors.textPrimary} />
+              </TouchableOpacity>
+              <AppText variant="title" bold style={{ marginLeft: 14 }}>📌 Drop a Pin</AppText>
+            </View>
+
+            {/* Full-screen Map with Draggable Marker */}
+            <View style={{ flex: 1 }}>
+              <MapView
+                ref={dropMapRef}
+                style={{ flex: 1 }}
+                provider={PROVIDER_GOOGLE}
+                initialRegion={{
+                  latitude: pinCoord.latitude || 19.0760,
+                  longitude: pinCoord.longitude || 72.8777,
+                  latitudeDelta: 0.02,
+                  longitudeDelta: 0.02,
+                }}
+                onPress={(e) => {
+                  const { latitude, longitude } = e.nativeEvent.coordinate
+                  setPinCoord({ latitude, longitude })
+                }}
+              >
+                <Marker
+                  coordinate={pinCoord}
+                  draggable
+                  onDragEnd={(e) => {
+                    const { latitude, longitude } = e.nativeEvent.coordinate
+                    setPinCoord({ latitude, longitude })
+                  }}
+                  pinColor="#EF4444"
+                />
+              </MapView>
+
+              {/* Pin Info Overlay */}
+              <View style={{
+                position: 'absolute',
+                top: 16,
+                left: 16,
+                right: 16,
+                padding: 12,
+                borderRadius: 14,
+                backgroundColor: theme.colors.surface,
+                borderWidth: 1,
+                borderColor: theme.colors.border,
+              }}>
+                <AppText variant="caption" color="muted">PIN LOCATION</AppText>
+                <AppText variant="bodyS">{pinCoord.latitude.toFixed(6)}, {pinCoord.longitude.toFixed(6)}</AppText>
+                <AppText variant="caption" color="muted" style={{ marginTop: 4 }}>Tap map or drag pin to set drop location</AppText>
+              </View>
+            </View>
+
+            {/* Confirm Button */}
+            <View style={{ padding: 20, paddingBottom: 30 }}>
+              <AppButton
+                variant="primary"
+                onPress={async () => {
+                  try {
+                    setDropCoord(pinCoord)
+                    const geocoded = await reverseGeocodeCoordinate(pinCoord.latitude, pinCoord.longitude)
+                    if (geocoded) setDropAddress(geocoded)
+                    else setDropAddress(`${pinCoord.latitude.toFixed(4)}, ${pinCoord.longitude.toFixed(4)}`)
+                  } catch {
+                    setDropAddress(`${pinCoord.latitude.toFixed(4)}, ${pinCoord.longitude.toFixed(4)}`)
+                  }
+                  setDropPinModalVisible(false)
+                }}
+              >
+                ✅ Confirm Drop Location
+              </AppButton>
+            </View>
+          </SafeAreaView>
+        </View>
+      </Modal>
     </View>
   )
 }
@@ -1463,6 +1645,26 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 12,
     borderWidth: 1,
+  },
+  savedLocationChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 14,
+    borderWidth: 1.5,
+  },
+  gpsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    marginTop: 4,
   },
   mapContainer: {
     height: 180,

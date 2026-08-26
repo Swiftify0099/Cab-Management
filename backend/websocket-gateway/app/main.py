@@ -60,28 +60,30 @@ async def _redis_listener():
     await pubsub_conn.psubscribe(
         "driver:*:events",
         "customer:*:events",
+        "user:*:events",
         "trip:*:events",
+        "ride:*:events",
         "city:*:events",
         "driver_scan:*",
         # Corridor matching events
         "corridor:*",
     )
-    logger.info(" Redis pub/sub listener started")
+    logger.info("📡 Redis pub/sub listener started")
 
     async for message in pubsub_conn.listen():
         if message["type"] not in ("message", "pmessage"):
             continue
         try:
             channel = message["channel"]
-            data = json.loads(message["data"])
+            if isinstance(channel, bytes):
+                channel = channel.decode()
+            raw_data = message["data"]
+            if isinstance(raw_data, bytes):
+                raw_data = raw_data.decode()
+            data = json.loads(raw_data)
             event_type = data.get("event", "EVENT")
 
             # Route to Socket.IO room based on channel pattern
-            # driver:DRIVER_ID:events  room "driver:DRIVER_ID"
-            # customer:CUSTOMER_ID:events  room "user:CUSTOMER_ID"
-            # trip:TRIP_ID:events  room "trip:TRIP_ID"
-            # city:CITY_ID:events  room "city:CITY_ID"
-            # driver_scan:TRIP_ID  room "driver_scan:TRIP_ID"  ← only 2 parts
             parts = channel.split(":")
 
             # Handle 2-part channels (driver_scan:TRIP_ID, corridor:DRIVER_ID)
@@ -99,15 +101,20 @@ async def _redis_listener():
                 continue
 
             if len(parts) >= 3:
-                entity = parts[0]   # driver, customer, trip, city
+                entity = parts[0]   # driver, customer, user, trip, ride, city
                 entity_id = parts[1]
 
                 if entity == "driver":
                     room = f"driver:{entity_id}"
-                elif entity == "customer":
-                    room = f"user:{entity_id}"
+                elif entity in ("customer", "user"):
+                    await sio.emit(event_type, data, room=f"customer:{entity_id}")
+                    await sio.emit(event_type, data, room=f"user:{entity_id}")
+                    logger.debug("Customer event forwarded", event=event_type, customer_id=entity_id)
+                    continue
                 elif entity == "trip":
                     room = f"trip:{entity_id}"
+                elif entity == "ride":
+                    room = f"ride:{entity_id}"
                 elif entity == "city":
                     room = f"city:{entity_id}"
                 else:
@@ -122,18 +129,16 @@ async def _redis_listener():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info(" WebSocket Gateway starting...")
+    logger.info("🚀 WebSocket Gateway starting...")
     # Start Redis listener as a background task
     listener_task = asyncio.create_task(_redis_listener())
     yield
     listener_task.cancel()
     await close_redis()
-    logger.info(" WebSocket Gateway stopped")
+    logger.info("🛑 WebSocket Gateway stopped")
 
 
-# 
-# FastAPI App
-# 
+# ─── FastAPI App ─────────────────────────────────────────────────────────────
 app = FastAPI(
     title="CabBooking WebSocket Gateway",
     version="1.0.0",
@@ -151,9 +156,7 @@ app.add_middleware(
 )
 
 
-# 
-# Socket.IO Event Handlers
-# 
+# ─── Socket.IO Event Handlers ────────────────────────────────────────────────
 
 @sio.event
 async def connect(sid, environ, auth):
@@ -163,7 +166,7 @@ async def connect(sid, environ, auth):
     """
     token = (auth or {}).get("token", "").replace("Bearer ", "")
     if not token:
-        logger.warning("WS connect rejected  no token", sid=sid)
+        logger.warning("WS connect rejected — no token", sid=sid)
         return False  # Reject connection
 
     try:
@@ -173,17 +176,22 @@ async def connect(sid, environ, auth):
 
         _connected_clients[sid] = {"user_id": user_id, "role": role}
 
-        # Join personal notification room
-        personal_room = f"user:{user_id}" if role in ("customer",) else f"driver:{user_id}"
-        await sio.enter_room(sid, personal_room)
+        if role == "driver":
+            await sio.enter_room(sid, f"driver:{user_id}")
+            logger.info("WS driver connected", sid=sid, user_id=user_id)
+            await sio.emit("CONNECTED", {"message": "Connected to CabBooking gateway", "user_id": user_id}, to=sid)
+            await sio.emit("DRIVER_SOCKET_READY", {"status": "ready", "user_id": user_id, "room": f"driver:{user_id}"}, to=sid)
+        else:
+            await sio.enter_room(sid, f"customer:{user_id}")
+            await sio.enter_room(sid, f"user:{user_id}")
+            logger.info("WS customer connected", sid=sid, user_id=user_id)
+            await sio.emit("CONNECTED", {"message": "Connected to CabBooking gateway", "user_id": user_id}, to=sid)
+            await sio.emit("CUSTOMER_SOCKET_READY", {"status": "ready", "user_id": user_id, "room": f"customer:{user_id}"}, to=sid)
 
         # Admins join shared admin room
         if role in ("admin", "super_admin"):
             await sio.enter_room(sid, "admins")
             await sio.enter_room(sid, f"user:{user_id}")
-
-        logger.info("WS client connected", sid=sid, user_id=user_id, role=role)
-        await sio.emit("CONNECTED", {"message": "Connected to CabBooking gateway", "user_id": user_id}, to=sid)
 
     except Exception as e:
         logger.warning("WS auth failed", sid=sid, error=str(e))
@@ -380,6 +388,62 @@ async def sos_trigger(sid, data):
 
 
 @sio.event
+async def DRIVER_ONLINE(sid, data):
+    """Driver goes online - ensure entered in room and notify ready."""
+    client = _connected_clients.get(sid, {})
+    driver_id = data.get("driver_id") or client.get("user_id")
+    if driver_id:
+        room = f"driver:{driver_id}"
+        await sio.enter_room(sid, room)
+        logger.info("Driver online event received", driver_id=driver_id, room=room)
+        await sio.emit("DRIVER_SOCKET_READY", {"status": "ready", "driver_id": driver_id, "room": room}, to=sid)
+
+
+@sio.event
+async def DRIVER_OFFLINE(sid, data):
+    """Driver goes offline."""
+    client = _connected_clients.get(sid, {})
+    driver_id = data.get("driver_id") or client.get("user_id")
+    if driver_id:
+        await sio.leave_room(sid, f"driver:{driver_id}")
+        logger.info("Driver offline event received", driver_id=driver_id)
+
+
+@sio.event
+async def DRIVER_PING(sid, data):
+    """Lightweight 15s driver heartbeat and location update."""
+    client = _connected_clients.get(sid, {})
+    driver_id = client.get("user_id") or data.get("driver_id")
+    if driver_id:
+        lat = data.get("lat") or data.get("latitude")
+        lng = data.get("lng") or data.get("longitude")
+        if lat and lng:
+            try:
+                r = await get_redis()
+                await r.setex(
+                    f"driver:location:{driver_id}",
+                    35,
+                    json.dumps({"driver_id": driver_id, "latitude": lat, "longitude": lng}),
+                )
+            except Exception:
+                pass
+    await sio.emit("PONG", {"ts": data.get("t") or data.get("ts")}, to=sid)
+
+
+@sio.event
+async def BOOKING_RESPONSE(sid, data):
+    """Driver accepts or rejects booking."""
+    booking_id = data.get("booking_id")
+    driver_id = data.get("driver_id") or (_connected_clients.get(sid, {})).get("user_id")
+    accepted = data.get("accepted", False)
+    if booking_id and driver_id:
+        r = await get_redis()
+        response_key = f"dispatch:response:{booking_id}:{driver_id}"
+        await r.setex(response_key, 120, "accepted" if accepted else "rejected")
+        logger.info("Driver BOOKING_RESPONSE", driver_id=driver_id, booking_id=booking_id, accepted=accepted)
+
+
+@sio.event
 async def ride_request_respond(sid, data):
     """
     Driver accepts or rejects an on-demand RIDE_REQUEST_NEW offer.
@@ -405,12 +469,6 @@ async def ride_request_respond(sid, data):
     }, to=sid)
 
 
-# 
-# Mount as ASGI
-# 
-socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
-
-
 @app.get("/health")
 async def health():
     return {
@@ -418,3 +476,11 @@ async def health():
         "service": "websocket-gateway",
         "connected_clients": len(_connected_clients),
     }
+
+
+# ── Mount Socket.IO as ASGI app ──────────────────────────────────────────────
+socket_app = socketio.ASGIApp(sio, other_asgi_app=app, socketio_path="/socket.io")
+
+# Also mount on FastAPI app root so running `uvicorn app.main:app` handles /socket.io correctly
+app.mount("/socket.io", socketio.ASGIApp(sio))
+

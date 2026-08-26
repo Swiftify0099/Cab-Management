@@ -117,7 +117,9 @@ const DEFAULT_SERVICES: ServiceItem[] = [
   { code: 'airport',   title: 'Airport Transfer',description: 'Flight-Aware & Pickup',category: 'transport',   icon: 'airplane',  status: 'AVAILABLE', badge: '24/7',    sort_order: 5, route: '/airport/book' },
   { code: 'rental',    title: 'Car Rental',      description: 'Hourly / Daily packs', category: 'transport',   icon: 'key',       status: 'AVAILABLE', badge: 'Hourly',  sort_order: 6, route: '/rental' },
   { code: 'corporate', title: 'Corporate Rides', description: 'Business accounts',    category: 'corporate',   icon: 'briefcase', status: 'AVAILABLE', badge: 'Biz',     sort_order: 7, route: '/corporate' },
-  { code: 'moving',    title: 'Packers & Movers',description: 'House & office shifting',category: 'logistics',icon: 'truck-fast', status: 'AVAILABLE', badge: 'Movers',  sort_order: 8, route: '/transport/create' },
+  { code: 'moving',    title: 'Packers & Movers',description: 'House & office shifting',category: 'logistics',icon: 'truck-fast', status: 'AVAILABLE', badge: 'Movers',  sort_order: 8, route: '/packers' },
+  { code: 'outstation',title: 'Outstation Cab',  description: 'Intercity & Return',   category: 'transport',   icon: 'road',      status: 'AVAILABLE', badge: 'Intercity', sort_order: 9, route: '/outstation' },
+  { code: 'carpool',   title: 'Intercity Carpool', description: 'Share rides & Save CO2', category: 'transport', icon: 'people', status: 'AVAILABLE', badge: 'Eco',    sort_order: 10, route: '/carpool' },
 ]
 
 export default function HomeScreen() {
@@ -143,6 +145,8 @@ export default function HomeScreen() {
       case 'rental': return 'HOURLY'
       case 'corporate': return 'BIZ'
       case 'moving': return 'MOVERS'
+      case 'outstation': return 'INTERCITY'
+      case 'carpool': return 'ECO'
       default:
         if (status === 'COMING_SOON') return 'SOON'
         return badge ? badge.slice(0, 6).toUpperCase() : null
@@ -203,6 +207,18 @@ export default function HomeScreen() {
         iconName = 'briefcase'
         iconColor = '#475569'
         gradientColors = isDark ? ['#33415535', '#47556945'] : ['#F1F5F9', '#E2E8F0']
+        IconComp = Ionicons
+        break
+      case 'outstation':
+        iconName = 'road-variant'
+        iconColor = '#10B981'
+        gradientColors = isDark ? ['#064E3B35', '#065F4645'] : ['#ECFDF5', '#D1FAE5']
+        IconComp = MaterialCommunityIcons
+        break
+      case 'carpool':
+        iconName = 'people'
+        iconColor = '#10B981'
+        gradientColors = isDark ? ['#064E3B35', '#065F4645'] : ['#ECFDF5', '#D1FAE5']
         IconComp = Ionicons
         break
       default:
@@ -364,7 +380,9 @@ export default function HomeScreen() {
             route: s.route || (
               s.code === 'rental' ? '/rental' :
               s.code === 'corporate' ? '/corporate' :
-              s.code === 'moving' ? '/transport/create' :
+              s.code === 'moving' ? '/packers' :
+              s.code === 'outstation' ? '/outstation' :
+              s.code === 'carpool' ? '/carpool' :
               s.code === 'transport' ? '/transport/create' :
               s.code === 'airport' ? '/airport/book' :
               s.code === 'hotel' ? '/book/properties' :
@@ -374,6 +392,8 @@ export default function HomeScreen() {
               s.code === 'rental' ? 'Hourly' :
               s.code === 'corporate' ? 'Biz' :
               s.code === 'moving' ? 'Movers' :
+              s.code === 'outstation' ? 'Intercity' :
+              s.code === 'carpool' ? 'Eco' :
               s.code === 'transport' ? 'Cargo' :
               s.code === 'airport' ? '24/7' :
               s.code === 'hotel' ? 'Stays' :
@@ -466,7 +486,9 @@ export default function HomeScreen() {
       airport: '/airport/book',
       rental: '/rental',
       corporate: '/corporate',
-      moving: '/transport/create',
+      moving: '/packers',
+      outstation: '/outstation',
+      carpool: '/carpool',
     }
 
     const targetRoute = service.route || routeMap[service.code]
@@ -478,6 +500,18 @@ export default function HomeScreen() {
           pickupAddress: currentAddress || undefined,
           pickupLat: coords?.lat ? coords.lat.toString() : undefined,
           pickupLng: coords?.lng ? coords.lng.toString() : undefined,
+        },
+      } as any)
+      return
+    }
+
+    if (service.code === 'outstation' || targetRoute === '/outstation') {
+      router.push({
+        pathname: '/outstation',
+        params: {
+          pickupAddress: currentAddress || undefined,
+          pickupLat: coords?.lat ? String(coords.lat) : undefined,
+          pickupLng: coords?.lng ? String(coords.lng) : undefined,
         },
       } as any)
       return

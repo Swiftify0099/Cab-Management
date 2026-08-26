@@ -76,14 +76,15 @@ class GeoSearchService:
 
         # Build dynamic WHERE conditions
         conditions = [
-            "d.status = 'ONLINE'",
-            "d.kyc_status = 'APPROVED'",
+            "d.status::text IN ('ONLINE', 'online')",
+            "d.kyc_status::text IN ('APPROVED', 'approved')",
+            "d.current_location IS NOT NULL",
             f"ST_DWithin(d.current_location::geography, ST_GeogFromText('{point_wkt}'), {radius_m})",
         ]
 
         if exclude_ids:
             ids_str = ", ".join(f"'{i}'" for i in exclude_ids)
-            conditions.append(f"d.id NOT IN ({ids_str})")
+            conditions.append(f"d.id::text NOT IN ({ids_str})")
 
         if women_only:
             conditions.append("d.gender = 'female'")
@@ -130,11 +131,11 @@ class GeoSearchService:
                 "driver_id": row["driver_id"],
                 "full_name": row["full_name"],
                 "rating": float(row["rating"] or 5.0),
-                "vehicle_type": row["vehicle_type"],
-                "vehicle": f"{row['make']} {row['model']} ({row['color']})",
-                "registration_number": row["registration_number"],
-                "seat_capacity": row["seat_capacity"],
-                "has_ac": row["has_ac"],
+                "vehicle_type": row["vehicle_type"] or "sedan",
+                "vehicle": f"{row['make'] or 'Standard'} {row['model'] or 'Cab'} ({row['color'] or 'White'})".strip(),
+                "registration_number": row["registration_number"] or "MH-12-REG",
+                "seat_capacity": row["seat_capacity"] or 4,
+                "has_ac": row["has_ac"] if row["has_ac"] is not None else True,
                 "distance_km": round(float(row["distance_km"]), 2),
                 "latitude": float(row["latitude"]),
                 "longitude": float(row["longitude"]),

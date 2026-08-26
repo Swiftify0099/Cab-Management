@@ -31,11 +31,12 @@ export default function IncomingRequestScreen({ request, onDismiss }: Props) {
 
   const mountedRef = useRef(true)
 
-  // Normalize offer data
+  // ✅ Bug 2 fix: robust offer_id chain — prevents silent API failure when only booking_id exists
+  const _offerId = request?.offer_id || request?.ride_request_id || request?.booking_id || `off-${Date.now()}`
   const normalizedOffer: RideOfferPayload = {
-    offer_id: request?.offer_id || request?.booking_id || `off-${Date.now()}`,
-    ride_request_id: request?.ride_request_id || request?.booking_id || '',
-    booking_id: request?.booking_id,
+    offer_id: _offerId,
+    ride_request_id: request?.ride_request_id || request?.booking_id || _offerId,
+    booking_id: request?.booking_id || request?.ride_request_id || _offerId,
     driver_id: request?.driver_id,
     service_type: request?.service_type || (request?.trip?.has_parcel ? 'parcel' : 'cab'),
     pickup: {
@@ -66,6 +67,8 @@ export default function IncomingRequestScreen({ request, onDismiss }: Props) {
       available_labels: ['Front Window', 'Rear Left', 'Rear Right', 'Rear Middle'],
       requested_seats: request?.seats || 1,
     },
+    // ⭐ Preferred driver badge flag
+    is_preferred: request?.is_preferred || false,
     expires_at: request?.expires_at || new Date(Date.now() + timeoutLimit * 1000).toISOString(),
     timeout_sec: timeoutLimit,
     paid: request?.paid ?? true,
@@ -250,6 +253,7 @@ export default function IncomingRequestScreen({ request, onDismiss }: Props) {
           onAccept={handleAccept}
           onReject={handleReject}
           onDismiss={onDismiss}
+          isPreferred={request?.is_preferred || false}
         />
       </View>
     </SafeAreaView>

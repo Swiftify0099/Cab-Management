@@ -648,6 +648,7 @@ from app.services.ride_fare_engine import estimate_ride_fare
 
 
 class CreateRideRequestSchema(BaseModel):
+    request_id: Optional[str] = None
     pickup_lat: float
     pickup_lng: float
     pickup_address: str
@@ -657,6 +658,22 @@ class CreateRideRequestSchema(BaseModel):
     category_name: str = "economy"
     seats_requested: int = 1
     seat_preferences: Optional[dict] = None
+    stops: Optional[List[dict]] = None
+    pickup_notes: Optional[str] = None
+    rider_type: str = "SELF"
+    rider_name: Optional[str] = None
+    rider_phone: Optional[str] = None
+    is_booked_for_other: bool = False
+    payment_method: Optional[str] = "CASH"
+    is_scheduled: bool = False
+    scheduled_pickup_time: Optional[str] = None
+    timezone: Optional[str] = None
+    scheduled_status: Optional[str] = None
+    pricing_mode: Optional[str] = "STANDARD"
+    customer_offer_amount: Optional[float] = None
+    negotiation_idempotency_key: Optional[str] = None
+    preferred_driver_ids: Optional[List[str]] = None
+    service_type: str = "local"  # local, premium, luxury, outstation
 
 
 class RideOfferResponseSchema(BaseModel):
@@ -696,6 +713,19 @@ async def create_ride_request_endpoint(
         category_name=request.category_name,
         seats_requested=request.seats_requested,
         seat_preferences=request.seat_preferences,
+        preferred_driver_ids=request.preferred_driver_ids,
+        service_type=request.service_type,
+        rider_type=request.rider_type,
+        rider_name=request.rider_name,
+        rider_phone=request.rider_phone,
+        is_booked_for_other=request.is_booked_for_other,
+        stops=request.stops,
+        pickup_notes=request.pickup_notes,
+        payment_method=request.payment_method,
+        is_scheduled=request.is_scheduled,
+        scheduled_pickup_time=request.scheduled_pickup_time,
+        pricing_mode=request.pricing_mode,
+        customer_offer_amount=request.customer_offer_amount,
     )
     return SuccessResponse(
         success=True,
@@ -704,6 +734,9 @@ async def create_ride_request_endpoint(
             "ride_request_id": str(ride_req.id),
             "estimated_fare": float(ride_req.estimated_fare),
             "status": ride_req.status.value,
+            "rider_name": ride_req.rider_name,
+            "pickup_address": ride_req.pickup_address,
+            "destination_address": ride_req.destination_address,
         },
     )
 
@@ -712,6 +745,11 @@ async def create_ride_request_endpoint(
     "/rides/respond",
     response_model=SuccessResponse,
     summary="Driver: Accept or reject a ride offer",
+)
+@router.post(
+    "/matching/rides/respond",
+    response_model=SuccessResponse,
+    summary="Driver: Accept or reject a ride offer (alias)",
 )
 async def respond_to_ride_offer_endpoint(
     request: RideOfferResponseSchema,
@@ -737,6 +775,90 @@ async def respond_to_ride_offer_endpoint(
         )
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
+
+
+@router.get(
+    "/rides/pending",
+    response_model=SuccessResponse,
+    summary="Driver: Get all active pending ride offers (Pending Request Recovery)",
+)
+@router.get(
+    "/matching/rides/pending",
+    response_model=SuccessResponse,
+    summary="Driver: Get all active pending ride offers (alias)",
+)
+@router.get(
+    "/driver/ride-requests/pending",
+    response_model=SuccessResponse,
+    summary="Driver: Get all active pending ride offers (spec alias)",
+)
+async def get_pending_ride_offers_endpoint(
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    """
+    Pending Request Recovery Endpoint:
+    Returns currently valid, unexpired offers for the authenticated driver.
+    Used on app launch, reconnect, or push notification tap.
+    """
+    service = RideDispatchService(db)
+    offers = await service.get_pending_offers_for_driver(current_user.user_id_str)
+    return SuccessResponse(
+        success=True,
+        message=f"Found {len(offers)} pending offers",
+        data=offers,
+    )
+
+
+@router.get(
+    "/rides/active",
+    response_model=SuccessResponse,
+    summary="Driver: Get current active assigned ride or pending offer",
+)
+@router.get(
+    "/matching/rides/active",
+    response_model=SuccessResponse,
+    summary="Driver: Get current active assigned ride or pending offer (alias)",
+)
+async def get_active_ride_endpoint(
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    """
+    Returns the driver's current assigned active ride or active offer.
+    """
+    service = RideDispatchService(db)
+    active_ride = await service.get_active_ride_for_driver(current_user.user_id_str)
+    return SuccessResponse(
+        success=True,
+        message="Active ride fetched" if active_ride else "No active ride",
+        data=active_ride,
+    )
+
+
+@router.get(
+    "/rides/categories",
+    response_model=SuccessResponse,
+    summary="Get active ride categories and fares",
+)
+@router.get(
+    "/matching/rides/categories",
+    response_model=SuccessResponse,
+    summary="Get active ride categories and fares (alias)",
+)
+async def get_ride_categories_endpoint(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Returns list of active ride categories with base fares and rates.
+    """
+    service = RideDispatchService(db)
+    cats = await service.get_categories()
+    return SuccessResponse(
+        success=True,
+        message="Categories fetched",
+        data=cats,
+    )
 
 
 class UpdateDriverCoverageSchema(BaseModel):
@@ -773,6 +895,200 @@ async def cancel_ride_request_endpoint(
         )
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
+
+
+# ── CUSTOMER-FACING MATCHING VISIBILITY & ESCALATION ENDPOINTS ──
+
+class SearchNearbyForMatchingSchema(BaseModel):
+    pickup_lat: float
+    pickup_lng: float
+    ride_request_id: Optional[str] = None
+    radius_km: float = 10.0
+
+
+@router.post(
+    "/rides/search-nearby-for-matching",
+    response_model=SuccessResponse,
+    summary="Customer: See available drivers during matching wait",
+)
+async def search_nearby_for_matching(
+    request: SearchNearbyForMatchingSchema,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Customer-facing endpoint to show real nearby drivers on the matching-waiting radar.
+    Returns list of available drivers with distance, ETA, vehicle info, and favourite status.
+    """
+    from common.models.all_models import (
+        CustomerProfile, FavoriteDriver, DriverLocation, Vehicle,
+    )
+
+    service = GeoSearchService(db)
+    drivers = await service.find_nearest_drivers(
+        latitude=request.pickup_lat,
+        longitude=request.pickup_lng,
+        max_radius_km=request.radius_km,
+    )
+
+    # Resolve customer favourite driver IDs for badge display
+    fav_driver_ids = set()
+    try:
+        cp_res = await db.execute(
+            select(CustomerProfile).where(CustomerProfile.user_id == current_user.id)
+        )
+        cp = cp_res.scalar_one_or_none()
+        if cp:
+            fav_res = await db.execute(
+                select(FavoriteDriver.driver_id).where(FavoriteDriver.customer_id == cp.id)
+            )
+            fav_driver_ids = {str(row[0]) for row in fav_res.fetchall()}
+    except Exception:
+        pass
+
+    # Enrich driver list with favourite badge
+    enriched = []
+    for d in drivers:
+        d_id = str(d.get("driver_id", ""))
+        d["is_favourite"] = d_id in fav_driver_ids
+        enriched.append(d)
+
+    # Sort: favourites first, then by distance
+    enriched.sort(key=lambda x: (0 if x.get("is_favourite") else 1, x.get("distance_km", 999)))
+
+    return SuccessResponse(
+        success=True,
+        message=f"{len(enriched)} drivers nearby",
+        data={"drivers": enriched, "total": len(enriched)},
+    )
+
+
+class ReDispatchSchema(BaseModel):
+    ride_request_id: str
+    expanded_radius_km: float = 25.0
+
+
+@router.post(
+    "/rides/re-dispatch",
+    response_model=SuccessResponse,
+    summary="Customer: Expand search radius after timeout",
+)
+async def re_dispatch_ride(
+    request: ReDispatchSchema,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Called after 5-minute timeout when no driver has accepted.
+    Expands search radius and re-dispatches to a wider pool of drivers.
+    """
+    from common.models.all_models import RideRequest, RideRequestStatus
+    import uuid as _uuid
+
+    try:
+        req_uuid = _uuid.UUID(str(request.ride_request_id))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid ride request ID")
+
+    req_res = await db.execute(
+        select(RideRequest).where(
+            and_(
+                RideRequest.id == req_uuid,
+                RideRequest.customer_id == current_user.id,
+            )
+        )
+    )
+    ride_req = req_res.scalar_one_or_none()
+    if not ride_req:
+        raise HTTPException(status_code=404, detail="Ride request not found")
+
+    if ride_req.status not in (RideRequestStatus.MATCHING, RideRequestStatus.DISPATCHING, RideRequestStatus.CREATED):
+        return SuccessResponse(
+            success=False,
+            message=f"Cannot re-dispatch ride in {ride_req.status.value} status",
+        )
+
+    # Increment dispatch attempts
+    ride_req.dispatch_attempts = (ride_req.dispatch_attempts or 0) + 1
+    await db.commit()
+
+    # Re-dispatch with expanded radius (async background task)
+    service = RideDispatchService(db)
+    count = await service.dispatch_ride_request(str(ride_req.id))
+
+    return SuccessResponse(
+        success=True,
+        message=f"Expanded search — {count} additional drivers notified",
+        data={
+            "dispatched_count": count,
+            "attempt": ride_req.dispatch_attempts,
+            "ride_request_id": str(ride_req.id),
+        },
+    )
+
+
+@router.get(
+    "/rides/pending-requests",
+    response_model=SuccessResponse,
+    summary="Driver: List nearby pending customer requests",
+)
+async def list_pending_requests(
+    latitude: float = Query(..., description="Driver's current lat"),
+    longitude: float = Query(..., description="Driver's current lng"),
+    radius_km: float = Query(15.0, description="Search radius in km"),
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    """
+    Driver sees unmatched/pending customer ride requests near their location.
+    Shows requests that haven't been accepted by any driver yet.
+    """
+    from common.models.all_models import RideRequest, RideRequestStatus
+    from app.services.ride_fare_engine import haversine_distance_km
+
+    # Fetch all MATCHING ride requests
+    req_res = await db.execute(
+        select(RideRequest).where(
+            RideRequest.status.in_([
+                RideRequestStatus.MATCHING,
+                RideRequestStatus.DISPATCHING,
+                RideRequestStatus.CREATED,
+            ])
+        )
+    )
+    all_requests = req_res.scalars().all()
+
+    nearby = []
+    for req in all_requests:
+        dist = haversine_distance_km(
+            latitude, longitude,
+            req.pickup_lat, req.pickup_lng,
+        )
+        if dist <= radius_km:
+            nearby.append({
+                "ride_request_id": str(req.id),
+                "pickup_address": req.pickup_address,
+                "destination_address": req.destination_address,
+                "pickup_lat": req.pickup_lat,
+                "pickup_lng": req.pickup_lng,
+                "destination_lat": req.destination_lat,
+                "destination_lng": req.destination_lng,
+                "estimated_fare": float(req.estimated_fare),
+                "estimated_distance_km": req.estimated_distance_km,
+                "estimated_duration_min": req.estimated_duration_min,
+                "seats_requested": req.seats_requested,
+                "distance_from_driver_km": round(dist, 2),
+                "created_at": req.created_at.isoformat() if req.created_at else None,
+            })
+
+    nearby.sort(key=lambda x: x["distance_from_driver_km"])
+
+    return SuccessResponse(
+        success=True,
+        message=f"{len(nearby)} pending requests nearby",
+        data={"requests": nearby, "total": len(nearby)},
+    )
 
 
 # ── DRIVER COVERAGE & SPATIAL HIERARCHY ENDPOINTS ──

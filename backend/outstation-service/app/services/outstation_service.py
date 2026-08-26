@@ -531,6 +531,32 @@ class OutstationService:
             )
             self.db.add(earn_txn)
 
+            try:
+                from common.models.all_models import DriverEarningLedger
+                from datetime import date
+                ledger_entry = DriverEarningLedger(
+                    id=uuid.uuid4(),
+                    driver_id=driver.id,
+                    entry_type="OUTSTATION_EARNING",
+                    amount=Decimal(str(total_earning)),
+                    currency="INR",
+                    direction="CREDIT",
+                    status="SETTLED",
+                    description=f"Earnings for Outstation Multi-City #{booking.reference}",
+                    effective_date=date.today(),
+                    metadata_json={
+                        "booking_id": str(booking.id),
+                        "reference": booking.reference,
+                        "journey_type": booking.journey_type.value,
+                        "final_fare": float(final_fare),
+                        "driver_earning": float(total_earning),
+                        "driver_allowances": float(driver_allowance_total),
+                    },
+                )
+                self.db.add(ledger_entry)
+            except Exception as ex:
+                log.warning("DriverEarningLedger insertion note", error=str(ex))
+
         await self.db.commit()
         return {"reference": booking.reference, "status": "completed", "final_fare": round(final_fare, 2)}
 

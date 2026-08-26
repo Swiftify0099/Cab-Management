@@ -22,6 +22,7 @@ interface Props {
   isDark?: boolean
   isMuted?: boolean
   sirenName?: string
+  isPreferred?: boolean  // ⭐ Customer explicitly requested this driver
   onToggleMute?: () => void
   onAccept: () => void
   onReject: () => void
@@ -35,6 +36,7 @@ export const RideRequestCard: React.FC<Props> = ({
   isDark = false,
   isMuted = false,
   sirenName,
+  isPreferred = false,
   onToggleMute,
   onAccept,
   onReject,
@@ -79,6 +81,17 @@ export const RideRequestCard: React.FC<Props> = ({
     <View style={[styles.card, { backgroundColor: bgCard, borderColor: borderCol }]}>
       {/* Top Handle */}
       <View style={[styles.handle, { backgroundColor: isDark ? '#475569' : '#CBD5E1' }]} />
+
+      {/* ⭐ Preferred Driver Request Banner */}
+      {isPreferred && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#FEF3C7', borderRadius: 12, padding: 10, marginBottom: 8, marginHorizontal: 4, gap: 8 }}>
+          <Text style={{ fontSize: 20 }}>⭐</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontWeight: '800', color: '#92400E', fontSize: 13 }}>Preferred Driver Request</Text>
+            <Text style={{ color: '#78350F', fontSize: 11 }}>The customer specifically chose YOU for this ride!</Text>
+          </View>
+        </View>
+      )}
 
       {/* ─── Dynamic Siren Ringing & Mute Control Strip ─────────────── */}
       {!isAccepted && !isExpired && !isCancelled && !isSuperseded && (
@@ -261,7 +274,22 @@ export const RideRequestCard: React.FC<Props> = ({
             Available: {seatInfo?.available_labels?.join(', ') || 'Front Window, Rear Left, Rear Right'}
           </Text>
         </View>
+        <View style={{ backgroundColor: offer?.paid ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
+          <Text style={{ fontSize: 11, fontWeight: '700', color: offer?.paid ? '#10B981' : '#D97706' }}>
+            {offer?.paid ? 'PAID' : 'CASH'}
+          </Text>
+        </View>
       </View>
+
+      {/* ─── Operational Note Banner (Gate No, etc.) ──────────── */}
+      {(offer?.pickup_notes || (offer as any)?.notes) && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: isDark ? 'rgba(245, 158, 11, 0.12)' : '#FEF3C7', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, marginBottom: 10, gap: 6 }}>
+          <Feather name="message-square" size={14} color="#D97706" />
+          <Text style={{ flex: 1, fontSize: 12, fontWeight: '600', color: isDark ? '#FCD34D' : '#92400E' }} numberOfLines={2}>
+            Rider Note: "{(offer?.pickup_notes || (offer as any)?.notes)}"
+          </Text>
+        </View>
+      )}
 
       {/* ─── Fare & Driver Earning Cards ──────────────────────────────── */}
       <View style={styles.pricingRow}>
@@ -273,7 +301,14 @@ export const RideRequestCard: React.FC<Props> = ({
         </View>
 
         <View style={[styles.earningCard, { backgroundColor: isDark ? 'rgba(16,185,129,0.12)' : '#ECFDF5', borderColor: '#A7F3D0' }]}>
-          <Text style={styles.earningLabel}>🟢 Your Earning</Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={styles.earningLabel}>🟢 Your Net Earning</Text>
+            {trip?.duration_min ? (
+              <Text style={{ fontSize: 10, fontWeight: '700', color: '#059669' }}>
+                ~₹{Math.round(((trip?.earning ?? Math.round((trip?.fare ?? 285) * 0.8)) / (trip.duration_min)) * 60)}/hr
+              </Text>
+            ) : null}
+          </View>
           <Text style={styles.earningValue}>
             ₹{trip?.earning ?? Math.round((trip?.fare ?? 285) * 0.8)}
           </Text>

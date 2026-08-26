@@ -55,7 +55,8 @@ export interface RideOfferPayload {
   ride_request_id: string
   booking_id?: string // for backward compatibility
   driver_id?: string
-  service_type?: 'cab' | 'parcel' | 'transport' | 'hotel' | string
+  service_type?: 'cab' | 'parcel' | 'transport' | 'hotel' | 'outstation' | string
+  is_preferred?: boolean  // ⭐ Customer explicitly requested this driver
   pickup: RideLocationPoint
   destination: RideLocationPoint
   trip: RideTripDetails

@@ -58,7 +58,7 @@ SERVICE_CATALOG: List[ServiceCatalogItem] = [
         status="AVAILABLE",
         badge="Stays",
         sort_order=3,
-        route="/book/properties",
+        route="/transport/create",
     ),
     ServiceCatalogItem(
         code="transport",
@@ -69,7 +69,7 @@ SERVICE_CATALOG: List[ServiceCatalogItem] = [
         status="AVAILABLE",
         badge="Schedules",
         sort_order=4,
-        route="/book/properties",
+        route="/transport/create",
     ),
     ServiceCatalogItem(
         code="airport",
@@ -80,7 +80,7 @@ SERVICE_CATALOG: List[ServiceCatalogItem] = [
         status="AVAILABLE",
         badge="24x7",
         sort_order=5,
-        route="/book/cab",
+        route="/airport/book",
     ),
     ServiceCatalogItem(
         code="rental",
@@ -89,7 +89,7 @@ SERVICE_CATALOG: List[ServiceCatalogItem] = [
         category="transport",
         icon="key",
         status="AVAILABLE",
-        badge="Rentals",
+        badge="Hourly",
         sort_order=6,
         route="/rental",
     ),
@@ -113,7 +113,18 @@ SERVICE_CATALOG: List[ServiceCatalogItem] = [
         status="AVAILABLE",
         badge="Movers",
         sort_order=8,
-        route="/transport/create",
+        route="/packers",
+    ),
+    ServiceCatalogItem(
+        code="outstation",
+        title="Outstation Cab",
+        description="Intercity & Return trips",
+        category="transport",
+        icon="road",
+        status="AVAILABLE",
+        badge="Intercity",
+        sort_order=9,
+        route="/outstation",
     ),
 ]
 

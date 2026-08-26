@@ -37,11 +37,15 @@ from common.middleware.auth import (
 )
 from common.models.all_models import (
     CustomerProfile,
+    Driver,
+    FavoriteDriver,
     MediaAsset,
     MediaOwnerType,
     MediaType,
     SavedAddress,
     SavedRoute,
+    User,
+    Vehicle,
 )
 from common.schemas.response import APIResponse, MessageResponse
 from common.utils.cloudinary_service import CloudinaryService
@@ -184,25 +188,44 @@ async def upload_profile_photo(
 
     old_photo = profile.profile_photo
 
-    # Upload to Cloudinary with face auto-crop
-    upload_res = await CloudinaryService.upload_customer_profile_photo(
-        customer_id=str(current_user.id),
-        file=photo,
-    )
-    photo_url = upload_res.get("secure_url") or upload_res.get("url")
-    public_id = upload_res.get("public_id")
+    # Upload to Cloudinary with face auto-crop or fallback
+    try:
+        upload_res = await CloudinaryService.upload_customer_profile_photo(
+            customer_id=str(current_user.id),
+            file=photo,
+        )
+        photo_url = upload_res.get("secure_url") or upload_res.get("url")
+        public_id = upload_res.get("public_id")
+        res_type = upload_res.get("resource_type", "image")
+        res_fmt = upload_res.get("format", "jpg")
+        res_bytes = upload_res.get("bytes", 0)
+        res_ver = upload_res.get("version", 1)
+    except Exception as e:
+        logger.warning("cloudinary_customer_photo_failed_fallback", error=str(e))
+        path = await save_upload(
+            file=photo,
+            category="profiles",
+            allowed_types=ALLOWED_IMAGE_TYPES,
+            max_size=5 * 1024 * 1024,
+        )
+        photo_url = get_file_url(path)
+        public_id = None
+        res_type = "image"
+        res_fmt = "jpg"
+        res_bytes = 0
+        res_ver = 1
 
     # Record MediaAsset metadata in PostgreSQL (Zero binary bytes)
     media_asset = MediaAsset(
         owner_type=MediaOwnerType.CUSTOMER,
         owner_id=current_user.id,
         media_type=MediaType.PROFILE_PHOTO,
-        cloudinary_public_id=public_id,
-        resource_type=upload_res.get("resource_type", "image"),
-        format=upload_res.get("format", "jpg"),
+        cloudinary_public_id=public_id or f"local_avatar_{uuid.uuid4().hex[:8]}",
+        resource_type=res_type,
+        format=res_fmt,
         mime_type=photo.content_type or "image/jpeg",
-        file_size_bytes=upload_res.get("bytes", 0),
-        version=upload_res.get("version", 1),
+        file_size_bytes=res_bytes,
+        version=res_ver,
         secure_url=photo_url,
         thumbnail_url=photo_url,
         status="ACTIVE",
@@ -212,18 +235,27 @@ async def upload_profile_photo(
 
     # Atomic update: set new URL and commit
     profile.profile_photo = photo_url
+    if hasattr(current_user, "_user") and current_user._user:
+        if hasattr(current_user._user, "avatar_url"):
+            current_user._user.avatar_url = photo_url
+        if hasattr(current_user._user, "profile_photo"):
+            current_user._user.profile_photo = photo_url
     await db.commit()
 
-    # Clean up old photo from Cloudinary if existed
-    if old_photo and old_photo != photo_url:
-        await delete_upload(old_photo)
+    # Clean up old photo if existed
+    if old_photo and old_photo != photo_url and not str(old_photo).startswith("http"):
+        try:
+            await delete_upload(old_photo)
+        except Exception:
+            pass
 
     return APIResponse(
         message="Profile photo updated successfully",
         data={
             "photo_url": photo_url,
+            "preview_url": photo_url,
             "public_id": public_id,
-            "version": upload_res.get("version", 1),
+            "version": res_ver,
         },
     )
 
@@ -421,3 +453,163 @@ async def delete_saved_route(
     await db.delete(route)
     await db.commit()
     return MessageResponse(message="Route deleted")
+
+
+# ============================================================
+# FAVOURITE DRIVERS  (Production-grade CRUD)
+# ============================================================
+
+@router.get(
+    "/me/favorite-drivers",
+    response_model=APIResponse,
+    summary="List customer's favourite drivers with details",
+)
+async def list_favorite_drivers(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Fetch all favourite drivers for the logged-in customer.
+    Returns driver details including name, photo, rating, vehicle info.
+    """
+    # Resolve customer profile
+    cp_res = await db.execute(
+        select(CustomerProfile).where(CustomerProfile.user_id == current_user.id)
+    )
+    cp = cp_res.scalar_one_or_none()
+    if not cp:
+        return APIResponse(message="No customer profile", data=[])
+
+    # Fetch favourites with driver + user + vehicle details
+    fav_res = await db.execute(
+        select(FavoriteDriver).where(FavoriteDriver.customer_id == cp.id)
+    )
+    favs = fav_res.scalars().all()
+
+    result = []
+    for fav in favs:
+        # Load driver details
+        drv_res = await db.execute(select(Driver).where(Driver.id == fav.driver_id))
+        drv = drv_res.scalar_one_or_none()
+        if not drv:
+            continue
+
+        # Load driver's user record for name
+        usr_res = await db.execute(select(User).where(User.id == drv.user_id))
+        usr = usr_res.scalar_one_or_none()
+
+        # Load vehicle
+        veh_res = await db.execute(select(Vehicle).where(Vehicle.driver_id == drv.id))
+        veh = veh_res.scalar_one_or_none()
+
+        result.append({
+            "id": str(fav.id),
+            "driver_id": str(drv.id),
+            "driver_user_id": str(drv.user_id),
+            "full_name": drv.full_name or (usr.name if usr else "Driver"),
+            "phone": drv.phone,
+            "profile_photo": drv.profile_photo,
+            "rating": float(drv.rating or 4.85),
+            "total_trips": drv.total_trips or 0,
+            "vehicle": {
+                "make": veh.make if veh else None,
+                "model": veh.model if veh else None,
+                "color": veh.color if veh else None,
+                "registration_number": veh.registration_number if veh else None,
+                "vehicle_type": str(veh.vehicle_type.value) if veh and hasattr(veh.vehicle_type, 'value') else None,
+            } if veh else None,
+            "added_at": fav.created_at.isoformat() if fav.created_at else None,
+        })
+
+    return APIResponse(message=f"{len(result)} favourite drivers", data=result)
+
+
+@router.post(
+    "/me/favorite-drivers/{driver_id}",
+    response_model=APIResponse,
+    summary="Add a driver to favourites",
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_favorite_driver(
+    driver_id: uuid.UUID,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Add a driver to the customer's favourite list.
+    Max 20 favourite drivers. Duplicate-safe (409 on re-add).
+    """
+    # Resolve customer profile
+    cp_res = await db.execute(
+        select(CustomerProfile).where(CustomerProfile.user_id == current_user.id)
+    )
+    cp = cp_res.scalar_one_or_none()
+    if not cp:
+        raise HTTPException(status_code=404, detail="Customer profile not found")
+
+    # Validate driver exists
+    drv_res = await db.execute(select(Driver).where(Driver.id == driver_id))
+    drv = drv_res.scalar_one_or_none()
+    if not drv:
+        raise HTTPException(status_code=404, detail="Driver not found")
+
+    # Check duplicate
+    existing = await db.execute(
+        select(FavoriteDriver).where(
+            FavoriteDriver.customer_id == cp.id,
+            FavoriteDriver.driver_id == driver_id,
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Driver already in favourites")
+
+    # Check limit (max 20)
+    count_res = await db.execute(
+        select(FavoriteDriver).where(FavoriteDriver.customer_id == cp.id)
+    )
+    if len(count_res.scalars().all()) >= 20:
+        raise HTTPException(status_code=400, detail="Maximum 20 favourite drivers allowed")
+
+    fav = FavoriteDriver(customer_id=cp.id, driver_id=driver_id)
+    db.add(fav)
+    await db.commit()
+    await db.refresh(fav)
+
+    return APIResponse(
+        message="Driver added to favourites",
+        data={"id": str(fav.id), "driver_id": str(driver_id)},
+    )
+
+
+@router.delete(
+    "/me/favorite-drivers/{driver_id}",
+    response_model=MessageResponse,
+    summary="Remove a driver from favourites",
+)
+async def remove_favorite_driver(
+    driver_id: uuid.UUID,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a specific driver from the customer's favourite list."""
+    cp_res = await db.execute(
+        select(CustomerProfile).where(CustomerProfile.user_id == current_user.id)
+    )
+    cp = cp_res.scalar_one_or_none()
+    if not cp:
+        raise HTTPException(status_code=404, detail="Customer profile not found")
+
+    fav_res = await db.execute(
+        select(FavoriteDriver).where(
+            FavoriteDriver.customer_id == cp.id,
+            FavoriteDriver.driver_id == driver_id,
+        )
+    )
+    fav = fav_res.scalar_one_or_none()
+    if not fav:
+        raise HTTPException(status_code=404, detail="Driver not in favourites")
+
+    await db.delete(fav)
+    await db.commit()
+    return MessageResponse(message="Driver removed from favourites")
+

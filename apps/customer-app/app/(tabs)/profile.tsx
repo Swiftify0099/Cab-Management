@@ -91,29 +91,62 @@ export default function ProfileTab() {
     )
   }
 
-  const handleImagePick = async () => {
+  const [showPreviewModal, setShowPreviewModal] = useState(false)
+
+  const handlePickPhoto = async (fromCamera: boolean) => {
     try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
-      })
+      const perm = fromCamera
+        ? await ImagePicker.requestCameraPermissionsAsync()
+        : await ImagePicker.requestMediaLibraryPermissionsAsync()
+
+      if (perm.status !== 'granted') {
+        Alert.alert('Permission Denied', 'Camera / Gallery access is required.')
+        return
+      }
+
+      const result = fromCamera
+        ? await ImagePicker.launchCameraAsync({
+            mediaTypes: ['images'],
+            allowsEditing: true,
+            aspect: [1, 1],
+            quality: 0.85,
+          })
+        : await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            allowsEditing: true,
+            aspect: [1, 1],
+            quality: 0.85,
+          })
+
       if (!result.canceled && result.assets && result.assets.length > 0) {
         setUploading(true)
         const asset = result.assets[0]
         const formData = new FormData() as any
         const filename = asset.uri.split('/').pop() || 'avatar.jpg'
-        const type = asset.type || 'image/jpeg'
+        const match = /\.(\w+)$/.exec(filename)
+        const type = match ? `image/${match[1]}` : 'image/jpeg'
         formData.append('photo', { uri: asset.uri, name: filename, type })
         await profileApi.uploadPhoto(formData)
         await loadProfile()
+        Alert.alert('Photo Updated', 'Your profile photo has been updated on Cloudinary.')
       }
     } catch (e: any) {
       Alert.alert('Upload Failed', e?.response?.data?.detail || 'Could not upload photo')
     } finally {
       setUploading(false)
     }
+  }
+
+  const handleAvatarPress = () => {
+    const options: any[] = []
+    if (profile?.profile_photo_url) {
+      options.push({ text: 'View Fullscreen Photo', onPress: () => setShowPreviewModal(true) })
+    }
+    options.push({ text: 'Take Photo with Camera', onPress: () => handlePickPhoto(true) })
+    options.push({ text: 'Choose from Photo Gallery', onPress: () => handlePickPhoto(false) })
+    options.push({ text: 'Edit Profile Details', onPress: () => router.push('/profile/edit' as any) })
+    options.push({ text: 'Cancel', style: 'cancel' })
+    Alert.alert('Profile Photo', 'Choose an action', options)
   }
 
   const displayName = profile?.full_name || user?.phone || 'Customer'
@@ -141,7 +174,7 @@ export default function ProfileTab() {
         >
           {/* Top Profile Card */}
           <View style={styles.profileHeader}>
-            <TouchableOpacity style={styles.avatarWrapper} onPress={handleImagePick} activeOpacity={0.85}>
+            <TouchableOpacity style={styles.avatarWrapper} onPress={handleAvatarPress} activeOpacity={0.85}>
               <AppAvatar name={displayName} imageUri={profile?.profile_photo_url} size={92} />
               <View style={[styles.verifiedBadge, { backgroundColor: theme.colors.success }]}>
                 <Ionicons name="checkmark" size={12} color="#fff" />
@@ -462,11 +495,126 @@ export default function ProfileTab() {
 
       {/* Developer Mode Modal */}
       <DevModeModal visible={devModalVisible} onClose={() => setDevModalVisible(false)} />
+
+      {/* Fullscreen Avatar Preview Modal */}
+      <Modal
+        visible={showPreviewModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowPreviewModal(false)}
+      >
+        <View style={styles.previewModalOverlay}>
+          <View style={[styles.previewModalContent, { backgroundColor: theme.colors.surface }]}>
+            <View style={styles.previewModalHeader}>
+              <AppText variant="h3" bold>{displayName}</AppText>
+              <TouchableOpacity
+                style={[styles.previewModalClose, { backgroundColor: theme.colors.backgroundAlt }]}
+                onPress={() => setShowPreviewModal(false)}
+              >
+                <Feather name="x" size={20} color={theme.colors.textPrimary} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.previewImageContainer}>
+              {profile?.profile_photo_url ? (
+                <Image
+                  source={{ uri: profile.profile_photo_url }}
+                  style={styles.previewImage}
+                  resizeMode="contain"
+                />
+              ) : null}
+            </View>
+
+            <View style={styles.previewFooter}>
+              <TouchableOpacity
+                style={[styles.previewActionBtn, { backgroundColor: theme.colors.primary }]}
+                onPress={() => {
+                  setShowPreviewModal(false)
+                  handleAvatarPress()
+                }}
+              >
+                <Feather name="camera" size={16} color="#fff" />
+                <AppText variant="bodyS" bold color="white" style={{ marginLeft: 6 }}>
+                  Change Photo
+                </AppText>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.previewCloseBtn, { backgroundColor: theme.colors.border }]}
+                onPress={() => setShowPreviewModal(false)}
+              >
+                <AppText variant="bodyS" semibold color="secondary">
+                  Close
+                </AppText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
+  previewModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  previewModalContent: {
+    width: '100%',
+    borderRadius: 20,
+    padding: 20,
+    overflow: 'hidden',
+  },
+  previewModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  previewModalClose: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewImageContainer: {
+    width: '100%',
+    height: 300,
+    borderRadius: 16,
+    backgroundColor: '#000',
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewImage: {
+    width: '100%',
+    height: '100%',
+  },
+  previewFooter: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 18,
+  },
+  previewActionBtn: {
+    flex: 1,
+    height: 44,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewCloseBtn: {
+    paddingHorizontal: 20,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   root: { flex: 1 },
   headerBg: { position: 'absolute', top: 0, left: 0, right: 0, height: 320 },
   safeArea: { flex: 1 },

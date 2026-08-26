@@ -335,6 +335,7 @@ interface UseCustomerSocketReturn {
 
   // Room management
   joinTrip:        (tripId: string) => void
+  joinCustomerRoom: () => void  // Bug 5 fix: explicit personal room re-join
   leaveTrip:       (tripId: string) => void
   joinParcelRoom:  (parcelId: string) => void
   leaveParcelRoom: (parcelId: string) => void
@@ -374,11 +375,15 @@ interface UseCustomerSocketReturn {
   sosAlert:                  SOSAlertPayload | null
   safetyAlert:               SafetyAlertPayload | null
 
+  // 3KM OTP Proximity stateful events
+  otpData:                   { ride_request_id: string; otp: string; distance_km: number; eta_min: number; message: string } | null
+
   // Clearers
   clearMatchFound:               () => void
   clearTripAccepted:             () => void
   clearTripRejected:             () => void
   clearArrivalAlert:             () => void
+  clearOtpData:                  () => void
   clearReservationDriverAssigned:() => void
   clearReservationReminder:      () => void
   clearReservationCancelled:     () => void
@@ -440,6 +445,7 @@ export function useCustomerSocket(): UseCustomerSocketReturn {
   const [tripCompleted,             setTripCompleted]             = useState<TripCompletedPayload | null>(null)
   const [sosAlert,                  setSosAlert]                  = useState<SOSAlertPayload | null>(null)
   const [safetyAlert,               setSafetyAlert]               = useState<SafetyAlertPayload | null>(null)
+  const [otpData,                   setOtpData]                   = useState<{ ride_request_id: string; otp: string; distance_km: number; eta_min: number; message: string } | null>(null)
 
   useEffect(() => {
     let socket: Socket | null = null
@@ -501,17 +507,28 @@ export function useCustomerSocket(): UseCustomerSocketReturn {
       })
 
       // On-demand ride assigned to driver
-      socket.on('RIDE_ASSIGNED', (data: any) => {
-        console.log('[CustomerSocket] RIDE_ASSIGNED ride_request_id:', data.ride_request_id)
+      const handleRideAssigned = (data: any) => {
+        console.log('[CustomerSocket] RIDE_ASSIGNED ride_request_id:', data.ride_request_id || data.booking_id)
         setTripAccepted({
           event: 'TRIP_ACCEPTED',
-          booking_id: data.ride_request_id,
-          trip_id: data.ride_request_id,
+          booking_id: data.ride_request_id || data.booking_id,
+          trip_id: data.ride_request_id || data.booking_id,
           driver: data.driver,
           vehicle: data.vehicle,
           pickup_eta_minutes: data.driver?.eta_min || 5,
         } as any)
-      })
+      }
+
+      socket.on('RIDE_ASSIGNED', handleRideAssigned)
+      socket.on('ride:assigned', handleRideAssigned)
+
+      // 3KM OTP Proximity Ready
+      const handleOtpReady = (data: any) => {
+        console.log('[CustomerSocket] OTP_READY:', data.otp, 'dist:', data.distance_km)
+        setOtpData(data)
+      }
+      socket.on('OTP_READY', handleOtpReady)
+      socket.on('ride:otp_ready', handleOtpReady)
 
       // Driver rejected (customer stays in search pool)
       socket.on('TRIP_REJECTED', (data: TripRejectedPayload) => {
@@ -527,6 +544,9 @@ export function useCustomerSocket(): UseCustomerSocketReturn {
 
       // Live GPS push from driver
       socket.on('LOCATION_UPDATE', (data: LocationUpdatePayload) => {
+        setDriverLocation(data)
+      })
+      socket.on('ride:location', (data: LocationUpdatePayload) => {
         setDriverLocation(data)
       })
 
@@ -739,6 +759,7 @@ export function useCustomerSocket(): UseCustomerSocketReturn {
   const clearTripCompleted             = useCallback(() => setTripCompleted(null),             [])
   const clearSOSAlert                  = useCallback(() => setSosAlert(null),                  [])
   const clearSafetyAlert               = useCallback(() => setSafetyAlert(null),               [])
+  const clearOtpData                   = useCallback(() => setOtpData(null),                   [])
 
   // ─── Feature 4: Reconnect sync registration ──────────────────────────────────
   /**
@@ -765,6 +786,15 @@ export function useCustomerSocket(): UseCustomerSocketReturn {
     })
   }, [])
 
+  // Bug 5 fix: Expose joinCustomerRoom so matching-waiting can explicitly rejoin personal room
+  const joinCustomerRoom = useCallback(() => {
+    const cid = customerRef.current
+    if (socketRef.current && cid) {
+      socketRef.current.emit('JOIN_CUSTOMER_ROOM', { customer_id: cid })
+      console.log('[CustomerSocket] Re-joined customer room:', cid)
+    }
+  }, [])
+
   const joinParcelRoom = useCallback((parcelId: string) => {
     if (!socketRef.current || !parcelId) return
     socketRef.current.emit('join_parcel_room', { parcel_id: parcelId })
@@ -779,6 +809,7 @@ export function useCustomerSocket(): UseCustomerSocketReturn {
     connected,
     socket: socketRef.current,
     joinTrip,
+    joinCustomerRoom,
     leaveTrip,
     joinParcelRoom,
     leaveParcelRoom,
@@ -798,6 +829,7 @@ export function useCustomerSocket(): UseCustomerSocketReturn {
     clearTripAccepted,
     clearTripRejected,
     clearArrivalAlert,
+    clearOtpData,
     clearReservationDriverAssigned,
     clearReservationReminder,
     clearReservationCancelled,

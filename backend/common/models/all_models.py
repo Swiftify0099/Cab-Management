@@ -2118,6 +2118,9 @@ class RideRequest(Base, UUIDMixin, TimestampMixin):
     payment_method: Mapped[str] = mapped_column(String(30), default="cash", nullable=False)  # cash, upi, card, wallet
     payment_status: Mapped[str] = mapped_column(String(30), default="pending", nullable=False)  # pending, paid, failed, cash_collected
     tip_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    service_type: Mapped[Optional[str]] = mapped_column(String(50), default="cab", nullable=True, index=True)  # cab, outstation, parcel, rental, transport, airport
+    pricing_mode: Mapped[str] = mapped_column(String(30), default="STANDARD", nullable=False)  # STANDARD, NEGOTIATED
+    preferred_driver_ids: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)  # [driver_id, ...]
 
     # Feature 21: Back-to-Back Rides Continuous Dispatch
     is_back_to_back: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -2194,6 +2197,7 @@ class RideOffer(Base, UUIDMixin, TimestampMixin):
     # Available seat info for display in driver app
     available_seats: Mapped[int] = mapped_column(Integer, default=4, nullable=False)
     available_seat_labels: Mapped[Optional[List[str]]] = mapped_column(ARRAY(String), nullable=True)  # ["Window Front", "Window Rear", "Middle"]
+    is_preferred: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)  # Preferred driver direct request
 
     # Relationships
     ride_request: Mapped["RideRequest"] = relationship(back_populates="offers")
@@ -4171,7 +4175,7 @@ class CompanyMembership(Base, UUIDMixin, TimestampMixin):
     employee_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     department_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("departments.id", ondelete="SET NULL"), nullable=True, index=True)
     role: Mapped[CorporateRole] = mapped_column(
-        Enum(CorporateRole, values_callable=lambda obj: [e.value for e in obj], name="corporaterole"),
+        Enum(CorporateRole, native_enum=False, values_callable=lambda obj: [e.value for e in obj], name="corporaterole"),
         default=CorporateRole.EMPLOYEE, nullable=False
     )
     status: Mapped[str] = mapped_column(String(20), default="INVITED", nullable=False, index=True)  # INVITED, ACTIVE, SUSPENDED, DEACTIVATED
@@ -4230,7 +4234,7 @@ class ApprovalRequest(Base, UUIDMixin, TimestampMixin):
     booking_details_json: Mapped[dict] = mapped_column(JSONB, default={}, nullable=False)  # service-specific details
 
     status: Mapped[ApprovalStatus] = mapped_column(
-        Enum(ApprovalStatus, values_callable=lambda obj: [e.value for e in obj], name="approvalstatus"),
+        Enum(ApprovalStatus, native_enum=False, values_callable=lambda obj: [e.value for e in obj], name="approvalstatus"),
         default=ApprovalStatus.PENDING, nullable=False, index=True
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -4319,7 +4323,7 @@ class CorporateInvoice(Base, UUIDMixin, TimestampMixin):
     paid_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"), nullable=False)
 
     status: Mapped[CorporateInvoiceStatus] = mapped_column(
-        Enum(CorporateInvoiceStatus, values_callable=lambda obj: [e.value for e in obj], name="corporateinvoicestatus"),
+        Enum(CorporateInvoiceStatus, native_enum=False, values_callable=lambda obj: [e.value for e in obj], name="corporateinvoicestatus"),
         default=CorporateInvoiceStatus.DRAFT, nullable=False, index=True
     )
     due_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
@@ -4772,3 +4776,277 @@ class DriverHexCoverage(Base, UUIDMixin, TimestampMixin):
     # Relationships
     driver: Mapped["Driver"] = orm_relationship("Driver", foreign_keys=[driver_id])
     hex_cell: Mapped["ServiceHex"] = orm_relationship("ServiceHex", foreign_keys=[hex_id])
+
+
+# ============================================================
+# FEATURE 23: INTERCITY CARPOOL & RIDESHARING ENGINE
+# ============================================================
+
+class CarpoolTripStatus(str, PyEnum):
+    SCHEDULED = "SCHEDULED"
+    CONFIRMED = "CONFIRMED"
+    STARTED = "STARTED"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
+
+
+class CarpoolBookingStatus(str, PyEnum):
+    REQUESTED = "REQUESTED"
+    CONFIRMED = "CONFIRMED"
+    BOARDED = "BOARDED"
+    DROPPED = "DROPPED"
+    CANCELLED = "CANCELLED"
+
+
+class CarpoolTrip(Base, UUIDMixin, TimestampMixin):
+    """
+    Driver-published Intercity Carpool trip along a major highway corridor.
+    Enables seat-by-seat matching, corridor waypoint pickup/drop, and CO2 emissions sharing.
+    """
+    __tablename__ = "carpool_trips"
+
+    reference: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)  # POOL-YYMMDD-XXXX
+    driver_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"), nullable=False, index=True)
+    vehicle_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("vehicles.id", ondelete="SET NULL"), nullable=True)
+
+    # Route specs
+    origin_city: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    origin_address: Mapped[str] = mapped_column(Text, nullable=False)
+    origin_lat: Mapped[float] = mapped_column(Float, nullable=False)
+    origin_lng: Mapped[float] = mapped_column(Float, nullable=False)
+
+    destination_city: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    destination_address: Mapped[str] = mapped_column(Text, nullable=False)
+    destination_lat: Mapped[float] = mapped_column(Float, nullable=False)
+    destination_lng: Mapped[float] = mapped_column(Float, nullable=False)
+
+    # Schedule & Capacity
+    scheduled_departure: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    actual_start_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    actual_end_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    total_seats: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    available_seats: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    price_per_seat: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    corridor_distance_km: Mapped[float] = mapped_column(Float, default=150.0, nullable=False)
+
+    # Preferences & Safety
+    ladies_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    luggage_allowed: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    max_two_in_back: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    auto_approve: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    status: Mapped[CarpoolTripStatus] = mapped_column(
+        Enum(CarpoolTripStatus, values_callable=lambda obj: [e.value for e in obj], name="carpooltripstatus"),
+        default=CarpoolTripStatus.SCHEDULED, nullable=False, index=True
+    )
+    cancellation_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # Relationships
+    driver: Mapped["Driver"] = relationship("Driver", foreign_keys=[driver_id])
+    waypoints: Mapped[List["CarpoolWaypoint"]] = relationship("CarpoolWaypoint", back_populates="trip", order_by="CarpoolWaypoint.stop_order", cascade="all, delete-orphan")
+    bookings: Mapped[List["CarpoolBooking"]] = relationship("CarpoolBooking", back_populates="trip", cascade="all, delete-orphan")
+
+
+class CarpoolWaypoint(Base, UUIDMixin, TimestampMixin):
+    """
+    Intermediate highway pickup/drop corridor nodes along a Carpool trip.
+    """
+    __tablename__ = "carpool_waypoints"
+
+    trip_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("carpool_trips.id", ondelete="CASCADE"), nullable=False, index=True)
+    stop_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    city: Mapped[str] = mapped_column(String(100), nullable=False)
+    location_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    eta_offset_minutes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    price_offset: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+
+    trip: Mapped["CarpoolTrip"] = relationship("CarpoolTrip", back_populates="waypoints")
+
+
+class CarpoolBooking(Base, UUIDMixin, TimestampMixin):
+    """
+    Seat reservation for a passenger on a published Carpool trip.
+    """
+    __tablename__ = "carpool_bookings"
+
+    booking_reference: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)  # PBK-YYMMDD-XXXX
+    trip_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("carpool_trips.id", ondelete="CASCADE"), nullable=False, index=True)
+    customer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    seats_booked: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    seat_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    total_fare: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+
+    pickup_location: Mapped[str] = mapped_column(String(255), nullable=False)
+    pickup_lat: Mapped[float] = mapped_column(Float, nullable=False)
+    pickup_lng: Mapped[float] = mapped_column(Float, nullable=False)
+
+    drop_location: Mapped[str] = mapped_column(String(255), nullable=False)
+    drop_lat: Mapped[float] = mapped_column(Float, nullable=False)
+    drop_lng: Mapped[float] = mapped_column(Float, nullable=False)
+
+    pickup_otp: Mapped[str] = mapped_column(String(6), nullable=False)
+    co2_saved_kg: Mapped[float] = mapped_column(Float, default=4.5, nullable=False)
+
+    status: Mapped[CarpoolBookingStatus] = mapped_column(
+        Enum(CarpoolBookingStatus, values_callable=lambda obj: [e.value for e in obj], name="carpoolbookingstatus"),
+        default=CarpoolBookingStatus.CONFIRMED, nullable=False, index=True
+    )
+    payment_method: Mapped[str] = mapped_column(String(50), default="WALLET", nullable=False)
+    payment_status: Mapped[str] = mapped_column(String(30), default="PAID", nullable=False)
+    refund_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+
+    # Relationships
+    trip: Mapped["CarpoolTrip"] = relationship("CarpoolTrip", back_populates="bookings")
+    customer: Mapped["User"] = relationship("User", foreign_keys=[customer_id])
+
+
+# ============================================================
+# FEATURE 24: PACKERS & MOVERS LOGISTICS SUITE
+# ============================================================
+
+class MoveSize(str, PyEnum):
+    RK1 = "1_RK"
+    BHK1 = "1_BHK"
+    BHK2 = "2_BHK"
+    BHK3 = "3_BHK"
+    VILLA = "VILLA"
+    OFFICE = "OFFICE"
+
+
+class MovingOrderStatus(str, PyEnum):
+    REQUESTED = "REQUESTED"
+    QUOTING = "QUOTING"
+    CREW_ASSIGNED = "CREW_ASSIGNED"
+    PACKING = "PACKING"
+    LOADING = "LOADING"
+    LOADED = "LOADED"
+    IN_TRANSIT = "IN_TRANSIT"
+    UNLOADING = "UNLOADING"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
+
+
+class MovingQuoteStatus(str, PyEnum):
+    OFFERED = "OFFERED"
+    ACCEPTED = "ACCEPTED"
+    REJECTED = "REJECTED"
+    EXPIRED = "EXPIRED"
+
+
+class MovingOrder(Base, UUIDMixin, TimestampMixin):
+    """
+    Master home shifting and relocation order.
+    Enforces room specs, inventory counts, floor/lift evaluation, and milestone execution.
+    """
+    __tablename__ = "moving_orders"
+
+    reference: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)  # MOV-YYMMDD-XXXX
+    customer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("customer_profiles.id", ondelete="CASCADE"), nullable=False, index=True)
+    assigned_mover_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="SET NULL"), nullable=True, index=True)
+    assigned_vehicle_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("vehicles.id", ondelete="SET NULL"), nullable=True)
+
+    move_size: Mapped[MoveSize] = mapped_column(
+        Enum(MoveSize, values_callable=lambda obj: [e.value for e in obj], name="movesize"),
+        default=MoveSize.BHK1, nullable=False
+    )
+    scheduled_move_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+    # Pickup Location specs
+    pickup_address: Mapped[str] = mapped_column(Text, nullable=False)
+    pickup_lat: Mapped[float] = mapped_column(Float, nullable=False)
+    pickup_lng: Mapped[float] = mapped_column(Float, nullable=False)
+    pickup_floor: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    pickup_has_lift: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Drop Location specs
+    drop_address: Mapped[str] = mapped_column(Text, nullable=False)
+    drop_lat: Mapped[float] = mapped_column(Float, nullable=False)
+    drop_lng: Mapped[float] = mapped_column(Float, nullable=False)
+    drop_floor: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    drop_has_lift: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    distance_km: Mapped[float] = mapped_column(Float, default=15.0, nullable=False)
+    requires_assembly: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    requires_fragile_packing: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    insurance_opted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    insurance_fee: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+
+    # Financials
+    base_estimate: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    final_fare: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+
+    status: Mapped[MovingOrderStatus] = mapped_column(
+        Enum(MovingOrderStatus, values_callable=lambda obj: [e.value for e in obj], name="movingorderstatus"),
+        default=MovingOrderStatus.REQUESTED, nullable=False, index=True
+    )
+    cancellation_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # Relationships
+    customer: Mapped["CustomerProfile"] = relationship("CustomerProfile", foreign_keys=[customer_id])
+    mover: Mapped[Optional["Driver"]] = relationship("Driver", foreign_keys=[assigned_mover_id])
+    items: Mapped[List["MovingItem"]] = relationship("MovingItem", back_populates="order", cascade="all, delete-orphan")
+    quotes: Mapped[List["MovingQuote"]] = relationship("MovingQuote", back_populates="order", cascade="all, delete-orphan")
+    pod: Mapped[Optional["MovingPOD"]] = relationship("MovingPOD", back_populates="order", uselist=False, cascade="all, delete-orphan")
+
+
+class MovingItem(Base, UUIDMixin, TimestampMixin):
+    """
+    Itemized inventory record for moving order.
+    """
+    __tablename__ = "moving_items"
+
+    order_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("moving_orders.id", ondelete="CASCADE"), nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(50), nullable=False)  # FURNITURE, APPLIANCE, KITCHEN, FRAGILE, BOX
+    item_name: Mapped[str] = mapped_column(String(100), nullable=False)  # e.g. "Double Bed King Size", "Refrigerator Double Door"
+    quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    is_fragile: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    needs_disassembly: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    order: Mapped["MovingOrder"] = relationship("MovingOrder", back_populates="items")
+
+
+class MovingQuote(Base, UUIDMixin, TimestampMixin):
+    """
+    Mover / shifting partner quote response.
+    """
+    __tablename__ = "moving_quotes"
+
+    order_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("moving_orders.id", ondelete="CASCADE"), nullable=False, index=True)
+    mover_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    quoted_fare: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    crew_size: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    truck_type: Mapped[str] = mapped_column(String(50), default="14ft Eicher Closed Container", nullable=False)
+    estimated_hours: Mapped[float] = mapped_column(Float, default=4.0, nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    status: Mapped[MovingQuoteStatus] = mapped_column(
+        Enum(MovingQuoteStatus, values_callable=lambda obj: [e.value for e in obj], name="movingquotestatus"),
+        default=MovingQuoteStatus.OFFERED, nullable=False, index=True
+    )
+
+    order: Mapped["MovingOrder"] = relationship("MovingOrder", back_populates="quotes")
+    mover: Mapped["Driver"] = relationship("Driver", foreign_keys=[mover_id])
+
+
+class MovingPOD(Base, UUIDMixin, TimestampMixin):
+    """
+    Proof of Delivery and final damage inspection walkthrough record.
+    """
+    __tablename__ = "moving_pods"
+
+    order_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("moving_orders.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
+    delivery_otp: Mapped[str] = mapped_column(String(6), nullable=False)
+    signature_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    damage_reported: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    damage_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now(), nullable=False)
+
+    order: Mapped["MovingOrder"] = relationship("MovingOrder", back_populates="pod")
+
+
