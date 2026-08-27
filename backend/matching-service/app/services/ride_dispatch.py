@@ -19,6 +19,8 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import random
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 def _now_utc() -> datetime:
@@ -475,13 +477,29 @@ class RideDispatchService:
         if not driver:
             raise ValueError("Driver profile not found")
 
-        # Load offer
-        offer_res = await self.db.execute(
-            select(RideOffer).where(
-                and_(RideOffer.id == uuid.UUID(offer_id), RideOffer.driver_id == driver.id)
+        # Load offer (by offer_id OR ride_request_id for notification & claim compatibility)
+        offer = None
+        try:
+            lookup_uuid = uuid.UUID(str(offer_id))
+            # 1. Try by Offer ID
+            offer_res = await self.db.execute(
+                select(RideOffer).where(
+                    and_(RideOffer.id == lookup_uuid, RideOffer.driver_id == driver.id)
+                )
             )
-        )
-        offer = offer_res.scalar_one_or_none()
+            offer = offer_res.scalar_one_or_none()
+
+            # 2. Fallback: find by Ride Request ID
+            if not offer:
+                offer_res = await self.db.execute(
+                    select(RideOffer).where(
+                        and_(RideOffer.ride_request_id == lookup_uuid, RideOffer.driver_id == driver.id)
+                    ).order_by(RideOffer.created_at.desc())
+                )
+                offer = offer_res.scalar_one_or_none()
+        except (ValueError, TypeError):
+            pass
+
         if not offer:
             raise ValueError("Ride offer not found or not assigned to this driver")
 
@@ -575,11 +593,24 @@ class RideDispatchService:
         ride_req.assigned_driver_id = driver.id
         ride_req.assigned_at = now
 
-        # 2. Mark this offer as ACCEPTED
+        # 2. Authoritative Start OTP / PIN Generation
+        if not getattr(ride_req, "start_pin_plain", None):
+            start_pin = f"{random.randint(1000, 9999)}"
+            ride_req.start_pin_plain = start_pin
+            ride_req.start_pin_hash = hashlib.sha256(start_pin.strip().encode("utf-8")).hexdigest()
+            if hasattr(ride_req, "otp"):
+                try:
+                    setattr(ride_req, "otp", start_pin)
+                except Exception:
+                    pass
+        else:
+            start_pin = ride_req.start_pin_plain
+
+        # 3. Mark this offer as ACCEPTED
         offer.status = RideOfferStatus.ACCEPTED
         offer.responded_at = now
 
-        # 3. Mark all other pending offers for this ride as REMOVED (single optimized query)
+        # 4. Mark all other pending offers for this ride as REMOVED (single optimized query)
         other_offers_res = await self.db.execute(
             select(RideOffer, Driver.user_id)
             .join(Driver, RideOffer.driver_id == Driver.id)
@@ -604,7 +635,7 @@ class RideDispatchService:
 
         await self.db.commit()
 
-        # 4. Broadcast RIDE_REQUEST_REMOVED to all other drivers
+        # 5. Broadcast RIDE_REQUEST_REMOVED to all other drivers
         removed_payload = {
             "event": "RIDE_REQUEST_REMOVED",
             "ride_request_id": str(ride_req.id),
@@ -616,45 +647,106 @@ class RideDispatchService:
             if other_d_id not in other_driver_user_ids:
                 await publish_event(f"driver:{other_d_id}:events", removed_payload)
 
-        # 5. Fetch vehicle details for customer payload
+        # 6. Fetch vehicle details for customer payload
         veh_res = await self.db.execute(
             select(Vehicle).where(Vehicle.driver_id == driver.id)
         )
         vehicle = veh_res.scalar_one_or_none()
 
-        # 6. Broadcast RIDE_ASSIGNED to Customer and Assigned Driver
+        driver_info = {
+            "driver_id": str(driver.id),
+            "id": str(driver.id),
+            "full_name": driver.full_name,
+            "rating": float(driver.rating or 4.85),
+            "phone": driver.phone,
+            "profile_photo": driver.profile_photo,
+            "distance_km": float(offer.pickup_distance_km or 0),
+            "eta_min": int(offer.pickup_eta_min or 5),
+        }
+
+        vehicle_info = {
+            "make": vehicle.make if vehicle else "",
+            "model": vehicle.model if vehicle else "",
+            "color": vehicle.color if vehicle else "",
+            "registration_number": vehicle.registration_number if vehicle else "",
+            "vehicle_type": str(vehicle.vehicle_type.value) if vehicle and hasattr(vehicle.vehicle_type, 'value') else "",
+        } if vehicle else None
+
+        # 7. Broadcast RIDE_ASSIGNED & TRIP_ACCEPTED to Customer and Trip Rooms
         customer_payload = {
             "event": "RIDE_ASSIGNED",
             "ride_request_id": str(ride_req.id),
             "booking_id": str(ride_req.id),
+            "trip_id": str(ride_req.id),
             "status": "ASSIGNED",
-            "driver": {
-                "driver_id": str(driver.id),
-                "full_name": driver.full_name,
-                "rating": float(driver.rating or 4.85),
-                "phone": driver.phone,
-                "profile_photo": driver.profile_photo,
-                "distance_km": offer.pickup_distance_km,
-                "eta_min": offer.pickup_eta_min,
-            },
-            "vehicle": {
-                "make": vehicle.make if vehicle else "",
-                "model": vehicle.model if vehicle else "",
-                "color": vehicle.color if vehicle else "",
-                "registration_number": vehicle.registration_number if vehicle else "",
-                "vehicle_type": str(vehicle.vehicle_type.value) if vehicle and hasattr(vehicle.vehicle_type, 'value') else "",
-            } if vehicle else None,
+            "start_pin": start_pin,
+            "start_pin_plain": start_pin,
+            "otp": start_pin,
+            "driver": driver_info,
+            "vehicle": vehicle_info,
+            "pickup_eta_minutes": offer.pickup_eta_min,
+            "fare": float(ride_req.estimated_fare or 0),
         }
-        await publish_event(f"customer:{str(ride_req.customer_id)}:events", customer_payload)
-        await publish_event(f"user:{str(ride_req.customer_id)}:events", customer_payload)
 
-        # Notify winning driver
+        cust_id_str = str(ride_req.customer_id)
+        req_id_str = str(ride_req.id)
+        for ch in [
+            f"customer:{cust_id_str}:events",
+            f"user:{cust_id_str}:events",
+            f"trip:{req_id_str}",
+            f"ride:{req_id_str}",
+            f"trip:{req_id_str}:events",
+            f"ride:{req_id_str}:events",
+        ]:
+            await publish_event(ch, customer_payload)
+
+        # Also emit TRIP_ACCEPTED for compatibility with components expecting TRIP_ACCEPTED
+        trip_accepted_payload = {
+            **customer_payload,
+            "event": "TRIP_ACCEPTED",
+        }
+        for ch in [
+            f"customer:{cust_id_str}:events",
+            f"user:{cust_id_str}:events",
+            f"trip:{req_id_str}",
+            f"ride:{req_id_str}",
+        ]:
+            await publish_event(ch, trip_accepted_payload)
+
+        # 8. Send Push Notification to Customer with Driver Details and Start OTP
+        try:
+            cust_res = await self.db.execute(select(User).where(User.id == ride_req.customer_id))
+            cust_user = cust_res.scalar_one_or_none()
+            if cust_user and cust_user.device_token:
+                from common.utils.push import send_push_notification
+                veh_name = f"{vehicle.make} {vehicle.model} ({vehicle.registration_number})" if vehicle else "Your cab"
+                await send_push_notification(
+                    token=cust_user.device_token,
+                    title="🚖 Driver Assigned!",
+                    body=f"Driver {driver.full_name} ({veh_name}) accepted your ride! Your Start OTP is {start_pin}.",
+                    data={
+                        "screen": "track",
+                        "booking_id": req_id_str,
+                        "ride_request_id": req_id_str,
+                        "start_pin": start_pin,
+                        "otp": start_pin,
+                        "driver_name": driver.full_name,
+                        "vehicle": veh_name,
+                    },
+                )
+        except Exception as ex:
+            logger.warning("Failed to send customer accept push notification", error=str(ex))
+
+        # 9. Notify winning driver
         driver_winner_payload = {
             "event": "RIDE_ASSIGNED",
             "ride_request_id": str(ride_req.id),
             "booking_id": str(ride_req.id),
             "status": "ASSIGNED",
             "offer_id": str(offer.id),
+            "start_pin": start_pin,
+            "start_pin_plain": start_pin,
+            "dev_pin": start_pin,
             "customer": {
                 "id": str(ride_req.customer_id),
                 "name": ride_req.rider_name or "Rider",
@@ -681,6 +773,7 @@ class RideDispatchService:
             "Ride assigned successfully (First accept wins)",
             ride_request_id=str(ride_req.id),
             winner_driver_id=str(driver.id),
+            start_pin=start_pin,
             other_drivers_removed=len(other_driver_user_ids),
         )
 
@@ -689,6 +782,8 @@ class RideDispatchService:
             "message": "Ride assigned successfully",
             "status": "assigned",
             "ride_request_id": str(ride_req.id),
+            "start_pin": start_pin,
+            "start_pin_plain": start_pin,
         }
 
     async def cancel_ride_request(

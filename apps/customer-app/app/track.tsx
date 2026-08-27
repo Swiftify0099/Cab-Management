@@ -248,8 +248,8 @@ export default function TrackTripScreen() {
 
       if (data) {
         setBooking(data)
-        if (data.start_pin || data.start_pin_plain) {
-          setStartOtp(data.start_pin || data.start_pin_plain)
+        if (data.start_pin || data.start_pin_plain || data.otp) {
+          setStartOtp(data.start_pin || data.start_pin_plain || data.otp)
         }
         if (data.estimated_fare || data.current_estimated_fare) {
           setFare(data.current_estimated_fare || data.estimated_fare)
@@ -331,7 +331,29 @@ export default function TrackTripScreen() {
     )
   }, [arrivalAlert, clearArrivalAlert])
 
-  // ── 5. Status Event Listeners (Trip Started / Completed) ──
+  // ── 5. Status Event Listeners (Trip Started / Completed & Reactive OTP) ──
+  useEffect(() => {
+    if (otpData?.otp) {
+      setStartOtp(otpData.otp)
+    }
+  }, [otpData])
+
+  useEffect(() => {
+    if (tripAccepted) {
+      if (tripAccepted.driver) {
+        setBooking((prev: any) => ({
+          ...prev,
+          driver: tripAccepted.driver,
+          vehicle: tripAccepted.vehicle,
+        }))
+      }
+      const otpVal = tripAccepted.start_pin || tripAccepted.start_pin_plain || tripAccepted.otp
+      if (otpVal) {
+        setStartOtp(otpVal)
+      }
+    }
+  }, [tripAccepted])
+
   useEffect(() => {
     const handleStarted = () => {
       setStage('IN_PROGRESS')
@@ -339,8 +361,10 @@ export default function TrackTripScreen() {
     }
 
     on('TRIP_STARTED', handleStarted)
+    on('RIDE_STARTED', handleStarted)
     return () => {
       off('TRIP_STARTED', handleStarted)
+      off('RIDE_STARTED', handleStarted)
     }
   }, [on, off])
 

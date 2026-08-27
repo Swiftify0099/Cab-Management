@@ -75,6 +75,8 @@ export interface RideOfferPayload {
 
 export interface RideOfferResponsePayload {
   offer_id: string
+  ride_request_id?: string
+  booking_id?: string
   accepted: boolean
   rejection_reason?: string
 }

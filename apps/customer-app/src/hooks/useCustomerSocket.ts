@@ -509,13 +509,20 @@ export function useCustomerSocket(): UseCustomerSocketReturn {
       // On-demand ride assigned to driver
       const handleRideAssigned = (data: any) => {
         console.log('[CustomerSocket] RIDE_ASSIGNED ride_request_id:', data.ride_request_id || data.booking_id)
+        const otpVal = data.start_pin || data.start_pin_plain || data.otp
+        if (otpVal) {
+          setOtpData({ otp: otpVal, ...data })
+        }
         setTripAccepted({
           event: 'TRIP_ACCEPTED',
           booking_id: data.ride_request_id || data.booking_id,
           trip_id: data.ride_request_id || data.booking_id,
           driver: data.driver,
           vehicle: data.vehicle,
-          pickup_eta_minutes: data.driver?.eta_min || 5,
+          pickup_eta_minutes: data.driver?.eta_min || data.pickup_eta_minutes || 5,
+          start_pin: otpVal,
+          start_pin_plain: otpVal,
+          otp: otpVal,
         } as any)
       }
 

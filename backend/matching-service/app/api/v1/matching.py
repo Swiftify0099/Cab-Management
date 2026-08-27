@@ -1378,7 +1378,9 @@ class CreateRideRequestSchema(BaseModel):
 
 
 class RideOfferResponseSchema(BaseModel):
-    offer_id: str
+    offer_id: Optional[str] = None
+    ride_request_id: Optional[str] = None
+    booking_id: Optional[str] = None
     accepted: bool
     rejection_reason: Optional[str] = None
 
@@ -1462,10 +1464,13 @@ async def respond_to_ride_offer_endpoint(
     Uses atomic DB locking to assign ride safely without race conditions.
     """
     service = RideDispatchService(db)
+    target_id = request.offer_id or request.ride_request_id or request.booking_id
+    if not target_id:
+        raise HTTPException(status_code=400, detail="offer_id or ride_request_id is required")
     try:
         result = await service.respond_to_offer(
             driver_user_id=current_user.user_id_str,
-            offer_id=request.offer_id,
+            offer_id=target_id,
             accepted=request.accepted,
             rejection_reason=request.rejection_reason,
         )
