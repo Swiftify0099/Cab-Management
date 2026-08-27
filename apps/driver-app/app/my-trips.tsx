@@ -22,8 +22,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useTheme } from '../../src/theme';
-import { api } from '../../src/api/client';
+import { useTheme } from '../src/theme';
+import { api } from '../src/api/client';
+import { DriverSocketService } from '../src/services/driverSocketService';
 
 interface Trip {
   trip_id: string;
@@ -108,7 +109,6 @@ export default function MyTripsScreen() {
 
   // Real-time refresh: listen for new carpool booking or daily renewal
   useEffect(() => {
-    const { DriverSocketService } = require('../../src/services/driverSocketService');
 
     const handleNewBooking = () => {
       console.log('[MyTrips] NEW_CARPOOL_BOOKING — refreshing trips list');

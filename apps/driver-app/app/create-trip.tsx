@@ -41,9 +41,15 @@ import {
   ServiceTypeKey,
   DEFAULT_SERVICE_METADATA,
 } from '../src/services/tripServiceStrategy'
+import { VehicleService, DriverVehicle, VehicleType } from '../src/services/vehicleService'
 
 const WIZARD_DRAFT_KEY = '@driver_trip_wizard_draft_v3'
 const { width: SCREEN_W } = Dimensions.get('window')
+
+export const isUUID = (val?: string | null): boolean => {
+  if (!val) return false
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim())
+}
 
 let MapView: any = null
 let Marker: any = null
@@ -87,21 +93,8 @@ interface HexPointItem {
   selected: boolean
 }
 
-const DEFAULT_SAVED_LOCATIONS: SavedLocationItem[] = [
-  { id: '1', label: 'Swargate Bus Station', address: 'Swargate, Pune, Maharashtra 411042', latitude: 18.5018, longitude: 73.8580, city: 'Pune', location_type: 'pickup' },
-  { id: '2', label: 'Shivajinagar Station', address: 'Shivajinagar, Pune, Maharashtra 411005', latitude: 18.5314, longitude: 73.8446, city: 'Pune', location_type: 'pickup' },
-  { id: '3', label: 'Dadar TT Circle', address: 'Dadar East, Mumbai, Maharashtra 400014', latitude: 19.0178, longitude: 72.8478, city: 'Mumbai', location_type: 'drop' },
-  { id: '4', label: 'BKC Business Hub', address: 'Bandra Kurla Complex, Mumbai 400051', latitude: 19.0657, longitude: 72.8687, city: 'Mumbai', location_type: 'drop' },
-]
-
-const DEFAULT_HEX_POINTS: HexPointItem[] = [
-  { id: 'h1', name: 'Swargate Central Zone', lat: 18.5018, lng: 73.8580, selected: true },
-  { id: 'h2', name: 'Shivajinagar Junction', lat: 18.5314, lng: 73.8446, selected: true },
-  { id: 'h3', name: 'Deccan Gymkhana Zone', lat: 18.5167, lng: 73.8415, selected: true },
-  { id: 'h4', name: 'Kothrud Depot Area', lat: 18.5074, lng: 73.8077, selected: false },
-  { id: 'h5', name: 'Hinjewadi IT Corridor', lat: 18.5913, lng: 73.7389, selected: false },
-  { id: 'h6', name: 'Hadapsar Gateway Hub', lat: 18.5089, lng: 73.9259, selected: false },
-]
+const DEFAULT_SAVED_LOCATIONS: SavedLocationItem[] = []
+const DEFAULT_HEX_POINTS: HexPointItem[] = []
 
 export default function CreateTripScreen() {
   const insets = useSafeAreaInsets()
@@ -176,14 +169,12 @@ export default function CreateTripScreen() {
   const [parcelEnabled, setParcelEnabled] = useState<boolean>(true)
 
   // ── Step 4: Vehicle & Capacity Allocation ──
-  const [myVehicles, setMyVehicles] = useState<VehicleItem[]>([
-    { id: 'v1', make: 'Maruti Suzuki', model: 'Dzire Prime', registration_number: 'MH 12 AB 1234', vehicle_type: 'sedan', total_seats: 4 },
-    { id: 'v2', make: 'Toyota', model: 'Innova Crysta', registration_number: 'MH 14 CD 5678', vehicle_type: 'suv', total_seats: 6 },
-    { id: 'v3', make: 'Tata', model: 'Ace Gold (Mini Truck)', registration_number: 'MH 12 XY 9999', vehicle_type: 'truck', total_seats: 2 },
-  ])
-  const [selectedVehicleId, setSelectedVehicleId] = useState<string>('v1')
+  const [myVehicles, setMyVehicles] = useState<VehicleItem[]>([])
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string>('')
+  const [selectedVehicleType, setSelectedVehicleType] = useState<VehicleType>('sedan')
   const [totalSeats, setTotalSeats] = useState<number>(4)
   const [notes, setNotes] = useState<string>('')
+  const [loadingVehicles, setLoadingVehicles] = useState<boolean>(true)
 
   // ─── Load & Persist Draft & Master Data ──────────────────────────────────────
 
@@ -206,9 +197,38 @@ export default function CreateTripScreen() {
       }
     })
 
+    // Fetch real registered driver vehicles
+    setLoadingVehicles(true)
+    VehicleService.getVehicles()
+      .then((vehicles) => {
+        if (vehicles && vehicles.length > 0) {
+          const mappedVehicles: VehicleItem[] = vehicles.map((v) => ({
+            id: v.id,
+            make: v.make || 'Vehicle',
+            model: v.model || '',
+            registration_number: v.registration_number || 'MH12XX0000',
+            vehicle_type: v.vehicle_type || 'sedan',
+            total_seats: v.seat_capacity || 4,
+          }))
+          setMyVehicles(mappedVehicles)
+          const active = vehicles.find((v) => v.is_active) || vehicles[0]
+          if (active) {
+            setSelectedVehicleId(active.id)
+            setSelectedVehicleType((active.vehicle_type as VehicleType) || 'sedan')
+            setTotalSeats(active.seat_capacity || 4)
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn('[CreateTrip] Failed to load driver vehicles:', err)
+      })
+      .finally(() => {
+        setLoadingVehicles(false)
+      })
+
     // Fetch driver saved locations
     api.get('/trips/saved-locations').then((res: any) => {
-      if (res.data?.data && Array.isArray(res.data.data) && res.data.data.length > 0) {
+      if (res.data?.data && Array.isArray(res.data.data)) {
         setSavedLocations(res.data.data)
       }
     }).catch(() => {})
@@ -347,31 +367,23 @@ export default function CreateTripScreen() {
         location_type: 'both',
       }
 
-      if (editingLocId) {
+      if (editingLocId && isUUID(editingLocId)) {
         const res = await api.put(`/trips/saved-locations/${editingLocId}`, payload)
+        const updated = res.data?.data || { id: editingLocId, ...payload }
         setSavedLocations((prev) =>
-          prev.map((l) => (l.id === editingLocId ? { ...l, ...payload } : l))
+          prev.map((l) => (l.id === editingLocId ? { ...l, ...updated } : l))
         )
       } else {
         const res = await api.post('/trips/saved-locations', payload)
-        const newLoc = res.data?.data || { id: `loc-${Date.now()}`, ...payload }
-        setSavedLocations((prev) => [newLoc, ...prev])
+        const newLoc = res.data?.data
+        if (newLoc) {
+          setSavedLocations((prev) => [newLoc, ...prev])
+        }
       }
       setShowEditLocModal(false)
     } catch (e: any) {
-      // Local fallback in case of offline/mock
-      const mockLoc = {
-        id: editingLocId || `loc-${Date.now()}`,
-        label: locFormLabel.trim(),
-        address: locFormAddress.trim(),
-        city: locFormCity.trim(),
-        latitude: locFormLat,
-        longitude: locFormLng,
-      }
-      setSavedLocations((prev) =>
-        editingLocId ? prev.map((l) => (l.id === editingLocId ? mockLoc : l)) : [mockLoc, ...prev]
-      )
-      setShowEditLocModal(false)
+      const msg = e.response?.data?.message || e.response?.data?.detail || e.message || 'Failed to save location.'
+      Alert.alert('Save Location Error', msg)
     } finally {
       setSavingLoc(false)
     }
@@ -384,9 +396,11 @@ export default function CreateTripScreen() {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          try {
-            await api.delete(`/trips/saved-locations/${id}`)
-          } catch {}
+          if (isUUID(id)) {
+            try {
+              await api.delete(`/trips/saved-locations/${id}`)
+            } catch {}
+          }
           setSavedLocations((prev) => prev.filter((l) => l.id !== id))
         },
       },
@@ -440,6 +454,8 @@ export default function CreateTripScreen() {
     setPublishing(true)
     try {
       const selectedHexes = hexPoints.filter((p) => p.selected).map((p) => ({ lat: p.lat, lng: p.lng }))
+      const matchedVeh = myVehicles.find((v) => v.id === selectedVehicleId)
+      const effectiveVehicleType = matchedVeh?.vehicle_type || selectedVehicleType || 'sedan'
 
       const payload = {
         pickup_lat: pickupData.latitude,
@@ -452,8 +468,8 @@ export default function CreateTripScreen() {
         destination_city: dropData.city || 'Mumbai',
         departure_time: departureDate.toISOString(),
         total_seats: totalSeats,
-        vehicle_type: myVehicles.find((v) => v.id === selectedVehicleId)?.vehicle_type || 'sedan',
-        vehicle_id: selectedVehicleId,
+        vehicle_type: effectiveVehicleType,
+        vehicle_id: isUUID(selectedVehicleId) ? selectedVehicleId : undefined,
         base_fare: parseFloat(baseFare),
         per_km_rate: parseFloat(perKmRate),
         min_fare: minFare ? parseFloat(minFare) : undefined,
@@ -468,7 +484,7 @@ export default function CreateTripScreen() {
         women_only: womenOnly,
         parcel_enabled: parcelEnabled,
         service_metadata: serviceMeta,
-        organization_id: selectedService === 'organization' ? selectedOrgId : undefined,
+        organization_id: selectedService === 'organization' && isUUID(selectedOrgId) ? selectedOrgId : undefined,
         encoded_polyline: routeData?.encodedPolyline,
         distance_km: routeData?.distanceKm || 150.0,
         pickup_polygon: visibilityMode === 'HEX_ZONE' && selectedHexes.length >= 3 ? selectedHexes : undefined,
@@ -1106,34 +1122,93 @@ export default function CreateTripScreen() {
   // ─── Render Step 4: Vehicle & Capacity Allocation ───────────────────────────
 
   const renderStep4 = () => {
+    const VEHICLE_TYPES: { key: VehicleType; label: string; icon: string; defaultSeats: number }[] = [
+      { key: 'sedan', label: 'Sedan', icon: 'car-side', defaultSeats: 4 },
+      { key: 'suv', label: 'SUV / XL', icon: 'car-estate', defaultSeats: 6 },
+      { key: 'hatchback', label: 'Hatchback', icon: 'car-hatchback', defaultSeats: 4 },
+      { key: 'tempo_traveller', label: 'Tempo Traveller', icon: 'van-passenger', defaultSeats: 12 },
+      { key: 'mini_bus', label: 'Mini Bus', icon: 'bus', defaultSeats: 20 },
+      { key: 'bike', label: 'Bike / Two-Wheeler', icon: 'motorbike', defaultSeats: 1 },
+    ]
+
     return (
       <View style={styles.stepContainer}>
         {/* Fleet Vehicle Picker */}
         <View style={styles.sectionCard}>
-          <Text style={styles.sectionHeading}>Assigned Vehicle</Text>
-          {myVehicles.map((veh) => {
-            const isSelected = selectedVehicleId === veh.id
-            return (
-              <TouchableOpacity
-                key={veh.id}
-                style={[styles.vehCard, isSelected && styles.vehCardSelected]}
-                onPress={() => {
-                  setSelectedVehicleId(veh.id)
-                  setTotalSeats(veh.total_seats)
-                }}
-                activeOpacity={0.8}
-              >
-                <View style={styles.vehIconBox}>
-                  <MaterialCommunityIcons name="car-side" size={24} color={isSelected ? '#3B82F6' : '#94A3B8'} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.vehModelText}>{veh.make} {veh.model}</Text>
-                  <Text style={styles.vehPlateText}>{veh.registration_number} • {veh.total_seats} Total Seats</Text>
-                </View>
-                {isSelected && <Feather name="check-circle" size={20} color="#3B82F6" />}
-              </TouchableOpacity>
-            )
-          })}
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <Text style={styles.sectionHeading}>Assigned Vehicle</Text>
+            <TouchableOpacity
+              onPress={() => router.push('/vehicle/add' as any)}
+              style={{ flexDirection: 'row', alignItems: 'center' }}
+            >
+              <Feather name="plus-circle" size={14} color="#3B82F6" />
+              <Text style={{ fontSize: 13, color: '#3B82F6', fontWeight: '600', marginLeft: 4 }}>Add Vehicle</Text>
+            </TouchableOpacity>
+          </View>
+
+          {loadingVehicles ? (
+            <ActivityIndicator size="small" color="#3B82F6" style={{ marginVertical: 12 }} />
+          ) : myVehicles.length > 0 ? (
+            myVehicles.map((veh) => {
+              const isSelected = selectedVehicleId === veh.id
+              return (
+                <TouchableOpacity
+                  key={veh.id}
+                  style={[styles.vehCard, isSelected && styles.vehCardSelected]}
+                  onPress={() => {
+                    setSelectedVehicleId(veh.id)
+                    setSelectedVehicleType((veh.vehicle_type as VehicleType) || 'sedan')
+                    setTotalSeats(veh.total_seats)
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.vehIconBox}>
+                    <MaterialCommunityIcons name="car-side" size={24} color={isSelected ? '#3B82F6' : '#94A3B8'} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.vehModelText}>{veh.make} {veh.model}</Text>
+                    <Text style={styles.vehPlateText}>{veh.registration_number} • {veh.total_seats} Total Seats</Text>
+                  </View>
+                  {isSelected && <Feather name="check-circle" size={20} color="#3B82F6" />}
+                </TouchableOpacity>
+              )
+            })
+          ) : (
+            <View>
+              <Text style={styles.sectionSubtext}>Select vehicle category for this trip route:</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+                {VEHICLE_TYPES.map((vt) => {
+                  const isSelected = selectedVehicleType === vt.key
+                  return (
+                    <TouchableOpacity
+                      key={vt.key}
+                      style={[
+                        {
+                          paddingVertical: 10,
+                          paddingHorizontal: 14,
+                          borderRadius: 10,
+                          backgroundColor: isSelected ? '#3B82F620' : '#1E293B',
+                          borderWidth: 1,
+                          borderColor: isSelected ? '#3B82F6' : '#334155',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                        },
+                      ]}
+                      onPress={() => {
+                        setSelectedVehicleType(vt.key)
+                        setTotalSeats(vt.defaultSeats)
+                      }}
+                    >
+                      <MaterialCommunityIcons name={vt.icon as any} size={18} color={isSelected ? '#3B82F6' : '#94A3B8'} style={{ marginRight: 6 }} />
+                      <Text style={{ color: isSelected ? '#FFFFFF' : '#94A3B8', fontWeight: isSelected ? '700' : '500', fontSize: 13 }}>
+                        {vt.label}
+                      </Text>
+                    </TouchableOpacity>
+                  )
+                })}
+              </View>
+            </View>
+          )}
         </View>
 
         {/* Seat Capacity Counter */}
@@ -1154,7 +1229,7 @@ export default function CreateTripScreen() {
             </View>
             <TouchableOpacity
               style={styles.counterBtn}
-              onPress={() => setTotalSeats((s) => Math.min(20, s + 1))}
+              onPress={() => setTotalSeats((s) => Math.min(60, s + 1))}
             >
               <Feather name="plus" size={20} color="#FFFFFF" />
             </TouchableOpacity>
@@ -1166,7 +1241,7 @@ export default function CreateTripScreen() {
           <Text style={styles.sectionHeading}>Driver Notes & Pickup Instructions</Text>
           <TextInput
             style={[styles.fieldInput, { height: 80, textAlignVertical: 'top' }]}
-            placeholder="e.g. AC available, Non-smoking vehicle, punctual departure from Swargate"
+            placeholder="e.g. AC available, Non-smoking vehicle, punctual departure"
             placeholderTextColor="#64748B"
             multiline
             value={notes}
@@ -1182,6 +1257,7 @@ export default function CreateTripScreen() {
   const renderStep5 = () => {
     const srv = SUPPORTED_SERVICES.find((s) => s.key === selectedService)
     const veh = myVehicles.find((v) => v.id === selectedVehicleId)
+    const vehLabel = veh ? `${veh.make} ${veh.model}` : (selectedVehicleType || 'Sedan').toUpperCase()
 
     return (
       <View style={styles.stepContainer}>
@@ -1228,7 +1304,7 @@ export default function CreateTripScreen() {
 
           <View style={styles.reviewRow}>
             <Text style={styles.revLabel}>Capacity</Text>
-            <Text style={styles.revValueText}>{totalSeats} Seats ({veh?.make} {veh?.model})</Text>
+            <Text style={styles.revValueText}>{totalSeats} Seats ({vehLabel})</Text>
           </View>
 
           <View style={styles.revDivider} />

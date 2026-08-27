@@ -56,6 +56,12 @@ function patchCMakeFile(filePath) {
       modified = true;
     }
 
+    // 3. Remove -flto=thin (causes Clang crash on Windows NDK 27 during Release builds)
+    if (content.includes('-flto=thin')) {
+      content = content.replace(/-flto=thin/g, '');
+      modified = true;
+    }
+
     if (modified) {
       fs.writeFileSync(filePath, content, 'utf8');
       console.log(`[fix-cmake] Patched: ${path.relative(rootDir, filePath)}`);
