@@ -1050,7 +1050,7 @@ async def get_my_trips(
                     Booking.status.in_([
                         BookingStatus.DRIVER_ACCEPTED,
                         BookingStatus.CONFIRMED,
-                        BookingStatus.TRIP_STARTED,
+                        BookingStatus.STARTED,
                         BookingStatus.COMPLETED,
                     ])
                 )
@@ -1122,7 +1122,7 @@ async def get_trip_customers(
                 Booking.status.in_([
                     BookingStatus.DRIVER_ACCEPTED,
                     BookingStatus.CONFIRMED,
-                    BookingStatus.TRIP_STARTED,
+                    BookingStatus.STARTED,
                     BookingStatus.COMPLETED,
                 ])
             )

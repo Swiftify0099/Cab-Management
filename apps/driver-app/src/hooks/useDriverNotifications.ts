@@ -215,10 +215,17 @@ export function useDriverNotifications() {
       console.log('[DriverNotifications] Notification received in app:', notification.request.content.title)
     })
 
-    // ── Notification Action Button / Tap Listener (Works outside app!) ───────
-    responseListenerRef.current = Notifications.addNotificationResponseReceivedListener(async response => {
+    // ── Common Notification Action Button / Tap Handler ─────────────────────
+    let lastHandledResponseTime = 0
+    const handleNotificationResponse = async (response: Notifications.NotificationResponse) => {
+      if (!response) return
+      const now = Date.now()
+      // Guard against duplicate execution within 2 seconds
+      if (now - lastHandledResponseTime < 2000) return
+      lastHandledResponseTime = now
+
       const actionId = response.actionIdentifier
-      const data = response.notification.request.content.data as any
+      const data = (response.notification?.request?.content?.data || {}) as any
       console.log('[DriverNotifications] Action pressed:', actionId, 'data:', data)
 
       // Always stop ringing siren and stop looping vibration
@@ -233,23 +240,27 @@ export function useDriverNotifications() {
 
       if (actionId === 'ACCEPT_RIDE' || actionId === 'ACCEPT_PARCEL') {
         // ── ACCEPT from notification action button ──────────────────────────────
-        // Core rule: always verify backend state before accepting
         if (!offerId && !bookingId) {
           Alert.alert('Error', 'No offer ID in notification. Please open the app to respond.')
           return
         }
         try {
           DriverSoundService.playAcceptedSound()
-          const endpoint = offerId ? '/rides/respond' : '/matching/rides/claim-pending'
-          const payload = offerId
-            ? { offer_id: offerId, accepted: true }
-            : { ride_request_id: bookingId }
-          const resp = await api.post(endpoint, payload)
+          const payload = {
+            offer_id: offerId || bookingId,
+            ride_request_id: bookingId,
+            accepted: true,
+          }
+          let resp: any
+          try {
+            resp = await api.post('/matching/rides/respond', payload)
+          } catch {
+            resp = await api.post('/rides/respond', payload)
+          }
           const result = resp?.data?.data || resp?.data || {}
 
           if (result.status === 'superseded' || result.status === 'already_assigned') {
             Alert.alert('Ride Taken', 'Another driver accepted this ride. Check the app for new requests.')
-            // Reconcile queue to get fresh state
             await DriverSocketService.reconcileStateWithBackend()
             return
           }
@@ -260,10 +271,17 @@ export function useDriverNotifications() {
             return
           }
           if (result.success) {
-            // Navigate to active trip
-            const rideId = result.ride_request_id || bookingId
+            const rideId = result.ride_request_id || bookingId || offerId
             if (rideId) {
-              router.push({ pathname: '/active-trip', params: { bookingId: rideId } })
+              router.push({
+                pathname: '/active-trip',
+                params: {
+                  bookingId: rideId,
+                  fare: data?.fare,
+                  pickupAddress: data?.pickup?.address || data?.pickup_address,
+                  destinationAddress: data?.destination?.address || data?.destination_address,
+                },
+              })
             }
           } else {
             Alert.alert('Accept Failed', result.message || 'Could not accept ride. Please try in the app.')
@@ -275,24 +293,20 @@ export function useDriverNotifications() {
         }
 
       } else if (actionId === Notifications.DEFAULT_ACTION_IDENTIFIER) {
-        // ── Driver TAPPED the notification body (not an action button) ────────────
+        // ── Driver TAPPED the notification body ──────────────────────────────────
         // Core rule: NEVER blindly navigate. Verify backend state first.
-        // FCM notification does NOT mean the ride is still available.
         console.log('[DriverNotifications] Notification tapped — verifying backend state')
         try {
           const pendingOffers = await RideRequestService.fetchPendingOffers()
 
           if (pendingOffers && pendingOffers.length > 0) {
             RideQueueService.reconcileWithBackend(pendingOffers)
-            // If the specific offer is in the list, prioritize it
             if (offerId) {
               const matching = pendingOffers.find(o => o.offer_id === offerId)
               if (matching) RideQueueService.upsertRequest(matching)
             }
-            // Navigate to home — IncomingRequestScreen will auto-show
             router.replace('/(tabs)')
           } else {
-            // No pending offers — check active ride
             try {
               const activeRide = await RideRequestService.getActiveRide()
               if (activeRide?.is_active) {
@@ -330,7 +344,22 @@ export function useDriverNotifications() {
           RideQueueService.removeByRideRequestId(bookingId)
         }
       }
-    })
+    }
+
+    // ── 1. Active / Background notification response listener ────────────────
+    responseListenerRef.current = Notifications.addNotificationResponseReceivedListener(handleNotificationResponse)
+
+    // ── 2. Cold-Start notification response (App was completely CLOSED/KILLED)
+    Notifications.getLastNotificationResponseAsync()
+      .then(lastResponse => {
+        if (lastResponse) {
+          console.log('[DriverNotifications] Cold-start launch detected from notification tap')
+          handleNotificationResponse(lastResponse)
+        }
+      })
+      .catch(err => {
+        console.warn('[DriverNotifications] getLastNotificationResponseAsync error:', err)
+      })
 
     return () => {
       notifListenerRef.current?.remove()

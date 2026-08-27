@@ -168,6 +168,14 @@ export function useStartupPermissions(): {
       contactsGranted = true
     }
 
+    // Request Battery Optimization Unrestricted mode on Android
+    if (Platform.OS === 'android') {
+      try {
+        const { BatteryOptimizationService } = require('../services/batteryOptimizationService')
+        await BatteryOptimizationService.requestIgnoreBatteryOptimization()
+      } catch {}
+    }
+
     await AsyncStorage.setItem('permissions_gate_dismissed', 'true')
 
     setStatus({

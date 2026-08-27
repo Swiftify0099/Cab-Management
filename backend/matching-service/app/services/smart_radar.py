@@ -6,6 +6,7 @@ rejection exclusion, personalized scoring/ranking, and real-time Socket.IO sync.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from decimal import Decimal
 import json
 import uuid
 from typing import List, Optional
