@@ -19,6 +19,7 @@ import * as Notifications from 'expo-notifications'
 import { Vibration } from 'react-native'
 import { DriverSoundService } from './driverSoundService'
 import { RideRequestService } from './rideRequestService'
+import { RideQueueService } from './rideQueueService'
 
 const WS_URL = (process.env.EXPO_PUBLIC_WS_URL?.trim() || 'https://cab-management-1.onrender.com').replace(/\/+$/, '').replace(/\/api\/v1$/, '')
 
@@ -119,6 +120,7 @@ type SocketStateListener = (state: {
   connected: boolean
   socketReady: boolean
   incomingRequest: IncomingRideRequestPayload | null
+  pendingRequests: IncomingRideRequestPayload[]
   pendingCustomers: PendingCustomer[]
   corridorCustomers: CorridorCustomerPayload[]
   arrivalAlert: ArrivalAlertPayload | null
@@ -138,13 +140,21 @@ class DriverSocketServiceClass {
   private state = {
     connected: false,
     socketReady: false,
+    // incomingRequest = first item in RideQueueService for backward compat
     incomingRequest: null as IncomingRideRequestPayload | null,
+    pendingRequests: [] as IncomingRideRequestPayload[],
     pendingCustomers: [] as PendingCustomer[],
     corridorCustomers: [] as CorridorCustomerPayload[],
     arrivalAlert: null as ArrivalAlertPayload | null,
   }
 
   constructor() {
+    // Subscribe to queue changes and sync to broadcast state
+    RideQueueService.subscribe((queue) => {
+      this.state.pendingRequests = queue
+      this.state.incomingRequest = queue[0] ?? null
+      this.notify()
+    })
     this.init()
   }
 
@@ -330,15 +340,6 @@ class DriverSocketServiceClass {
     const handleIncomingOffer = (data: any, isPreferred = false) => {
       const offerId = data.offer_id || data.ride_request_id || data.booking_id || `off-${Date.now()}`
 
-      // Deduplication guard: ignore duplicate event within 8 seconds
-      const now = Date.now()
-      if (this.lastOfferId === offerId && now - this.lastOfferTime < 8000) {
-        console.log('[DriverSocketService] Skipping duplicate offer event:', offerId)
-        return
-      }
-      this.lastOfferId = offerId
-      this.lastOfferTime = now
-
       console.log('[DriverSocketService] Incoming Ride Offer:', offerId)
       const normalized: IncomingRideRequestPayload = {
         offer_id: offerId,
@@ -388,9 +389,15 @@ class DriverSocketServiceClass {
         service_type: data.service_type || 'local',
       }
 
-      this.state.incomingRequest = normalized
-      this.notify()
-      this.triggerAlertEffects(normalized)
+      // Idempotent upsert — RideQueueService handles deduplication
+      const result = RideQueueService.upsertRequest(normalized)
+      console.log('[DriverSocketService] Queue upsert result:', result, 'for offer:', offerId)
+
+      if (result === 'inserted') {
+        // Only trigger alerts for genuinely new offers
+        this.triggerAlertEffects(normalized)
+      }
+      // State update is handled by the RideQueueService subscriber in constructor
     }
 
     s.on('RIDE_REQUEST_NEW', (data) => handleIncomingOffer(data, false))
@@ -399,25 +406,57 @@ class DriverSocketServiceClass {
     s.on('INCOMING_TRIP_REQUEST', (data) => handleIncomingOffer(data, false))
     s.on('TRIP_REQUEST', (data) => handleIncomingOffer(data, false))
 
-    s.on('RIDE_REQUEST_REMOVED', (data) => {
-      console.log('[DriverSocketService] RIDE_REQUEST_REMOVED:', data.ride_request_id)
-      this.clearIncomingRequest()
+    s.on('RIDE_REQUEST_REMOVED', (data: any) => {
+      const rideRequestId = data.ride_request_id || data.booking_id
+      const offerId = data.offer_id
+      console.log('[DriverSocketService] RIDE_REQUEST_REMOVED:', rideRequestId, offerId)
+      if (offerId) {
+        RideQueueService.removeByOfferId(offerId)
+      } else if (rideRequestId) {
+        RideQueueService.removeByRideRequestId(rideRequestId)
+      }
+      // If queue is now empty, stop alert effects
+      if (RideQueueService.size() === 0) {
+        this.stopAlertEffects()
+      }
     })
-    s.on('ride:offer_removed', (data) => {
-      console.log('[DriverSocketService] ride:offer_removed:', data.ride_request_id)
-      this.clearIncomingRequest()
+    s.on('ride:offer_removed', (data: any) => {
+      const rideRequestId = data.ride_request_id || data.booking_id
+      const offerId = data.offer_id
+      console.log('[DriverSocketService] ride:offer_removed:', rideRequestId)
+      if (offerId) {
+        RideQueueService.removeByOfferId(offerId)
+      } else if (rideRequestId) {
+        RideQueueService.removeByRideRequestId(rideRequestId)
+      }
+      if (RideQueueService.size() === 0) {
+        this.stopAlertEffects()
+      }
     })
 
-    s.on('RIDE_REQUEST_EXPIRED', () => {
-      this.clearIncomingRequest()
+    s.on('RIDE_REQUEST_EXPIRED', (data: any) => {
+      const offerId = data?.offer_id
+      const rideRequestId = data?.ride_request_id
+      if (offerId) RideQueueService.removeByOfferId(offerId)
+      else if (rideRequestId) RideQueueService.removeByRideRequestId(rideRequestId)
+      else RideQueueService.clear() // fallback if no ID
+      if (RideQueueService.size() === 0) this.stopAlertEffects()
     })
 
-    s.on('RIDE_REQUEST_CANCELLED', () => {
-      this.clearIncomingRequest()
+    s.on('RIDE_REQUEST_CANCELLED', (data: any) => {
+      const offerId = data?.offer_id
+      const rideRequestId = data?.ride_request_id
+      if (offerId) RideQueueService.removeByOfferId(offerId)
+      else if (rideRequestId) RideQueueService.removeByRideRequestId(rideRequestId)
+      else RideQueueService.clear()
+      if (RideQueueService.size() === 0) this.stopAlertEffects()
     })
 
-    s.on('BOOKING_EXPIRED', () => {
-      this.clearIncomingRequest()
+    s.on('BOOKING_EXPIRED', (data: any) => {
+      const rideRequestId = data?.ride_request_id || data?.booking_id
+      if (rideRequestId) RideQueueService.removeByRideRequestId(rideRequestId)
+      else RideQueueService.clear()
+      if (RideQueueService.size() === 0) this.stopAlertEffects()
     })
 
     s.on('RIDE_ASSIGNED', (data) => {
@@ -520,18 +559,35 @@ class DriverSocketServiceClass {
   public async reconcileStateWithBackend() {
     try {
       const offers = await RideRequestService.fetchPendingOffers()
+
       if (offers && offers.length > 0) {
-        const latest = offers[0]
-        if (!this.state.incomingRequest || this.state.incomingRequest.offer_id !== latest.offer_id) {
-          console.log('[DriverSocketService] Restored pending offer from backend:', latest.offer_id)
-          this.state.incomingRequest = latest
-          this.notify()
-          this.triggerAlertEffects(latest)
+        // Full reconciliation — replaces local queue with server truth
+        // This handles: R1=taken, R2=cancelled, R3=available → only R3 shown
+        console.log('[DriverSocketService] Reconciling with', offers.length, 'server offer(s)')
+        RideQueueService.reconcileWithBackend(offers)
+
+        // Trigger alerts only for offers that are new to our local queue
+        const currentIds = new Set(RideQueueService.getQueue().map(o => o.offer_id))
+        for (const offer of offers) {
+          if (offer.offer_id && currentIds.has(offer.offer_id)) {
+            // Only alert if this is the first/primary offer and we weren't already alerting
+            if (offer === offers[0] && !this.state.incomingRequest) {
+              this.triggerAlertEffects(offer)
+            }
+          }
         }
-      } else if (this.state.incomingRequest) {
+      } else {
+        // Server returned empty — clear all local pending offers
+        // Check if there's an active assigned ride before clearing
         const activeRide = await RideRequestService.getActiveRide()
         if (activeRide?.is_active) {
-          this.clearIncomingRequest()
+          // Driver has active trip — clear offer queue, don't stop alerts
+          RideQueueService.clear()
+          this.stopAlertEffects()
+        } else if (!activeRide?.is_offer) {
+          // No active anything — clear queue
+          RideQueueService.clear()
+          this.stopAlertEffects()
         }
       }
     } catch (err) {
@@ -566,15 +622,34 @@ class DriverSocketServiceClass {
   }
 
   public clearIncomingRequest() {
-    this.state.incomingRequest = null
+    // For backward compat — clears entire queue
+    RideQueueService.clear()
     this.stopAlertEffects()
-    this.notify()
+    // State is updated via RideQueueService subscriber
+  }
+
+  public clearRequestByOfferId(offerId: string) {
+    RideQueueService.removeByOfferId(offerId)
+    if (RideQueueService.size() === 0) {
+      this.stopAlertEffects()
+    }
+  }
+
+  public clearRequestByRideRequestId(rideRequestId: string) {
+    RideQueueService.removeByRideRequestId(rideRequestId)
+    if (RideQueueService.size() === 0) {
+      this.stopAlertEffects()
+    }
   }
 
   public setIncomingRequest(request: IncomingRideRequestPayload | null) {
-    this.state.incomingRequest = request
-    if (!request) this.stopAlertEffects()
-    this.notify()
+    if (!request) {
+      RideQueueService.clear()
+      this.stopAlertEffects()
+    } else {
+      RideQueueService.upsertRequest(request)
+    }
+    // State is updated via RideQueueService subscriber
   }
 
   // ── Heartbeat Management ──────────────────────────────────────────────────

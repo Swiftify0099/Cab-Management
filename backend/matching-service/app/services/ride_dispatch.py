@@ -282,8 +282,7 @@ class RideDispatchService:
                 available_seat_labels=["Front Window", "Rear Left", "Rear Right", "Rear Middle"],
             )
             self.db.add(offer)
-            await self.db.commit()
-            await self.db.refresh(offer)
+            await self.db.flush()
 
             # Build production payload for Driver Radar / Incoming Request screen
             offer_payload = {
@@ -394,6 +393,7 @@ class RideDispatchService:
 
                 asyncio.create_task(_send_driver_push(dev_token, offer_payload))
 
+        await self.db.commit()
         logger.info(
             "Fanout dispatch complete",
             ride_request_id=ride_request_id,
@@ -487,6 +487,15 @@ class RideDispatchService:
 
         now = _now_utc()
 
+        # Check if offer is already non-pending (e.g. marked REMOVED because another driver won)
+        if offer.status != RideOfferStatus.PENDING:
+            status_val = "superseded" if offer.status in (RideOfferStatus.REMOVED, RideOfferStatus.SUPERSEDED) else offer.status.value.lower()
+            return {
+                "success": False,
+                "message": "Ride already assigned to another driver" if status_val == "superseded" else f"Offer is {offer.status.value}",
+                "status": status_val,
+            }
+
         # Check server-side expiration
         if _is_expired(offer.expires_at):
             offer.status = RideOfferStatus.EXPIRED
@@ -570,9 +579,11 @@ class RideDispatchService:
         offer.status = RideOfferStatus.ACCEPTED
         offer.responded_at = now
 
-        # 3. Mark all other pending offers for this ride as REMOVED
+        # 3. Mark all other pending offers for this ride as REMOVED (single optimized query)
         other_offers_res = await self.db.execute(
-            select(RideOffer).where(
+            select(RideOffer, Driver.user_id)
+            .join(Driver, RideOffer.driver_id == Driver.id)
+            .where(
                 and_(
                     RideOffer.ride_request_id == ride_req.id,
                     RideOffer.id != offer.id,
@@ -580,19 +591,14 @@ class RideDispatchService:
                 )
             )
         )
-        other_offers = other_offers_res.scalars().all()
+        other_rows = other_offers_res.all()
 
         other_driver_user_ids = []
         other_driver_ids = []
-        for other_off in other_offers:
+        for other_off, d_uid in other_rows:
             other_off.status = RideOfferStatus.REMOVED
             other_off.responded_at = now
             other_driver_ids.append(str(other_off.driver_id))
-            # Fetch user_id to notify via socket
-            d_other_res = await self.db.execute(
-                select(Driver.user_id).where(Driver.id == other_off.driver_id)
-            )
-            d_uid = d_other_res.scalar_one_or_none()
             if d_uid:
                 other_driver_user_ids.append(str(d_uid))
 
@@ -863,6 +869,81 @@ class RideDispatchService:
             })
 
         return pending_list
+
+    async def get_offer_status(self, driver_user_id: str, offer_id: str) -> dict:
+        """
+        Single-offer status check: returns whether an offer is still available for this driver.
+        Used on notification tap and before atomic accept.
+        """
+        try:
+            offer_uuid = uuid.UUID(str(offer_id))
+        except (ValueError, TypeError):
+            return {"available": False, "status": "invalid_id", "message": "Invalid offer ID"}
+
+        d_res = await self.db.execute(
+            select(Driver).where(Driver.user_id == uuid.UUID(driver_user_id))
+        )
+        driver = d_res.scalar_one_or_none()
+        if not driver:
+            return {"available": False, "status": "driver_not_found", "message": "Driver not found"}
+
+        offer_res = await self.db.execute(
+            select(RideOffer, RideRequest)
+            .join(RideRequest, RideOffer.ride_request_id == RideRequest.id)
+            .where(
+                and_(
+                    RideOffer.id == offer_uuid,
+                    RideOffer.driver_id == driver.id,
+                )
+            )
+        )
+        row = offer_res.first()
+        if not row:
+            return {"available": False, "status": "not_found", "message": "Offer not found for this driver"}
+
+        offer, req = row
+        now = _now_utc()
+
+        if offer.status != RideOfferStatus.PENDING:
+            return {"available": False, "status": offer.status.value.lower(), "message": f"Offer is {offer.status.value}"}
+
+        if _is_expired(offer.expires_at):
+            offer.status = RideOfferStatus.EXPIRED
+            await self.db.commit()
+            return {"available": False, "status": "expired", "message": "Offer has expired"}
+
+        if req.assigned_driver_id is not None and req.assigned_driver_id != driver.id:
+            return {"available": False, "status": "already_assigned", "message": "Ride already accepted by another driver"}
+
+        if req.status not in (RideRequestStatus.CREATED, RideRequestStatus.MATCHING, RideRequestStatus.DISPATCHING, RideRequestStatus.OFFERED):
+            return {"available": False, "status": req.status.value.lower(), "message": f"Ride is in {req.status.value} status"}
+
+        time_left_sec = max(int((offer.expires_at - now).total_seconds()), 0) if offer.expires_at else OFFER_TIMEOUT_SEC
+
+        return {
+            "available": True,
+            "status": "available",
+            "message": "Offer is available",
+            "offer": {
+                "offer_id": str(offer.id),
+                "ride_request_id": str(req.id),
+                "booking_id": str(req.id),
+                "timeout_sec": time_left_sec,
+                "expires_at": offer.expires_at.isoformat() if offer.expires_at else None,
+                "pickup": {
+                    "address": req.pickup_address,
+                    "lat": req.pickup_lat,
+                    "lng": req.pickup_lng,
+                },
+                "destination": {
+                    "address": req.destination_address,
+                    "lat": req.destination_lat,
+                    "lng": req.destination_lng,
+                },
+                "fare": float(req.estimated_fare or 0),
+                "earning": float(offer.estimated_earning or 0),
+            }
+        }
 
     async def get_active_ride_for_driver(self, driver_user_id: str) -> Optional[dict]:
         """

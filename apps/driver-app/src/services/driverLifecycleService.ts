@@ -9,12 +9,16 @@ import NetInfo, { NetInfoState } from '@react-native-community/netinfo'
 import { DriverSocketService } from './driverSocketService'
 import { AvailabilityService } from './availabilityService'
 import { DriverBackgroundLocationService } from './driverBackgroundLocationService'
+import { RideQueueService } from './rideQueueService'
 
 class DriverLifecycleServiceClass {
   private isInitialized: boolean = false
   private appStateSubscription: any = null
   private netInfoUnsubscribe: any = null
   private currentAppState: AppStateStatus = AppState.currentState
+  // Debounce: prevent reconciliation spam on rapid state transitions
+  private lastReconcileTime: number = 0
+  private readonly RECONCILE_DEBOUNCE_MS = 5000 // 5 seconds minimum between reconciles
 
   public init() {
     if (this.isInitialized) return
@@ -42,15 +46,17 @@ class DriverLifecycleServiceClass {
     if (nextAppState === 'active') {
       // ── Returning to Foreground ───────────────────────────────────────────
       if (isOnline) {
-        // Fast restore socket connection and reconcile pending ride offers
+        // Fast restore socket connection
         await DriverSocketService.ensureConnected()
-        await DriverSocketService.reconcileStateWithBackend()
         AvailabilityService.handleNetworkChange(true)
+        // Debounced reconciliation — source-of-truth sync with backend
+        // This is the primary recovery mechanism for killed/backgrounded app:
+        // fetches all current pending offers and replaces local queue state.
+        await this.reconcileDebounced()
       }
     } else if (nextAppState === 'background' || nextAppState === 'inactive') {
       // ── Moving to Background ──────────────────────────────────────────────
       if (isOnline) {
-        // Ensure background location and foreground service keep socket alive
         const isRunning = await DriverBackgroundLocationService.isRunning()
         if (!isRunning) {
           await DriverBackgroundLocationService.startBackgroundTracking()
@@ -64,10 +70,31 @@ class DriverLifecycleServiceClass {
     if (state.isConnected && state.isInternetReachable !== false) {
       AvailabilityService.handleNetworkChange(true)
       if (isOnline) {
-        DriverSocketService.ensureConnected().catch(() => {})
+        DriverSocketService.ensureConnected()
+          .then(() => this.reconcileDebounced())
+          .catch(() => {})
       }
     } else if (state.isConnected === false) {
       AvailabilityService.handleNetworkChange(false)
+    }
+  }
+
+  /**
+   * Debounced reconciliation — prevents multiple simultaneous reconcile calls
+   * when rapid app state changes or network flaps occur.
+   * Minimum 5 seconds between consecutive reconciliations.
+   */
+  private reconcileDebounced = async () => {
+    const now = Date.now()
+    if (now - this.lastReconcileTime < this.RECONCILE_DEBOUNCE_MS) {
+      console.log('[DriverLifecycleService] Reconcile skipped (debounced)')
+      return
+    }
+    this.lastReconcileTime = now
+    try {
+      await DriverSocketService.reconcileStateWithBackend()
+    } catch (err) {
+      console.warn('[DriverLifecycleService] Reconcile error:', err)
     }
   }
 

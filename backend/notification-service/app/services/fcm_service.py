@@ -1,4 +1,4 @@
-"""
+﻿"""
 FCM Push Notification Service — Production Implementation
 Sends push notifications using raw FCM device tokens via Firebase HTTP v1 API.
 
@@ -6,14 +6,17 @@ Supports:
   - High-priority ride request alerts (with custom sound + vibration)
   - Standard informational push notifications
   - Both Android (FCM) and iOS (APNs via FCM) delivery
+  - Data-only messages for ride requests (app handles display, works in background)
 
 Token types:
   The Driver and Customer apps register raw FCM tokens obtained via
   expo-notifications getDevicePushTokenAsync().
   Tokens are stored in users.device_token.
 
-If the environment does not have google-auth or Firebase credentials,
-the service falls back to the Expo Push API (legacy path) transparently.
+Fixes:
+  - channel_id was 'ride_requests' — corrected to 'ride-requests' to match the
+    Android notification channel created by the driver app.
+  - Delegates to common/utils/push.py which now handles raw FCM tokens correctly.
 """
 from __future__ import annotations
 
@@ -26,10 +29,10 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-# ── FCM HTTP v1 endpoint ──────────────────────────────────────────────────────
+# FCM HTTP v1 endpoint
 FCM_API_URL = "https://fcm.googleapis.com/v1/projects/{project_id}/messages:send"
 
-# ── Expo Push fallback ────────────────────────────────────────────────────────
+# Expo Push fallback
 EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
 
 
@@ -54,7 +57,7 @@ async def _get_fcm_access_token() -> Optional[str]:
         creds_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
         creds_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "")
 
-        if creds_json:
+        if creds_json and creds_json.strip() not in ("{}", ""):
             info = json.loads(creds_json)
             credentials = service_account.Credentials.from_service_account_info(
                 info,
@@ -85,28 +88,51 @@ async def send_push(
     title: str,
     body: str,
     data: Optional[Dict[str, Any]] = None,
-    priority: str = "high",  # "high" | "normal"
+    priority: str = "high",
     sound: str = "default",
-    channel_id: str = "default",
+    channel_id: str = "ride-requests",
+    data_only: bool = False,
 ) -> bool:
     """
     Send a push notification to a single device.
 
-    Automatically chooses delivery path:
-      1. FCM HTTP v1 (if google-auth credentials available + raw FCM token)
-      2. Expo Push API fallback (if Expo token or no creds)
+    Delegates to common/utils/push.py which correctly handles:
+      - Raw FCM tokens (from getDevicePushTokenAsync)
+      - ExponentPushToken format
+      - FCM HTTP v1, FCM Legacy, Expo Push fallback paths
+
+    Fixed: channel_id is now 'ride-requests' (was 'default'/'ride_requests')
+    to match the Android notification channel created by the driver app.
+
+    data_only=True: sends data-only FCM message. Android delivers these even
+    when app is backgrounded. The app shows its own custom notification.
     """
     if not device_token:
         logger.debug("No device token — skipping push")
         return False
 
-    data_str = {k: str(v) for k, v in (data or {}).items()}  # FCM requires string values
+    try:
+        from common.utils.push import send_push_notification
+        return await send_push_notification(
+            token=device_token,
+            title=title,
+            body=body,
+            data=data,
+            sound=sound,
+            priority=priority,
+            channel_id=channel_id,
+            data_only=data_only,
+        )
+    except ImportError:
+        pass
 
-    # ── Path 1: Expo Push API ─────────────────────────────────────────────────
+    data_str = {k: str(v) for k, v in (data or {}).items()}
+
+    # Path 1: Expo Push API
     if _is_expo_token(device_token):
         return await _send_expo_push(device_token, title, body, data or {}, sound)
 
-    # ── Path 2: FCM HTTP v1 ───────────────────────────────────────────────────
+    # Path 2: FCM HTTP v1
     access_token = await _get_fcm_access_token()
     project_id = os.environ.get("FIREBASE_PROJECT_ID", "")
 
@@ -122,12 +148,12 @@ async def send_push(
             channel_id=channel_id,
         )
 
-    # ── Path 3: FCM Legacy (no service account but raw token) ─────────────────
+    # Path 3: FCM Legacy
     server_key = os.environ.get("FCM_SERVER_KEY", "")
     if server_key and _is_fcm_token(device_token):
         return await _send_fcm_legacy(server_key, device_token, title, body, data_str, priority, channel_id)
 
-    # ── Fallback: Expo Push even for FCM tokens (less reliable but functional) ─
+    # Fallback: Expo Push
     logger.warning("No FCM credentials — attempting Expo Push fallback", token_prefix=device_token[:10])
     return await _send_expo_push(device_token, title, body, data or {}, sound)
 
@@ -151,10 +177,11 @@ async def _send_fcm_v1(
             "android": {
                 "priority": "HIGH" if priority == "high" else "NORMAL",
                 "notification": {
+                    # Fixed: was 'ride_requests', must be 'ride-requests' to match app channel
                     "channel_id": channel_id,
-                    "sound": "siren.mp3" if channel_id == "ride_requests" else "default",
+                    "sound": "drsiran.mp3" if "ride" in channel_id else "default",
                     "default_vibrate_timings": False,
-                    "vibrate_timings_nanos": ["0", "250000000", "250000000", "250000000"],
+                    "vibrate_timings_nanos": ["0", "600000000", "300000000", "600000000"],
                     "notification_priority": "PRIORITY_MAX" if priority == "high" else "PRIORITY_DEFAULT",
                 },
             },
@@ -162,7 +189,7 @@ async def _send_fcm_v1(
                 "headers": {"apns-priority": "10" if priority == "high" else "5"},
                 "payload": {
                     "aps": {
-                        "sound": "siren.mp3" if channel_id == "ride_requests" else "default",
+                        "sound": "drsiran.mp3" if "ride" in channel_id else "default",
                         "badge": 1,
                         "content-available": 1,
                     }
@@ -203,9 +230,10 @@ async def _send_fcm_legacy(
     payload = {
         "to": device_token,
         "priority": priority,
-        "notification": {"title": title, "body": body, "sound": "default"},
+        "notification": {"title": title, "body": body, "sound": "drsiran.mp3" if "ride" in channel_id else "default"},
         "data": data,
         "android": {"channel_id": channel_id},
+        "time_to_live": 300,
     }
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:

@@ -15,6 +15,8 @@ import { RideRequestService } from '../src/services/rideRequestService'
 import { RideRequestCard } from '../src/components/ride/RideRequestCard'
 import { DriverSoundService } from '../src/services/driverSoundService'
 import { useDriverSiren } from '../src/hooks/useDriverSiren'
+import { DriverSocketService } from '../src/services/driverSocketService'
+import { RideQueueService } from '../src/services/rideQueueService'
 
 interface Props {
   request: any
@@ -74,17 +76,6 @@ export default function IncomingRequestScreen({ request, onDismiss }: Props) {
     paid: request?.paid ?? true,
   }
 
-  // Register in deduplication service
-  useEffect(() => {
-    RideRequestService.registerOffer(normalizedOffer)
-  }, [])
-
-  useEffect(() => {
-    return () => {
-      mountedRef.current = false
-    }
-  }, [])
-
   // ─── Sound Alert: Looping Alert Sound & Vibration Pattern ──────────────
   const stopAlerts = useCallback(() => {
     DriverSoundService.stopIncomingAlert()
@@ -98,6 +89,53 @@ export default function IncomingRequestScreen({ request, onDismiss }: Props) {
       stopAlerts()
     }
   }, [stopAlerts])
+
+  // Register in deduplication service
+  useEffect(() => {
+    RideRequestService.registerOffer(normalizedOffer)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+
+  // ─── Real-time Invalidation: Listen for this specific offer being removed ──
+  // If another driver accepts while this screen is open, immediately transition
+  // to ALREADY_ASSIGNED without waiting for the driver to press anything.
+  useEffect(() => {
+    const handleRemoved = (data: any) => {
+      const removedRideId = data?.ride_request_id || data?.booking_id
+      const removedOfferId = data?.offer_id
+      const thisOfferId = normalizedOffer.offer_id
+      const thisRideId = normalizedOffer.ride_request_id
+
+      const isThisOffer =
+        (removedOfferId && removedOfferId === thisOfferId) ||
+        (removedRideId && (removedRideId === thisRideId || removedRideId === normalizedOffer.booking_id))
+
+      if (isThisOffer && mountedRef.current) {
+        console.log('[IncomingRequest] This offer was removed by server — transitioning to ALREADY_ASSIGNED')
+        stopAlerts()
+        setRequestState('ALREADY_ASSIGNED')
+        // Auto-dismiss after 2.5 seconds
+        setTimeout(() => {
+          if (mountedRef.current) onDismiss()
+        }, 2500)
+      }
+    }
+
+    DriverSocketService.on('RIDE_REQUEST_REMOVED', handleRemoved)
+    DriverSocketService.on('ride:offer_removed', handleRemoved)
+    DriverSocketService.on('RIDE_REQUEST_CANCELLED', handleRemoved)
+
+    return () => {
+      DriverSocketService.off('RIDE_REQUEST_REMOVED', handleRemoved)
+      DriverSocketService.off('ride:offer_removed', handleRemoved)
+      DriverSocketService.off('RIDE_REQUEST_CANCELLED', handleRemoved)
+    }
+  }, [normalizedOffer.offer_id, normalizedOffer.ride_request_id, stopAlerts, onDismiss])
 
   // ─── 180-second Countdown Timer (Server Timestamp Synced) ─────────────
   useEffect(() => {
@@ -129,12 +167,18 @@ export default function IncomingRequestScreen({ request, onDismiss }: Props) {
         accepted: true,
       })
 
-      if (res?.status === 'superseded') {
+      if (res?.status === 'superseded' || res?.status === 'already_assigned') {
         setRequestState('ALREADY_ASSIGNED')
+        // Remove from queue — another driver got it
+        RideQueueService.removeByOfferId(normalizedOffer.offer_id)
+        setTimeout(() => { if (mountedRef.current) onDismiss() }, 2500)
       } else if (res?.status === 'expired') {
         setRequestState('EXPIRED')
-      } else {
+        RideQueueService.removeByOfferId(normalizedOffer.offer_id)
+        setTimeout(() => { if (mountedRef.current) onDismiss() }, 2000)
+      } else if (res?.success) {
         setRequestState('ACCEPTED')
+        RideQueueService.removeByOfferId(normalizedOffer.offer_id)
         setTimeout(() => {
           if (mountedRef.current) {
             onDismiss()
@@ -149,17 +193,19 @@ export default function IncomingRequestScreen({ request, onDismiss }: Props) {
             })
           }
         }, 1000)
+      } else {
+        // Unknown status — show as ALREADY_ASSIGNED (safe fallback)
+        setRequestState('ALREADY_ASSIGNED')
+        setTimeout(() => { if (mountedRef.current) onDismiss() }, 2500)
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('[IncomingRequest] Accept failed:', err)
-      // Fallback transition to active trip
-      setRequestState('ACCEPTED')
-      setTimeout(() => {
-        if (mountedRef.current) {
-          onDismiss()
-          router.push(`/active-trip?bookingId=${normalizedOffer.booking_id || ''}` as any)
-        }
-      }, 1000)
+      // On network error: reset to NEW_OFFER so driver can retry
+      // Do NOT navigate — backend may not have processed the accept
+      if (mountedRef.current) {
+        setRequestState('NEW_OFFER')
+        DriverSoundService.playIncomingAlert({ loop: true }) // restart alert
+      }
     }
   }
 

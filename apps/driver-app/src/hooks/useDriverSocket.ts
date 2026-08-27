@@ -27,6 +27,7 @@ interface UseDriverSocketReturn {
   connected: boolean
   socketReady: boolean
   incomingRequest: any | null
+  pendingRequests: IncomingRideRequestPayload[]
   pendingCustomers: PendingCustomer[]
   corridorCustomers: CorridorCustomerPayload[]
   arrivalAlert: ArrivalAlertPayload | null
@@ -176,6 +177,7 @@ export function useDriverSocket(): UseDriverSocketReturn {
     connected: socketState.connected,
     socketReady: socketState.socketReady,
     incomingRequest: socketState.incomingRequest,
+    pendingRequests: socketState.pendingRequests || [],
     pendingCustomers: socketState.pendingCustomers,
     corridorCustomers: socketState.corridorCustomers,
     arrivalAlert: socketState.arrivalAlert,

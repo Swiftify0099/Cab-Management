@@ -190,28 +190,15 @@ export default function DriverHomeScreen() {
     loadData()
   }, [loadData])
 
-  // Resilient 5s Polling Fallback for Pending Ride Offers when Online
-  useEffect(() => {
-    if (availabilityData.state !== 'ONLINE') return
+  // REMOVED: 5-second polling interval.
+  // Polling was wrong architecture:
+  //   - Only works when home screen is mounted (breaks on navigation, background, killed)
+  //   - Creates race conditions with socket events and reconciliation
+  // Replaced by:
+  //   1. Socket events (RIDE_REQUEST_NEW) update RideQueueService in real-time
+  //   2. App resume → DriverLifecycleService → debounced reconcileStateWithBackend()
+  //   3. Notification tap → verify backend → RideQueueService.reconcileWithBackend()
 
-    const pollOffers = async () => {
-      try {
-        const pending = await RideRequestService.fetchPendingOffers()
-        if (Array.isArray(pending) && pending.length > 0) {
-          setIncomingRequest((prev: any) => {
-            if (!prev || prev.offer_id !== pending[0].offer_id) {
-              return pending[0]
-            }
-            return prev
-          })
-        }
-      } catch { }
-    }
-
-    pollOffers()
-    const interval = setInterval(pollOffers, 5000)
-    return () => clearInterval(interval)
-  }, [availabilityData.state, setIncomingRequest])
 
   const handleTurnOffDestination = async () => {
     try {

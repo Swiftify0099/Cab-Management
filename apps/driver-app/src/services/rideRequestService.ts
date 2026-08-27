@@ -74,6 +74,33 @@ class RideRequestServiceClass {
   }
 
   /**
+   * Verify if a specific offer is still active and valid on the server.
+   * Used on notification tap or before responding.
+   */
+  public async verifyOfferAvailable(offerId: string): Promise<{ available: boolean; offer?: any; reason?: string }> {
+    if (!offerId) return { available: false, reason: 'missing_id' }
+    try {
+      // 1. Try dedicated single offer status endpoint if available
+      try {
+        const res = await api.get(`/matching/rides/offer/${offerId}/status`)
+        const data = res.data?.data || res.data
+        return { available: Boolean(data?.available), offer: data?.offer, reason: data?.status }
+      } catch {
+        // Fallback: search in pending list
+        const pending = await this.fetchPendingOffers()
+        const match = pending.find((o: any) => o.offer_id === offerId || o.ride_request_id === offerId || o.booking_id === offerId)
+        if (match) {
+          return { available: true, offer: match }
+        }
+        return { available: false, reason: 'not_in_pending' }
+      }
+    } catch (err: any) {
+      console.warn('[RideRequestService] verifyOfferAvailable error:', err)
+      return { available: false, reason: err?.message || 'network_error' }
+    }
+  }
+
+  /**
    * Fetch all active pending offers for authenticated driver (Pending Request Recovery)
    */
   public async fetchPendingOffers(): Promise<any[]> {

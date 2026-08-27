@@ -13,6 +13,9 @@ import * as Device from 'expo-device'
 import { router } from 'expo-router'
 import { api } from '../api/client'
 import { DriverSoundService } from '../services/driverSoundService'
+import { RideRequestService } from '../services/rideRequestService'
+import { RideQueueService } from '../services/rideQueueService'
+import { DriverSocketService } from '../services/driverSocketService'
 
 // ── Notification display behaviour ───────────────────────────────────────────
 Notifications.setNotificationHandler({
@@ -228,34 +231,92 @@ export function useDriverNotifications() {
       const offerId = data?.offer_id
       const bookingId = data?.booking_id || data?.ride_request_id
 
-      if (
-        actionId === 'ACCEPT_RIDE' ||
-        actionId === 'ACCEPT_PARCEL' ||
-        actionId === Notifications.DEFAULT_ACTION_IDENTIFIER
-      ) {
-        // Driver accepted or tapped notification
-        if (actionId === 'ACCEPT_RIDE' || actionId === 'ACCEPT_PARCEL') {
-          try {
-            DriverSoundService.playAcceptedSound()
-            if (offerId) {
-              await api.post('/rides/respond', { offer_id: offerId, accepted: true })
-            } else if (bookingId) {
-              await api.post('/matching/rides/claim-pending', { ride_request_id: bookingId })
-            }
-          } catch (err: any) {
-            console.warn('[DriverNotifications] Error accepting from notification action:', err)
+      if (actionId === 'ACCEPT_RIDE' || actionId === 'ACCEPT_PARCEL') {
+        // ── ACCEPT from notification action button ──────────────────────────────
+        // Core rule: always verify backend state before accepting
+        if (!offerId && !bookingId) {
+          Alert.alert('Error', 'No offer ID in notification. Please open the app to respond.')
+          return
+        }
+        try {
+          DriverSoundService.playAcceptedSound()
+          const endpoint = offerId ? '/rides/respond' : '/matching/rides/claim-pending'
+          const payload = offerId
+            ? { offer_id: offerId, accepted: true }
+            : { ride_request_id: bookingId }
+          const resp = await api.post(endpoint, payload)
+          const result = resp?.data?.data || resp?.data || {}
+
+          if (result.status === 'superseded' || result.status === 'already_assigned') {
+            Alert.alert('Ride Taken', 'Another driver accepted this ride. Check the app for new requests.')
+            // Reconcile queue to get fresh state
+            await DriverSocketService.reconcileStateWithBackend()
+            return
           }
+          if (result.status === 'expired') {
+            Alert.alert('Request Expired', 'This ride request has expired.')
+            if (offerId) RideQueueService.removeByOfferId(offerId)
+            else if (bookingId) RideQueueService.removeByRideRequestId(bookingId)
+            return
+          }
+          if (result.success) {
+            // Navigate to active trip
+            const rideId = result.ride_request_id || bookingId
+            if (rideId) {
+              router.push({ pathname: '/active-trip', params: { bookingId: rideId } })
+            }
+          } else {
+            Alert.alert('Accept Failed', result.message || 'Could not accept ride. Please try in the app.')
+          }
+        } catch (err: any) {
+          const errMsg = err?.response?.data?.detail || err?.message || 'Network error'
+          Alert.alert('Error', errMsg)
+          console.warn('[DriverNotifications] Error accepting from notification action:', err)
         }
 
-        // Navigate to active trip
-        if (bookingId) {
-          router.push({
-            pathname: '/active-trip',
-            params: { bookingId },
-          })
+      } else if (actionId === Notifications.DEFAULT_ACTION_IDENTIFIER) {
+        // ── Driver TAPPED the notification body (not an action button) ────────────
+        // Core rule: NEVER blindly navigate. Verify backend state first.
+        // FCM notification does NOT mean the ride is still available.
+        console.log('[DriverNotifications] Notification tapped — verifying backend state')
+        try {
+          const pendingOffers = await RideRequestService.fetchPendingOffers()
+
+          if (pendingOffers && pendingOffers.length > 0) {
+            RideQueueService.reconcileWithBackend(pendingOffers)
+            // If the specific offer is in the list, prioritize it
+            if (offerId) {
+              const matching = pendingOffers.find(o => o.offer_id === offerId)
+              if (matching) RideQueueService.upsertRequest(matching)
+            }
+            // Navigate to home — IncomingRequestScreen will auto-show
+            router.replace('/(tabs)')
+          } else {
+            // No pending offers — check active ride
+            try {
+              const activeRide = await RideRequestService.getActiveRide()
+              if (activeRide?.is_active) {
+                const rideId = activeRide.ride_request_id || bookingId
+                if (rideId) router.push({ pathname: '/active-trip', params: { bookingId: rideId } })
+                else router.replace('/(tabs)')
+              } else {
+                Alert.alert(
+                  'Request No Longer Available',
+                  'This ride was accepted by another driver or has expired.',
+                  [{ text: 'OK', onPress: () => router.replace('/(tabs)') }],
+                )
+              }
+            } catch {
+              router.replace('/(tabs)')
+            }
+          }
+        } catch (err: any) {
+          console.warn('[DriverNotifications] Error verifying notification tap:', err)
+          router.replace('/(tabs)')
         }
+
       } else if (actionId === 'REJECT_RIDE' || actionId === 'REJECT_PARCEL') {
-        // Driver tapped REJECT button directly on the notification
+        // ── REJECT from notification action button ──────────────────────────────
         if (offerId) {
           try {
             await api.post('/rides/respond', {
@@ -263,7 +324,10 @@ export function useDriverNotifications() {
               accepted: false,
               rejection_reason: 'REJECTED_FROM_NOTIFICATION',
             })
+            RideQueueService.removeByOfferId(offerId)
           } catch {}
+        } else if (bookingId) {
+          RideQueueService.removeByRideRequestId(bookingId)
         }
       }
     })

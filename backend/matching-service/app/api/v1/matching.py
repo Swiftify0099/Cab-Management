@@ -1512,6 +1512,34 @@ async def get_pending_ride_offers_endpoint(
 
 
 @router.get(
+    "/rides/offer/{offer_id}/status",
+    response_model=SuccessResponse,
+    summary="Driver: Verify status of a specific ride offer",
+)
+@router.get(
+    "/matching/rides/offer/{offer_id}/status",
+    response_model=SuccessResponse,
+    summary="Driver: Verify status of a specific ride offer (alias)",
+)
+async def get_offer_status_endpoint(
+    offer_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    """
+    Checks if a specific offer is still available for the authenticated driver.
+    Used on notification tap to avoid stale navigation.
+    """
+    service = RideDispatchService(db)
+    result = await service.get_offer_status(current_user.user_id_str, offer_id)
+    return SuccessResponse(
+        success=result.get("available", False),
+        message=result.get("message", "Offer status retrieved"),
+        data=result,
+    )
+
+
+@router.get(
     "/rides/active",
     response_model=SuccessResponse,
     summary="Driver: Get current active assigned ride or pending offer",
@@ -1970,6 +1998,34 @@ async def get_radar_count(
         success=True,
         message="Radar count fetched",
         data={"count": count},
+    )
+
+
+@router.get(
+    "/rides/offer/{offer_id}/status",
+    response_model=SuccessResponse,
+    summary="Driver: Verify status of a specific ride offer",
+)
+@router.get(
+    "/matching/rides/offer/{offer_id}/status",
+    response_model=SuccessResponse,
+    summary="Driver: Verify status of a specific ride offer (alias)",
+)
+async def get_offer_status_endpoint(
+    offer_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    """
+    Checks if a specific offer is still available for the authenticated driver.
+    Used on notification tap to avoid stale navigation.
+    """
+    service = RideDispatchService(db)
+    result = await service.get_offer_status(current_user.user_id_str, offer_id)
+    return SuccessResponse(
+        success=result.get("available", False),
+        message=result.get("message", "Offer status retrieved"),
+        data=result,
     )
 
 
