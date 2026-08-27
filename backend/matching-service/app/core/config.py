@@ -13,10 +13,10 @@ class MatchingSettings(BaseSettings):
     PORT: int = 8003
 
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://cabuser:cabpass@postgres:5432/cabdb"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres.iyndjpsmahgugrcpkvip:fpqSlqh3DiQm68o0@aws-0-ap-south-1.pooler.supabase.com:5432/postgres"
 
     # Redis
-    REDIS_URL: str = "redis://redis:6379/0"
+    REDIS_URL: str = "rediss://default:gQAAAAAAApumAAIgcDJhYWMyMzA5NmNkOTI0MGYzOTYzNDY4YTJkMzU1YjBkMw@stunning-squid-170918.upstash.io:6379"
     REDIS_POOL_SIZE: int = 20
 
     # Matching Config

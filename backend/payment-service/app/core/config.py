@@ -12,8 +12,8 @@ class PaymentSettings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8004
 
-    DATABASE_URL: str = "postgresql+asyncpg://cabuser:cabpass@postgres:5432/cabdb"
-    REDIS_URL: str = "redis://redis:6379/0"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres.iyndjpsmahgugrcpkvip:fpqSlqh3DiQm68o0@aws-0-ap-south-1.pooler.supabase.com:5432/postgres"
+    REDIS_URL: str = "rediss://default:gQAAAAAAApumAAIgcDJhYWMyMzA5NmNkOTI0MGYzOTYzNDY4YTJkMzU1YjBkMw@stunning-squid-170918.upstash.io:6379"
     REDIS_POOL_SIZE: int = 20
 
     # Razorpay

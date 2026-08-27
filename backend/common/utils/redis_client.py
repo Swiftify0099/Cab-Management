@@ -21,8 +21,17 @@ async def get_redis() -> aioredis.Redis:
     global _redis_pool
     if _redis_pool is None:
         redis_url = settings.REDIS_URL
-        if not redis_url or 'localhost' in redis_url or '127.0.0.1' in redis_url:
-            redis_url = 'rediss://default:gQAAAAAAApumAAIgcDJhYWMyMzA5NmNkOTI0MGYzOTYzNDY4YTJkMzU1YjBkMw@stunning-squid-170918.upstash.io:6379'
+        if not redis_url or 'localhost' in redis_url or '127.0.0.1' in redis_url or '://redis:' in redis_url or '@redis:' in redis_url:
+            import socket
+            is_redis_resolvable = False
+            if '://redis:' in str(redis_url) or '@redis:' in str(redis_url):
+                try:
+                    socket.gethostbyname('redis')
+                    is_redis_resolvable = True
+                except Exception:
+                    is_redis_resolvable = False
+            if not is_redis_resolvable:
+                redis_url = 'rediss://default:gQAAAAAAApumAAIgcDJhYWMyMzA5NmNkOTI0MGYzOTYzNDY4YTJkMzU1YjBkMw@stunning-squid-170918.upstash.io:6379'
 
         _redis_pool = aioredis.from_url(
             redis_url,

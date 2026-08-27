@@ -9,6 +9,17 @@ Run:
 """
 import sys, os, importlib, importlib.util, types
 
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -1021,7 +1032,7 @@ try:
             await _original_app(scope, receive, send)
 
     app = _lifespan_wrapper
-    print("[WS] Socket.IO gateway initialized ✓")
+    print("[WS] Socket.IO gateway initialized [OK]")
 
 except ImportError as _sio_err:
     print(f"[WS] python-socketio not installed: {_sio_err}")

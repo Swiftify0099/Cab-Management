@@ -32,8 +32,17 @@ def create_engine(database_url: str | None = None) -> AsyncEngine:
         url = url.replace('db.iyndjpsmahgugrcpkvip.supabase.co', 'aws-0-ap-south-1.pooler.supabase.com')
         if 'postgres:' in url and 'postgres.iyndjpsmahgugrcpkvip:' not in url:
             url = url.replace('postgres:', 'postgres.iyndjpsmahgugrcpkvip:', 1)
-    if not url or 'localhost' in url or '127.0.0.1' in url:
-        url = 'postgresql+asyncpg://postgres.iyndjpsmahgugrcpkvip:fpqSlqh3DiQm68o0@aws-0-ap-south-1.pooler.supabase.com:5432/postgres'
+    if not url or 'localhost' in url or '127.0.0.1' in url or '@postgres:' in str(url) or '@postgres/' in str(url):
+        import socket
+        is_docker_resolvable = False
+        if '@postgres:' in str(url) or '@postgres/' in str(url):
+            try:
+                socket.gethostbyname('postgres')
+                is_docker_resolvable = True
+            except Exception:
+                is_docker_resolvable = False
+        if not is_docker_resolvable:
+            url = 'postgresql+asyncpg://postgres.iyndjpsmahgugrcpkvip:fpqSlqh3DiQm68o0@aws-0-ap-south-1.pooler.supabase.com:5432/postgres'
 
     if 'aws-0-ap-south-1.pooler.supabase.com' in url:
         try:
