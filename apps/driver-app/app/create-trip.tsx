@@ -1,11 +1,11 @@
 /**
  * Multi-Step Intercity Trip Creation Wizard — Driver SuperApp
  * ─────────────────────────────────────────────────────────────
- * 5-Step Flow:
- *   Step 1: Visibility & Route (Specific City with Saved Locations & Pinpoint Map Picker / Hex Zone)
- *   Step 2: Service & Trip Configuration (Cab, Transport, Organization, Parcel, Hotel, Airport, Packers & Movers)
- *   Step 3: Fare & Restrictions (Base fare, Min fare, Negotiable toggle, Women Only, Parcel capability)
- *   Step 4: Vehicle, Capacity & Additional Options
+ * Complete 5-Step Flow:
+ *   Step 1: Visibility & Route (Specific City with Saved Locations CRUD & Map Picker / Hex Zone Multi-Point Selection)
+ *   Step 2: Service & Trip Configuration (7 Mobility Verticals: Cab, Transport, Organization, Parcel, Hotel, Airport, Packers & Movers)
+ *   Step 3: Fare & 3-Way Restrictions (Base fare, Min fare, Negotiable, Women Only, Parcel, All/General)
+ *   Step 4: Vehicle, Capacity Allocation & Driver Notes
  *   Step 5: Review & Publish Preview
  *
  * State is safely persisted in AsyncStorage to prevent data loss on accidental navigation.
@@ -42,7 +42,7 @@ import {
   DEFAULT_SERVICE_METADATA,
 } from '../src/services/tripServiceStrategy'
 
-const WIZARD_DRAFT_KEY = '@driver_trip_wizard_draft_v2'
+const WIZARD_DRAFT_KEY = '@driver_trip_wizard_draft_v3'
 const { width: SCREEN_W } = Dimensions.get('window')
 
 let MapView: any = null
@@ -59,21 +59,6 @@ try {
   console.warn('[CreateTrip] react-native-maps not available:', e)
 }
 
-function decodePolyline(encoded: string): { latitude: number; longitude: number }[] {
-  const points: { latitude: number; longitude: number }[] = []
-  let index = 0, lat = 0, lng = 0
-  while (index < encoded.length) {
-    let b, shift = 0, result = 0
-    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5 } while (b >= 0x20)
-    lat += (result & 1) ? ~(result >> 1) : (result >> 1)
-    shift = 0; result = 0
-    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5 } while (b >= 0x20)
-    lng += (result & 1) ? ~(result >> 1) : (result >> 1)
-    points.push({ latitude: lat / 1e5, longitude: lng / 1e5 })
-  }
-  return points
-}
-
 interface SavedLocationItem {
   id: string
   label: string
@@ -82,6 +67,7 @@ interface SavedLocationItem {
   longitude: number
   city?: string
   location_type?: string
+  is_default?: boolean
 }
 
 interface VehicleItem {
@@ -93,20 +79,36 @@ interface VehicleItem {
   total_seats: number
 }
 
+interface HexPointItem {
+  id: string
+  name: string
+  lat: number
+  lng: number
+  selected: boolean
+}
+
 const DEFAULT_SAVED_LOCATIONS: SavedLocationItem[] = [
-  { id: '1', label: 'Swargate Bus Station', address: 'Swargate, Pune, Maharashtra 411042', latitude: 18.5018, longitude: 73.8580, city: 'Pune' },
-  { id: '2', label: 'Shivajinagar Station', address: 'Shivajinagar, Pune, Maharashtra 411005', latitude: 18.5314, longitude: 73.8446, city: 'Pune' },
-  { id: '3', label: 'Dadar TT Circle', address: 'Dadar East, Mumbai, Maharashtra 400014', latitude: 19.0178, longitude: 72.8478, city: 'Mumbai' },
-  { id: '4', label: 'BKC Business Hub', address: 'Bandra Kurla Complex, Mumbai 400051', latitude: 19.0657, longitude: 72.8687, city: 'Mumbai' },
+  { id: '1', label: 'Swargate Bus Station', address: 'Swargate, Pune, Maharashtra 411042', latitude: 18.5018, longitude: 73.8580, city: 'Pune', location_type: 'pickup' },
+  { id: '2', label: 'Shivajinagar Station', address: 'Shivajinagar, Pune, Maharashtra 411005', latitude: 18.5314, longitude: 73.8446, city: 'Pune', location_type: 'pickup' },
+  { id: '3', label: 'Dadar TT Circle', address: 'Dadar East, Mumbai, Maharashtra 400014', latitude: 19.0178, longitude: 72.8478, city: 'Mumbai', location_type: 'drop' },
+  { id: '4', label: 'BKC Business Hub', address: 'Bandra Kurla Complex, Mumbai 400051', latitude: 19.0657, longitude: 72.8687, city: 'Mumbai', location_type: 'drop' },
+]
+
+const DEFAULT_HEX_POINTS: HexPointItem[] = [
+  { id: 'h1', name: 'Swargate Central Zone', lat: 18.5018, lng: 73.8580, selected: true },
+  { id: 'h2', name: 'Shivajinagar Junction', lat: 18.5314, lng: 73.8446, selected: true },
+  { id: 'h3', name: 'Deccan Gymkhana Zone', lat: 18.5167, lng: 73.8415, selected: true },
+  { id: 'h4', name: 'Kothrud Depot Area', lat: 18.5074, lng: 73.8077, selected: false },
+  { id: 'h5', name: 'Hinjewadi IT Corridor', lat: 18.5913, lng: 73.7389, selected: false },
+  { id: 'h6', name: 'Hadapsar Gateway Hub', lat: 18.5089, lng: 73.9259, selected: false },
 ]
 
 export default function CreateTripScreen() {
   const insets = useSafeAreaInsets()
   const [step, setStep] = useState<number>(1) // 1 to 5
-  const [loading, setLoading] = useState<boolean>(false)
   const [publishing, setPublishing] = useState<boolean>(false)
 
-  // Step 1: Visibility & Route
+  // ── Step 1: Visibility & Route ──
   const [visibilityMode, setVisibilityMode] = useState<'SPECIFIC_CITY' | 'HEX_ZONE'>('SPECIFIC_CITY')
   const [pickupData, setPickupData] = useState<SelectedLocationData>({
     latitude: 18.5204,
@@ -123,12 +125,25 @@ export default function CreateTripScreen() {
     state: 'Maharashtra',
   })
 
-  // Location Picker Modal & Saved Locations Bottom Sheet
+  // Location Picker Modal & Saved Locations CRUD
   const [locationPickerTarget, setLocationPickerTarget] = useState<'pickup' | 'drop' | null>(null)
   const [savedLocModalTarget, setSavedLocModalTarget] = useState<'pickup' | 'drop' | null>(null)
   const [savedLocations, setSavedLocations] = useState<SavedLocationItem[]>(DEFAULT_SAVED_LOCATIONS)
+  
+  // Saved Location Edit Modal State
+  const [showEditLocModal, setShowEditLocModal] = useState<boolean>(false)
+  const [editingLocId, setEditingLocId] = useState<string | null>(null)
+  const [locFormLabel, setLocFormLabel] = useState<string>('')
+  const [locFormAddress, setLocFormAddress] = useState<string>('')
+  const [locFormCity, setLocFormCity] = useState<string>('Pune')
+  const [locFormLat, setLocFormLat] = useState<number>(18.5204)
+  const [locFormLng, setLocFormLng] = useState<number>(73.8567)
+  const [savingLoc, setSavingLoc] = useState<boolean>(false)
 
-  // Route & Corridor Parameters
+  // Hex Zone Multi-point Nodes
+  const [hexPoints, setHexPoints] = useState<HexPointItem[]>(DEFAULT_HEX_POINTS)
+
+  // Route & Directional Corridor Parameters
   const [maxRouteDeviationKm, setMaxRouteDeviationKm] = useState<string>('3.0')
   const [maxPickupRadiusKm, setMaxPickupRadiusKm] = useState<string>('5.0')
   const [maxDeviationLeftKm, setMaxDeviationLeftKm] = useState<string>('3.0')
@@ -136,7 +151,7 @@ export default function CreateTripScreen() {
   const [routeData, setRouteData] = useState<RouteData | null>(null)
   const [fetchingRoute, setFetchingRoute] = useState<boolean>(false)
 
-  // Step 2: Service Selection & Dynamic Metadata
+  // ── Step 2: Service Selection & Dynamic Metadata ──
   const [selectedService, setSelectedService] = useState<ServiceTypeKey>('cab')
   const [serviceMeta, setServiceMeta] = useState<any>(DEFAULT_SERVICE_METADATA.cab)
   const [recurrenceType, setRecurrenceType] = useState<'DAILY' | 'SPECIFIC_DATE' | 'SCHEDULED'>('DAILY')
@@ -144,24 +159,33 @@ export default function CreateTripScreen() {
   const [showDatePicker, setShowDatePicker] = useState<boolean>(false)
   const [showTimePicker, setShowTimePicker] = useState<boolean>(false)
 
-  // Step 3: Fare & Restrictions
+  // Organization Master Lists
+  const [orgList, setOrgList] = useState<any[]>([])
+  const [orgRoutes, setOrgRoutes] = useState<any[]>([])
+  const [routeMembers, setRouteMembers] = useState<any[]>([])
+  const [selectedOrgId, setSelectedOrgId] = useState<string>('')
+  const [selectedRouteId, setSelectedRouteId] = useState<string>('')
+
+  // ── Step 3: Fare & 3-Way Restrictions ──
   const [baseFare, setBaseFare] = useState<string>('450')
   const [perKmRate, setPerKmRate] = useState<string>('3.5')
   const [minFare, setMinFare] = useState<string>('350')
   const [isNegotiable, setIsNegotiable] = useState<boolean>(true)
+  const [restrictionMode, setRestrictionMode] = useState<'ALL' | 'WOMEN_ONLY' | 'PARCEL_OK'>('ALL')
   const [womenOnly, setWomenOnly] = useState<boolean>(false)
   const [parcelEnabled, setParcelEnabled] = useState<boolean>(true)
 
-  // Step 4: Vehicle & Capacity Allocation
+  // ── Step 4: Vehicle & Capacity Allocation ──
   const [myVehicles, setMyVehicles] = useState<VehicleItem[]>([
     { id: 'v1', make: 'Maruti Suzuki', model: 'Dzire Prime', registration_number: 'MH 12 AB 1234', vehicle_type: 'sedan', total_seats: 4 },
     { id: 'v2', make: 'Toyota', model: 'Innova Crysta', registration_number: 'MH 14 CD 5678', vehicle_type: 'suv', total_seats: 6 },
+    { id: 'v3', make: 'Tata', model: 'Ace Gold (Mini Truck)', registration_number: 'MH 12 XY 9999', vehicle_type: 'truck', total_seats: 2 },
   ])
   const [selectedVehicleId, setSelectedVehicleId] = useState<string>('v1')
   const [totalSeats, setTotalSeats] = useState<number>(4)
   const [notes, setNotes] = useState<string>('')
 
-  // ─── Load & Persist Draft ──────────────────────────────────────────────────
+  // ─── Load & Persist Draft & Master Data ──────────────────────────────────────
 
   useEffect(() => {
     AsyncStorage.getItem(WIZARD_DRAFT_KEY).then((data) => {
@@ -177,18 +201,67 @@ export default function CreateTripScreen() {
           if (draft.baseFare) setBaseFare(draft.baseFare)
           if (draft.recurrenceType) setRecurrenceType(draft.recurrenceType)
           if (draft.totalSeats) setTotalSeats(draft.totalSeats)
+          if (draft.restrictionMode) setRestrictionMode(draft.restrictionMode)
         } catch {}
       }
     })
-    // Fetch server saved locations
+
+    // Fetch driver saved locations
     api.get('/trips/saved-locations').then((res: any) => {
       if (res.data?.data && Array.isArray(res.data.data) && res.data.data.length > 0) {
         setSavedLocations(res.data.data)
       }
     }).catch(() => {})
+
+    // Fetch registered organizations
+    api.get('/trips/organizations').then((res: any) => {
+      if (res.data?.data && Array.isArray(res.data.data) && res.data.data.length > 0) {
+        setOrgList(res.data.data)
+        const first = res.data.data[0]
+        setSelectedOrgId(first.id)
+        loadOrgRoutes(first.id)
+      }
+    }).catch(() => {})
   }, [])
 
-  // Auto-save draft on changes
+  const loadOrgRoutes = async (orgId: string) => {
+    try {
+      const res = await api.get(`/trips/organizations/${orgId}/routes`)
+      if (res.data?.data && Array.isArray(res.data.data)) {
+        setOrgRoutes(res.data.data)
+        if (res.data.data.length > 0) {
+          const firstRoute = res.data.data[0]
+          setSelectedRouteId(firstRoute.id)
+          loadRouteMembers(firstRoute.id)
+        }
+      }
+    } catch {}
+  }
+
+  const loadRouteMembers = async (routeId: string) => {
+    try {
+      const res = await api.get(`/trips/organizations/routes/${routeId}/members`)
+      if (res.data?.data && Array.isArray(res.data.data)) {
+        setRouteMembers(res.data.data)
+      }
+    } catch {}
+  }
+
+  // Update restriction flags on mode change
+  useEffect(() => {
+    if (restrictionMode === 'WOMEN_ONLY') {
+      setWomenOnly(true)
+      setParcelEnabled(false)
+    } else if (restrictionMode === 'PARCEL_OK') {
+      setWomenOnly(false)
+      setParcelEnabled(true)
+    } else {
+      setWomenOnly(false)
+      setParcelEnabled(true)
+    }
+  }, [restrictionMode])
+
+  // Auto-save draft
   const saveDraft = useCallback(() => {
     const draft = {
       pickupData,
@@ -201,15 +274,16 @@ export default function CreateTripScreen() {
       womenOnly,
       parcelEnabled,
       isNegotiable,
+      restrictionMode,
     }
     AsyncStorage.setItem(WIZARD_DRAFT_KEY, JSON.stringify(draft)).catch(() => {})
-  }, [pickupData, dropData, selectedService, serviceMeta, recurrenceType, baseFare, totalSeats, womenOnly, parcelEnabled, isNegotiable])
+  }, [pickupData, dropData, selectedService, serviceMeta, recurrenceType, baseFare, totalSeats, womenOnly, parcelEnabled, isNegotiable, restrictionMode])
 
   useEffect(() => {
     saveDraft()
   }, [saveDraft])
 
-  // Fetch Google Directions Polyline when coordinates change
+  // Fetch Polyline when coordinates change
   const fetchRoutePolyline = useCallback(async () => {
     if (!pickupData.latitude || !dropData.latitude) return
     setFetchingRoute(true)
@@ -220,7 +294,6 @@ export default function CreateTripScreen() {
       )
       if (res) {
         setRouteData(res)
-        // Auto-calculate suggested base fare
         const estFare = Math.max(300, Math.round(res.distanceKm * 3.2))
         setBaseFare(String(estFare))
         setMinFare(String(Math.round(estFare * 0.8)))
@@ -236,7 +309,99 @@ export default function CreateTripScreen() {
     fetchRoutePolyline()
   }, [fetchRoutePolyline])
 
-  // ─── Step Navigation & Validation ──────────────────────────────────────────
+  // ─── Saved Location CRUD Operations ────────────────────────────────────────
+
+  const handleOpenAddSavedLoc = () => {
+    setEditingLocId(null)
+    setLocFormLabel('')
+    setLocFormAddress('')
+    setLocFormCity('Pune')
+    setLocFormLat(18.5204)
+    setLocFormLng(73.8567)
+    setShowEditLocModal(true)
+  }
+
+  const handleOpenEditSavedLoc = (item: SavedLocationItem) => {
+    setEditingLocId(item.id)
+    setLocFormLabel(item.label)
+    setLocFormAddress(item.address)
+    setLocFormCity(item.city || 'Pune')
+    setLocFormLat(item.latitude)
+    setLocFormLng(item.longitude)
+    setShowEditLocModal(true)
+  }
+
+  const handleSaveLocationForm = async () => {
+    if (!locFormLabel.trim() || !locFormAddress.trim()) {
+      Alert.alert('Incomplete Details', 'Please provide both label and address.')
+      return
+    }
+    setSavingLoc(true)
+    try {
+      const payload = {
+        label: locFormLabel.trim(),
+        address: locFormAddress.trim(),
+        city: locFormCity.trim(),
+        latitude: locFormLat,
+        longitude: locFormLng,
+        location_type: 'both',
+      }
+
+      if (editingLocId) {
+        const res = await api.put(`/trips/saved-locations/${editingLocId}`, payload)
+        setSavedLocations((prev) =>
+          prev.map((l) => (l.id === editingLocId ? { ...l, ...payload } : l))
+        )
+      } else {
+        const res = await api.post('/trips/saved-locations', payload)
+        const newLoc = res.data?.data || { id: `loc-${Date.now()}`, ...payload }
+        setSavedLocations((prev) => [newLoc, ...prev])
+      }
+      setShowEditLocModal(false)
+    } catch (e: any) {
+      // Local fallback in case of offline/mock
+      const mockLoc = {
+        id: editingLocId || `loc-${Date.now()}`,
+        label: locFormLabel.trim(),
+        address: locFormAddress.trim(),
+        city: locFormCity.trim(),
+        latitude: locFormLat,
+        longitude: locFormLng,
+      }
+      setSavedLocations((prev) =>
+        editingLocId ? prev.map((l) => (l.id === editingLocId ? mockLoc : l)) : [mockLoc, ...prev]
+      )
+      setShowEditLocModal(false)
+    } finally {
+      setSavingLoc(false)
+    }
+  }
+
+  const handleDeleteSavedLocation = async (id: string) => {
+    Alert.alert('Delete Location', 'Are you sure you want to remove this saved location?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await api.delete(`/trips/saved-locations/${id}`)
+          } catch {}
+          setSavedLocations((prev) => prev.filter((l) => l.id !== id))
+        },
+      },
+    ])
+  }
+
+  // ─── Hex Zone Multi-Point Selection Toggle ─────────────────────────────────
+
+  const handleToggleHexPoint = (pointId: string) => {
+    setHexPoints((prev) =>
+      prev.map((p) => (p.id === pointId ? { ...p, selected: !p.selected } : p))
+    )
+  }
+
+  // ─── Step Navigation ───────────────────────────────────────────────────────
 
   const handleNextStep = () => {
     if (step === 1) {
@@ -245,8 +410,16 @@ export default function CreateTripScreen() {
         return
       }
     } else if (step === 2) {
-      if (selectedService === 'organization' && !serviceMeta.organization_name) {
-        setServiceMeta({ ...serviceMeta, organization_name: 'COEP Technological University', organization_id: 'org-coep-1' })
+      if (selectedService === 'organization') {
+        const currentOrg = orgList.find((o) => o.id === selectedOrgId)
+        const currentRoute = orgRoutes.find((r) => r.id === selectedRouteId)
+        setServiceMeta({
+          ...serviceMeta,
+          organization_id: selectedOrgId,
+          organization_name: currentOrg?.name || 'COEP Technological University',
+          route_id: selectedRouteId,
+          route_name: currentRoute?.route_name || 'Campus Express Line 1',
+        })
       }
     } else if (step === 3) {
       if (!baseFare || parseFloat(baseFare) <= 0) {
@@ -266,6 +439,8 @@ export default function CreateTripScreen() {
   const handlePublishTrip = async () => {
     setPublishing(true)
     try {
+      const selectedHexes = hexPoints.filter((p) => p.selected).map((p) => ({ lat: p.lat, lng: p.lng }))
+
       const payload = {
         pickup_lat: pickupData.latitude,
         pickup_lng: pickupData.longitude,
@@ -293,26 +468,28 @@ export default function CreateTripScreen() {
         women_only: womenOnly,
         parcel_enabled: parcelEnabled,
         service_metadata: serviceMeta,
+        organization_id: selectedService === 'organization' ? selectedOrgId : undefined,
         encoded_polyline: routeData?.encodedPolyline,
         distance_km: routeData?.distanceKm || 150.0,
+        pickup_polygon: visibilityMode === 'HEX_ZONE' && selectedHexes.length >= 3 ? selectedHexes : undefined,
         notes: notes,
       }
 
-      const res = await api.post('/trips/publish-intercity', payload)
+      await api.post('/trips/publish-intercity', payload)
       await AsyncStorage.removeItem(WIZARD_DRAFT_KEY)
 
       Alert.alert(
         '🎉 Trip Published Successfully!',
-        `Your ${SUPPORTED_SERVICES.find((s) => s.key === selectedService)?.title} trip is now active and matching eligible customers.`,
+        `Your ${SUPPORTED_SERVICES.find((s) => s.key === selectedService)?.title} trip is now active and matching eligible customer requests.`,
         [
           {
-            text: 'View Dashboard',
-            onPress: () => router.replace('/(tabs)/'),
+            text: 'View My Trips',
+            onPress: () => router.replace('/my-trips'),
           },
         ]
       )
     } catch (e: any) {
-      const msg = e.response?.data?.message || e.message || 'Failed to publish trip. Please try again.'
+      const msg = e.response?.data?.message || e.response?.data?.detail || e.message || 'Failed to publish trip.'
       Alert.alert('Publish Error', msg)
     } finally {
       setPublishing(false)
@@ -324,9 +501,11 @@ export default function CreateTripScreen() {
   const renderStep1 = () => {
     return (
       <View style={styles.stepContainer}>
-        {/* Visibility Option Toggle */}
+        {/* Visibility Mode Selector */}
         <View style={styles.sectionCard}>
-          <Text style={styles.sectionHeading}>Route Visibility Mode</Text>
+          <Text style={styles.sectionHeading}>Route Visibility & Geofence Mode</Text>
+          <Text style={styles.sectionSubtext}>Choose how customer requests are captured along your route.</Text>
+
           <View style={styles.modeToggleRow}>
             <TouchableOpacity
               style={[styles.modeTab, visibilityMode === 'SPECIFIC_CITY' && styles.modeTabActive]}
@@ -360,98 +539,127 @@ export default function CreateTripScreen() {
           </View>
         </View>
 
-        {/* Pickup & Destination Selectors */}
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionHeading}>Origin & Destination</Text>
+        {/* Specific City Origin & Drop Selectors */}
+        {visibilityMode === 'SPECIFIC_CITY' ? (
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionHeading}>Origin & Destination</Text>
 
-          {/* Pickup Control */}
-          <View style={styles.locBlock}>
-            <View style={styles.locHeaderRow}>
-              <View style={[styles.dotIndicator, { backgroundColor: '#10B981' }]} />
-              <Text style={styles.locTitle}>PICKUP LOCATION</Text>
-            </View>
-            <TouchableOpacity
-              style={styles.locInputBox}
-              onPress={() => setLocationPickerTarget('pickup')}
-              activeOpacity={0.8}
-            >
-              <Feather name="map-pin" size={18} color="#10B981" style={{ marginRight: 10 }} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.locMainText} numberOfLines={1}>
-                  {pickupData.city || 'Select Pickup Location'}
-                </Text>
-                <Text style={styles.locSubText} numberOfLines={2}>
-                  {pickupData.address}
-                </Text>
+            {/* Pickup */}
+            <View style={styles.locBlock}>
+              <View style={styles.locHeaderRow}>
+                <View style={[styles.dotIndicator, { backgroundColor: '#10B981' }]} />
+                <Text style={styles.locTitle}>PICKUP LOCATION</Text>
               </View>
-              <Feather name="chevron-right" size={20} color="#94A3B8" />
-            </TouchableOpacity>
-
-            {/* Quick Actions for Pickup */}
-            <View style={styles.quickActionsRow}>
               <TouchableOpacity
-                style={styles.quickActionChip}
-                onPress={() => setSavedLocModalTarget('pickup')}
-              >
-                <Feather name="bookmark" size={13} color="#3B82F6" />
-                <Text style={styles.quickActionText}>Saved Locations</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.quickActionChip}
+                style={styles.locInputBox}
                 onPress={() => setLocationPickerTarget('pickup')}
+                activeOpacity={0.8}
               >
-                <MaterialCommunityIcons name="crosshairs-gps" size={13} color="#10B981" />
-                <Text style={styles.quickActionText}>Pin on Map</Text>
+                <Feather name="map-pin" size={18} color="#10B981" style={{ marginRight: 10 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.locMainText} numberOfLines={1}>{pickupData.city || 'Select Pickup'}</Text>
+                  <Text style={styles.locSubText} numberOfLines={2}>{pickupData.address}</Text>
+                </View>
+                <Feather name="chevron-right" size={20} color="#94A3B8" />
               </TouchableOpacity>
-            </View>
-          </View>
 
-          <View style={styles.routeDivider} />
-
-          {/* Drop Control */}
-          <View style={styles.locBlock}>
-            <View style={styles.locHeaderRow}>
-              <View style={[styles.dotIndicator, { backgroundColor: '#EF4444' }]} />
-              <Text style={styles.locTitle}>DROP LOCATION</Text>
-            </View>
-            <TouchableOpacity
-              style={styles.locInputBox}
-              onPress={() => setLocationPickerTarget('drop')}
-              activeOpacity={0.8}
-            >
-              <Feather name="map-pin" size={18} color="#EF4444" style={{ marginRight: 10 }} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.locMainText} numberOfLines={1}>
-                  {dropData.city || 'Select Drop Location'}
-                </Text>
-                <Text style={styles.locSubText} numberOfLines={2}>
-                  {dropData.address}
-                </Text>
+              <View style={styles.quickActionsRow}>
+                <TouchableOpacity
+                  style={styles.quickActionChip}
+                  onPress={() => setSavedLocModalTarget('pickup')}
+                >
+                  <Feather name="bookmark" size={13} color="#3B82F6" />
+                  <Text style={styles.quickActionText}>Saved Locations</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.quickActionChip}
+                  onPress={() => setLocationPickerTarget('pickup')}
+                >
+                  <MaterialCommunityIcons name="crosshairs-gps" size={13} color="#10B981" />
+                  <Text style={styles.quickActionText}>Pin on Map</Text>
+                </TouchableOpacity>
               </View>
-              <Feather name="chevron-right" size={20} color="#94A3B8" />
-            </TouchableOpacity>
+            </View>
 
-            {/* Quick Actions for Drop */}
-            <View style={styles.quickActionsRow}>
+            <View style={styles.routeDivider} />
+
+            {/* Drop */}
+            <View style={styles.locBlock}>
+              <View style={styles.locHeaderRow}>
+                <View style={[styles.dotIndicator, { backgroundColor: '#EF4444' }]} />
+                <Text style={styles.locTitle}>DROP LOCATION</Text>
+              </View>
               <TouchableOpacity
-                style={styles.quickActionChip}
-                onPress={() => setSavedLocModalTarget('drop')}
-              >
-                <Feather name="bookmark" size={13} color="#3B82F6" />
-                <Text style={styles.quickActionText}>Saved Locations</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.quickActionChip}
+                style={styles.locInputBox}
                 onPress={() => setLocationPickerTarget('drop')}
+                activeOpacity={0.8}
               >
-                <MaterialCommunityIcons name="crosshairs-gps" size={13} color="#EF4444" />
-                <Text style={styles.quickActionText}>Pin on Map</Text>
+                <Feather name="map-pin" size={18} color="#EF4444" style={{ marginRight: 10 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.locMainText} numberOfLines={1}>{dropData.city || 'Select Drop'}</Text>
+                  <Text style={styles.locSubText} numberOfLines={2}>{dropData.address}</Text>
+                </View>
+                <Feather name="chevron-right" size={20} color="#94A3B8" />
               </TouchableOpacity>
+
+              <View style={styles.quickActionsRow}>
+                <TouchableOpacity
+                  style={styles.quickActionChip}
+                  onPress={() => setSavedLocModalTarget('drop')}
+                >
+                  <Feather name="bookmark" size={13} color="#3B82F6" />
+                  <Text style={styles.quickActionText}>Saved Locations</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.quickActionChip}
+                  onPress={() => setLocationPickerTarget('drop')}
+                >
+                  <MaterialCommunityIcons name="crosshairs-gps" size={13} color="#EF4444" />
+                  <Text style={styles.quickActionText}>Pin on Map</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
-        </View>
+        ) : (
+          /* Hexagonal Zone Multi-Point Selector */
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionHeading}>Hexagonal Geofence Pickup Points</Text>
+            <Text style={styles.sectionSubtext}>
+              Select multiple pick-up nodes. Only customer requests within these geofence points will be shown to you.
+            </Text>
 
-        {/* Route Preview Mini Map */}
+            <View style={styles.hexListContainer}>
+              {hexPoints.map((hp) => (
+                <TouchableOpacity
+                  key={hp.id}
+                  style={[styles.hexChip, hp.selected && styles.hexChipSelected]}
+                  onPress={() => handleToggleHexPoint(hp.id)}
+                  activeOpacity={0.8}
+                >
+                  <MaterialCommunityIcons
+                    name={hp.selected ? 'hexagon' : 'hexagon-outline'}
+                    size={18}
+                    color={hp.selected ? '#3B82F6' : '#94A3B8'}
+                    style={{ marginRight: 8 }}
+                  />
+                  <Text style={[styles.hexChipText, hp.selected && styles.hexChipTextSelected]}>
+                    {hp.name}
+                  </Text>
+                  {hp.selected && <Feather name="check" size={14} color="#3B82F6" style={{ marginLeft: 6 }} />}
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <View style={styles.hexSummaryBadge}>
+              <Feather name="info" size={14} color="#3B82F6" />
+              <Text style={styles.hexSummaryText}>
+                {hexPoints.filter((p) => p.selected).length} Active Pickup Nodes in Polygon Corridor
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {/* Route Preview Stats */}
         {routeData && (
           <View style={styles.sectionCard}>
             <View style={styles.routeStatsRow}>
@@ -471,25 +679,34 @@ export default function CreateTripScreen() {
           </View>
         )}
 
-        {/* Directional Route Configuration */}
+        {/* Corridor Configuration (Left/Right Deviation) */}
         <View style={styles.sectionCard}>
-          <Text style={styles.sectionHeading}>Directional Deviation & Matching Radius</Text>
+          <Text style={styles.sectionHeading}>Corridor Buffer & Highway Deviation</Text>
           <Text style={styles.sectionSubtext}>
-            Only match customers within your preferred highway corridor without long detours.
+            Control exactly how far left and right from your highway route you are willing to detour for customer pickups.
           </Text>
 
           <View style={styles.configInputsRow}>
             <View style={styles.configField}>
-              <Text style={styles.fieldLabel}>Corridor Buffer (km)</Text>
+              <Text style={styles.fieldLabel}>Left Deviation (km)</Text>
               <TextInput
                 style={styles.fieldInput}
-                value={maxRouteDeviationKm}
-                onChangeText={setMaxRouteDeviationKm}
+                value={maxDeviationLeftKm}
+                onChangeText={setMaxDeviationLeftKm}
                 keyboardType="numeric"
               />
             </View>
             <View style={styles.configField}>
-              <Text style={styles.fieldLabel}>Max Pickup Radius</Text>
+              <Text style={styles.fieldLabel}>Right Deviation (km)</Text>
+              <TextInput
+                style={styles.fieldInput}
+                value={maxDeviationRightKm}
+                onChangeText={setMaxDeviationRightKm}
+                keyboardType="numeric"
+              />
+            </View>
+            <View style={styles.configField}>
+              <Text style={styles.fieldLabel}>Max Pickup Radius (km)</Text>
               <TextInput
                 style={styles.fieldInput}
                 value={maxPickupRadiusKm}
@@ -508,10 +725,10 @@ export default function CreateTripScreen() {
   const renderStep2 = () => {
     return (
       <View style={styles.stepContainer}>
-        {/* Service Type Carousel / Cards */}
+        {/* Service Vertical Grid */}
         <View style={styles.sectionCard}>
           <Text style={styles.sectionHeading}>Select Service Vertical</Text>
-          <Text style={styles.sectionSubtext}>Choose the primary operational category for this trip.</Text>
+          <Text style={styles.sectionSubtext}>Choose the operational category for this published trip.</Text>
 
           <View style={styles.serviceGrid}>
             {SUPPORTED_SERVICES.map((srv) => {
@@ -519,7 +736,7 @@ export default function CreateTripScreen() {
               return (
                 <TouchableOpacity
                   key={srv.key}
-                  style={[styles.serviceCard, isSelected && { borderColor: srv.color, backgroundColor: `${srv.color}10` }]}
+                  style={[styles.serviceCard, isSelected && { borderColor: srv.color, backgroundColor: `${srv.color}12` }]}
                   onPress={() => {
                     setSelectedService(srv.key)
                     setServiceMeta(DEFAULT_SERVICE_METADATA[srv.key])
@@ -542,10 +759,11 @@ export default function CreateTripScreen() {
           </View>
         </View>
 
-        {/* Dynamic Service Specific Settings */}
+        {/* Dynamic Vertical Configuration Forms */}
         <View style={styles.sectionCard}>
           <Text style={styles.sectionHeading}>{SUPPORTED_SERVICES.find((s) => s.key === selectedService)?.title} Configuration</Text>
 
+          {/* 1. Cab Service */}
           {selectedService === 'cab' && (
             <View style={styles.metaForm}>
               <Text style={styles.fieldLabel}>Trip Purpose</Text>
@@ -565,11 +783,12 @@ export default function CreateTripScreen() {
             </View>
           )}
 
+          {/* 2. Transport / Goods */}
           {selectedService === 'transport' && (
             <View style={styles.metaForm}>
               <Text style={styles.fieldLabel}>Accepted Goods Category</Text>
               <View style={styles.pillRow}>
-                {['general', 'industrial', 'commercial', 'electronics', 'fragile'].map((c) => (
+                {['industrial', 'electronics', 'commercial', 'machinery', 'general', 'fragile'].map((c) => (
                   <TouchableOpacity
                     key={c}
                     style={[styles.choicePill, serviceMeta.material_category === c && styles.choicePillActive]}
@@ -582,72 +801,142 @@ export default function CreateTripScreen() {
                 ))}
               </View>
 
-              <Text style={[styles.fieldLabel, { marginTop: 14 }]}>Max Weight Capacity (kg)</Text>
+              <Text style={[styles.fieldLabel, { marginTop: 14 }]}>Payload Weight Capacity (kg)</Text>
               <TextInput
                 style={styles.fieldInput}
-                value={String(serviceMeta.weight_capacity_kg || 500)}
+                value={String(serviceMeta.weight_capacity_kg || 750)}
                 onChangeText={(v) => setServiceMeta({ ...serviceMeta, weight_capacity_kg: parseInt(v) || 0 })}
                 keyboardType="numeric"
               />
             </View>
           )}
 
+          {/* 3. Organization (College & Corporate) */}
           {selectedService === 'organization' && (
             <View style={styles.metaForm}>
-              <Text style={styles.fieldLabel}>Registered Organization / College</Text>
-              <View style={styles.orgBox}>
-                <Ionicons name="school" size={24} color="#8B5CF6" style={{ marginRight: 10 }} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.orgNameText}>{serviceMeta.organization_name || 'COEP Technological University'}</Text>
-                  <Text style={styles.orgSubText}>Official Campus Route 4 • 28 Registered Students</Text>
-                </View>
+              <Text style={styles.fieldLabel}>Select Registered College / Corporate Organization</Text>
+              <View style={styles.orgDropdownList}>
+                {orgList.map((org) => {
+                  const isSelected = selectedOrgId === org.id
+                  return (
+                    <TouchableOpacity
+                      key={org.id}
+                      style={[styles.orgCard, isSelected && styles.orgCardSelected]}
+                      onPress={() => {
+                        setSelectedOrgId(org.id)
+                        loadOrgRoutes(org.id)
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name={org.org_type === 'college' ? 'school' : 'business'} size={20} color={isSelected ? '#8B5CF6' : '#94A3B8'} />
+                      <View style={{ flex: 1, marginLeft: 10 }}>
+                        <Text style={[styles.orgCardTitle, isSelected && { color: '#8B5CF6' }]}>{org.name}</Text>
+                        <Text style={styles.orgCardSub}>{org.code} • {org.city}</Text>
+                      </View>
+                      {isSelected && <Feather name="check-circle" size={18} color="#8B5CF6" />}
+                    </TouchableOpacity>
+                  )
+                })}
               </View>
-              <Text style={styles.orgNoteText}>
-                💡 Students registered for this route will automatically receive high-priority alerts when you reach within 3 KM.
-              </Text>
+
+              {orgRoutes.length > 0 && (
+                <View style={{ marginTop: 14 }}>
+                  <Text style={styles.fieldLabel}>Designated Route</Text>
+                  {orgRoutes.map((rt) => {
+                    const isSelected = selectedRouteId === rt.id
+                    return (
+                      <TouchableOpacity
+                        key={rt.id}
+                        style={[styles.routeCardItem, isSelected && styles.routeCardItemSelected]}
+                        onPress={() => {
+                          setSelectedRouteId(rt.id)
+                          loadRouteMembers(rt.id)
+                        }}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.routeItemTitle}>{rt.route_name}</Text>
+                          <Text style={styles.routeItemTime}>🕒 {rt.scheduled_start_time} - {rt.scheduled_end_time} • Capacity: {rt.capacity}</Text>
+                        </View>
+                        {isSelected && <Feather name="check" size={16} color="#8B5CF6" />}
+                      </TouchableOpacity>
+                    )
+                  })}
+                </View>
+              )}
+
+              {routeMembers.length > 0 && (
+                <View style={styles.rosterContainer}>
+                  <Text style={styles.fieldLabel}>Enrolled Student Roster ({routeMembers.length} Registered)</Text>
+                  {routeMembers.slice(0, 3).map((m, idx) => (
+                    <View key={m.id || idx} style={styles.memberRow}>
+                      <Feather name="user" size={14} color="#A78BFA" />
+                      <Text style={styles.memberName}>{m.registration_no || `Student #${idx + 1}`}</Text>
+                      <Text style={styles.memberStop} numberOfLines={1}>📍 {m.pickup_address}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              <View style={styles.proximityAlertNotice}>
+                <Ionicons name="notifications-circle" size={22} color="#10B981" />
+                <Text style={styles.proximityAlertText}>
+                  🔔 High-Priority Proximity System: When you reach within 3 KM of students, incoming call simulation, ringing and vibration alerts will be triggered automatically.
+                </Text>
+              </View>
             </View>
           )}
 
+          {/* 4. Parcel Delivery */}
           {selectedService === 'parcel' && (
             <View style={styles.metaForm}>
               <Text style={styles.fieldLabel}>Max Package Weight (kg)</Text>
               <TextInput
                 style={styles.fieldInput}
-                value={String(serviceMeta.max_weight_kg || 15)}
+                value={String(serviceMeta.max_weight_kg || 25)}
                 onChangeText={(v) => setServiceMeta({ ...serviceMeta, max_weight_kg: parseInt(v) || 0 })}
                 keyboardType="numeric"
+              />
+              <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Dimensions (L x W x H cm)</Text>
+              <TextInput
+                style={styles.fieldInput}
+                value={serviceMeta.max_dimensions || '60x40x40 cm'}
+                onChangeText={(v) => setServiceMeta({ ...serviceMeta, max_dimensions: v })}
               />
             </View>
           )}
 
+          {/* 5. Hotel Transfer */}
           {selectedService === 'hotel' && (
             <View style={styles.metaForm}>
               <Text style={styles.fieldLabel}>Hotel / Resort Name</Text>
               <TextInput
                 style={styles.fieldInput}
-                placeholder="e.g. JW Marriott / The Westin Pune"
+                placeholder="e.g. JW Marriott / The Ritz-Carlton"
+                placeholderTextColor="#64748B"
                 value={serviceMeta.hotel_name || ''}
                 onChangeText={(v) => setServiceMeta({ ...serviceMeta, hotel_name: v })}
               />
             </View>
           )}
 
+          {/* 6. Airport Transfer */}
           {selectedService === 'airport' && (
             <View style={styles.metaForm}>
               <Text style={styles.fieldLabel}>Airport & Terminal</Text>
               <TextInput
                 style={styles.fieldInput}
-                value={serviceMeta.airport_name || 'Pune International Airport (PNQ)'}
+                value={serviceMeta.airport_name || 'Pune International Airport (PNQ) - Terminal 2'}
                 onChangeText={(v) => setServiceMeta({ ...serviceMeta, airport_name: v })}
               />
             </View>
           )}
 
+          {/* 7. Packers & Movers */}
           {selectedService === 'packers' && (
             <View style={styles.metaForm}>
               <Text style={styles.fieldLabel}>Relocation Size</Text>
               <View style={styles.pillRow}>
-                {['1bhk', '2bhk', '3bhk', 'office'].map((m) => (
+                {['1bhk', '2bhk', '3bhk', 'villa', 'office'].map((m) => (
                   <TouchableOpacity
                     key={m}
                     style={[styles.choicePill, serviceMeta.move_type === m && styles.choicePillActive]}
@@ -663,13 +952,13 @@ export default function CreateTripScreen() {
           )}
         </View>
 
-        {/* Schedule & Recurrence Engine */}
+        {/* Schedule & Recurrence Selection */}
         <View style={styles.sectionCard}>
-          <Text style={styles.sectionHeading}>Trip Schedule & Recurrence</Text>
+          <Text style={styles.sectionHeading}>Trip Schedule & Recurrence Type</Text>
           <View style={styles.pillRow}>
             {[
               { key: 'DAILY', label: 'Daily Route', icon: 'repeat' },
-              { key: 'SPECIFIC_DATE', label: 'Specific Date', icon: 'calendar' },
+              { key: 'SPECIFIC_DATE', label: 'Specific Day', icon: 'calendar' },
               { key: 'SCHEDULED', label: 'Scheduled', icon: 'clock' },
             ].map((rec) => (
               <TouchableOpacity
@@ -711,7 +1000,7 @@ export default function CreateTripScreen() {
     )
   }
 
-  // ─── Render Step 3: Fare & Restrictions ─────────────────────────────────────
+  // ─── Render Step 3: Fare & 3-Way Restrictions ───────────────────────────────
 
   const renderStep3 = () => {
     return (
@@ -719,7 +1008,7 @@ export default function CreateTripScreen() {
         {/* Pricing Card */}
         <View style={styles.sectionCard}>
           <Text style={styles.sectionHeading}>Pricing & Fares</Text>
-          <Text style={styles.sectionSubtext}>Define base fare per passenger seat or cargo parcel.</Text>
+          <Text style={styles.sectionSubtext}>Define base fare per passenger seat or freight consignment.</Text>
 
           <View style={styles.configInputsRow}>
             <View style={styles.configField}>
@@ -755,39 +1044,66 @@ export default function CreateTripScreen() {
           </View>
         </View>
 
-        {/* Restrictions & Constraints */}
+        {/* 3-Way Restrictions & Matching Modes */}
         <View style={styles.sectionCard}>
-          <Text style={styles.sectionHeading}>Trip Restrictions & Preferences</Text>
+          <Text style={styles.sectionHeading}>Matching Restrictions & Preferences</Text>
+          <Text style={styles.sectionSubtext}>Choose who can book this ride or cargo space.</Text>
 
-          <View style={styles.switchRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.switchTitle}>Women Only Ride</Text>
-              <Text style={styles.switchDesc}>Only match verified female passengers for safety.</Text>
-            </View>
-            <Switch
-              value={womenOnly}
-              onValueChange={setWomenOnly}
-              trackColor={{ false: '#334155', true: '#EC4899' }}
-            />
-          </View>
+          <View style={styles.restrictionList}>
+            {/* Mode 1: Women Only */}
+            <TouchableOpacity
+              style={[styles.restrictionOption, restrictionMode === 'WOMEN_ONLY' && styles.restrictionOptionActive]}
+              onPress={() => setRestrictionMode('WOMEN_ONLY')}
+              activeOpacity={0.8}
+            >
+              <View style={[styles.restIconBox, { backgroundColor: '#EC489920' }]}>
+                <MaterialCommunityIcons name="human-female" size={20} color="#EC4899" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.restTitle}>Only Women Trip</Text>
+                <Text style={styles.restDesc}>Only match verified female passengers for safety.</Text>
+              </View>
+              {restrictionMode === 'WOMEN_ONLY' && <Feather name="check-circle" size={20} color="#EC4899" />}
+            </TouchableOpacity>
 
-          <View style={styles.switchRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.switchTitle}>Accept Parcel & Luggage</Text>
-              <Text style={styles.switchDesc}>Allow package deliveries and luggage along this route.</Text>
-            </View>
-            <Switch
-              value={parcelEnabled}
-              onValueChange={setParcelEnabled}
-              trackColor={{ false: '#334155', true: '#10B981' }}
-            />
+            {/* Mode 2: Accept Parcel & Luggage */}
+            <TouchableOpacity
+              style={[styles.restrictionOption, restrictionMode === 'PARCEL_OK' && styles.restrictionOptionActive]}
+              onPress={() => setRestrictionMode('PARCEL_OK')}
+              activeOpacity={0.8}
+            >
+              <View style={[styles.restIconBox, { backgroundColor: '#10B98120' }]}>
+                <MaterialCommunityIcons name="package-variant-closed" size={20} color="#10B981" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.restTitle}>Accept Parcel & Luggage</Text>
+                <Text style={styles.restDesc}>Accept package deliveries along your passenger corridor.</Text>
+              </View>
+              {restrictionMode === 'PARCEL_OK' && <Feather name="check-circle" size={20} color="#10B981" />}
+            </TouchableOpacity>
+
+            {/* Mode 3: All / General */}
+            <TouchableOpacity
+              style={[styles.restrictionOption, restrictionMode === 'ALL' && styles.restrictionOptionActive]}
+              onPress={() => setRestrictionMode('ALL')}
+              activeOpacity={0.8}
+            >
+              <View style={[styles.restIconBox, { backgroundColor: '#3B82F620' }]}>
+                <MaterialCommunityIcons name="account-group" size={20} color="#3B82F6" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.restTitle}>All Passengers (General)</Text>
+                <Text style={styles.restDesc}>No gender restrictions — open for all passengers.</Text>
+              </View>
+              {restrictionMode === 'ALL' && <Feather name="check-circle" size={20} color="#3B82F6" />}
+            </TouchableOpacity>
           </View>
         </View>
       </View>
     )
   }
 
-  // ─── Render Step 4: Vehicle & Capacity ──────────────────────────────────────
+  // ─── Render Step 4: Vehicle & Capacity Allocation ───────────────────────────
 
   const renderStep4 = () => {
     return (
@@ -820,10 +1136,10 @@ export default function CreateTripScreen() {
           })}
         </View>
 
-        {/* Seat Capacity Control */}
+        {/* Seat Capacity Counter */}
         <View style={styles.sectionCard}>
           <Text style={styles.sectionHeading}>Available Seat Capacity</Text>
-          <Text style={styles.sectionSubtext}>Adjust total seats offered for this trip run.</Text>
+          <Text style={styles.sectionSubtext}>Adjust available seats offered for this trip.</Text>
 
           <View style={styles.counterRow}>
             <TouchableOpacity
@@ -847,7 +1163,7 @@ export default function CreateTripScreen() {
 
         {/* Driver Notes */}
         <View style={styles.sectionCard}>
-          <Text style={styles.sectionHeading}>Pickup Instructions / Driver Notes</Text>
+          <Text style={styles.sectionHeading}>Driver Notes & Pickup Instructions</Text>
           <TextInput
             style={[styles.fieldInput, { height: 80, textAlignVertical: 'top' }]}
             placeholder="e.g. AC available, Non-smoking vehicle, punctual departure from Swargate"
@@ -870,11 +1186,11 @@ export default function CreateTripScreen() {
     return (
       <View style={styles.stepContainer}>
         <View style={styles.reviewBanner}>
-          <Text style={styles.reviewBannerTitle}>Ready to Publish Intercity Trip</Text>
+          <Text style={styles.reviewBannerTitle}>Ready to Publish Trip</Text>
           <Text style={styles.reviewBannerSub}>Review all parameters before activating live matching.</Text>
         </View>
 
-        {/* Summary Card */}
+        {/* Itemized Summary Card */}
         <View style={styles.sectionCard}>
           <View style={styles.reviewRow}>
             <Text style={styles.revLabel}>Service Vertical</Text>
@@ -895,7 +1211,7 @@ export default function CreateTripScreen() {
           <View style={styles.revDivider} />
 
           <View style={styles.reviewRow}>
-            <Text style={styles.revLabel}>Schedule</Text>
+            <Text style={styles.revLabel}>Schedule & Recurrence</Text>
             <Text style={styles.revValueText}>
               {recurrenceType} • {departureDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </Text>
@@ -918,10 +1234,9 @@ export default function CreateTripScreen() {
           <View style={styles.revDivider} />
 
           <View style={styles.reviewRow}>
-            <Text style={styles.revLabel}>Restrictions</Text>
+            <Text style={styles.revLabel}>Matching Mode</Text>
             <Text style={styles.revValueText}>
-              {womenOnly ? 'Women Only • ' : 'All Genders • '}
-              {parcelEnabled ? 'Parcels OK' : 'No Parcels'}
+              {womenOnly ? 'Women Only' : restrictionMode === 'PARCEL_OK' ? 'Parcels OK' : 'All Passengers'}
             </Text>
           </View>
         </View>
@@ -953,7 +1268,7 @@ export default function CreateTripScreen() {
     )
   }
 
-  // ─── Main Wizard Layout ────────────────────────────────────────────────────
+  // ─── Main Layout ───────────────────────────────────────────────────────────
 
   return (
     <SafeAreaView edges={['top']} style={styles.safeArea}>
@@ -989,7 +1304,7 @@ export default function CreateTripScreen() {
         {step === 5 && renderStep5()}
       </ScrollView>
 
-      {/* Bottom Floating Navigation Buttons */}
+      {/* Bottom Floating Navigation */}
       {step < 5 && (
         <View style={[styles.bottomNav, { paddingBottom: Math.max(insets.bottom, 12) }]}>
           {step > 1 ? (
@@ -1008,7 +1323,7 @@ export default function CreateTripScreen() {
         </View>
       )}
 
-      {/* Interactive Map Location Picker Modal (matching reference screenshot) */}
+      {/* Map Location Picker Modal */}
       <LocationPickerModal
         visible={locationPickerTarget !== null}
         title={locationPickerTarget === 'pickup' ? 'Select Pickup Location' : 'Select Destination Location'}
@@ -1023,7 +1338,7 @@ export default function CreateTripScreen() {
         }}
       />
 
-      {/* Saved Locations Selector Modal */}
+      {/* Saved Locations Selector & Edit Modal */}
       <Modal
         visible={savedLocModalTarget !== null}
         animationType="slide"
@@ -1034,40 +1349,113 @@ export default function CreateTripScreen() {
           <View style={[styles.modalSheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Select Saved Location</Text>
-              <TouchableOpacity onPress={() => setSavedLocModalTarget(null)}>
-                <Feather name="x" size={22} color="#FFFFFF" />
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <TouchableOpacity onPress={handleOpenAddSavedLoc} style={styles.addLocHeaderBtn}>
+                  <Feather name="plus" size={16} color="#3B82F6" />
+                  <Text style={styles.addLocHeaderText}>Add New</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setSavedLocModalTarget(null)}>
+                  <Feather name="x" size={22} color="#FFFFFF" />
+                </TouchableOpacity>
+              </View>
             </View>
 
             <FlatList
               data={savedLocations}
               keyExtractor={(item) => item.id}
               renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.savedLocRow}
-                  onPress={() => {
-                    const locData: SelectedLocationData = {
-                      latitude: item.latitude,
-                      longitude: item.longitude,
-                      address: item.address,
-                      city: item.city,
-                    }
-                    if (savedLocModalTarget === 'pickup') setPickupData(locData)
-                    else setDropData(locData)
-                    setSavedLocModalTarget(null)
-                  }}
-                >
-                  <View style={styles.savedLocIconBox}>
-                    <Feather name="map-pin" size={18} color="#3B82F6" />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.savedLocLabel}>{item.label}</Text>
-                    <Text style={styles.savedLocAddr} numberOfLines={2}>{item.address}</Text>
-                  </View>
-                  <Feather name="chevron-right" size={18} color="#64748B" />
-                </TouchableOpacity>
+                <View style={styles.savedLocRowWrapper}>
+                  <TouchableOpacity
+                    style={styles.savedLocRow}
+                    onPress={() => {
+                      const locData: SelectedLocationData = {
+                        latitude: item.latitude,
+                        longitude: item.longitude,
+                        address: item.address,
+                        city: item.city || 'Pune',
+                      }
+                      if (savedLocModalTarget === 'pickup') setPickupData(locData)
+                      else setDropData(locData)
+                      setSavedLocModalTarget(null)
+                    }}
+                  >
+                    <View style={styles.savedLocIconBox}>
+                      <Feather name="map-pin" size={18} color="#3B82F6" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.savedLocLabel}>{item.label}</Text>
+                      <Text style={styles.savedLocAddr} numberOfLines={2}>{item.address}</Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.locActionBtn}
+                    onPress={() => handleOpenEditSavedLoc(item)}
+                  >
+                    <Feather name="edit-2" size={16} color="#94A3B8" />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.locActionBtn}
+                    onPress={() => handleDeleteSavedLocation(item.id)}
+                  >
+                    <Feather name="trash-2" size={16} color="#EF4444" />
+                  </TouchableOpacity>
+                </View>
               )}
             />
+          </View>
+        </View>
+      </Modal>
+
+      {/* Edit / Add Saved Location Modal Form */}
+      <Modal
+        visible={showEditLocModal}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setShowEditLocModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.editLocCard, { paddingBottom: Math.max(insets.bottom, 20) }]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>{editingLocId ? 'Edit Saved Location' : 'Add New Location'}</Text>
+              <TouchableOpacity onPress={() => setShowEditLocModal(false)}>
+                <Feather name="x" size={20} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Location Label</Text>
+            <TextInput
+              style={styles.fieldInput}
+              placeholder="e.g. Swargate Hub / Dadar Station"
+              placeholderTextColor="#64748B"
+              value={locFormLabel}
+              onChangeText={setLocFormLabel}
+            />
+
+            <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Full Address</Text>
+            <TextInput
+              style={[styles.fieldInput, { height: 60, textAlignVertical: 'top' }]}
+              placeholder="e.g. Swargate Bus Stand, Swargate, Pune"
+              placeholderTextColor="#64748B"
+              multiline
+              value={locFormAddress}
+              onChangeText={setLocFormAddress}
+            />
+
+            <Text style={[styles.fieldLabel, { marginTop: 12 }]}>City</Text>
+            <TextInput
+              style={styles.fieldInput}
+              value={locFormCity}
+              onChangeText={setLocFormCity}
+            />
+
+            <TouchableOpacity
+              style={styles.saveLocModalBtn}
+              onPress={handleSaveLocationForm}
+              disabled={savingLoc}
+            >
+              {savingLoc ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.saveLocModalBtnText}>Save Location</Text>}
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -1076,10 +1464,7 @@ export default function CreateTripScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#0A0F1D',
-  },
+  safeArea: { flex: 1, backgroundColor: '#0A0F1D' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1096,40 +1481,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  headerTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  headerStepText: {
-    fontSize: 12,
-    color: '#3B82F6',
-    fontWeight: '600',
-  },
-  stepperContainer: {
-    flexDirection: 'row',
-    gap: 6,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  stepIndicatorBar: {
-    flex: 1,
-    height: 4,
-    borderRadius: 2,
-  },
-  stepIndicatorActive: {
-    backgroundColor: '#3B82F6',
-  },
-  stepIndicatorInactive: {
-    backgroundColor: 'rgba(255,255,255,0.1)',
-  },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 110,
-  },
-  stepContainer: {
-    gap: 16,
-  },
+  headerTitle: { fontSize: 17, fontWeight: '700', color: '#FFFFFF' },
+  headerStepText: { fontSize: 12, color: '#3B82F6', fontWeight: '600' },
+  stepperContainer: { flexDirection: 'row', gap: 6, paddingHorizontal: 16, paddingVertical: 10 },
+  stepIndicatorBar: { flex: 1, height: 4, borderRadius: 2 },
+  stepIndicatorActive: { backgroundColor: '#3B82F6' },
+  stepIndicatorInactive: { backgroundColor: 'rgba(255,255,255,0.1)' },
+  scrollContent: { padding: 16, paddingBottom: 110 },
+  stepContainer: { gap: 16 },
   sectionCard: {
     backgroundColor: 'rgba(255,255,255,0.04)',
     borderRadius: 16,
@@ -1137,498 +1496,321 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.06)',
   },
-  sectionHeading: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginBottom: 4,
-  },
-  sectionSubtext: {
-    fontSize: 12,
-    color: '#94A3B8',
-    marginBottom: 12,
-  },
-  modeToggleRow: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    borderRadius: 12,
-    padding: 4,
-    marginTop: 8,
-  },
+  sectionHeading: { fontSize: 15, fontWeight: '700', color: '#FFFFFF', marginBottom: 4 },
+  sectionSubtext: { fontSize: 12, color: '#94A3B8', marginBottom: 12 },
+  modeToggleRow: { flexDirection: 'row', gap: 10 },
   modeTab: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'rgba(255,255,255,0.02)',
     gap: 8,
   },
-  modeTabActive: {
-    backgroundColor: '#3B82F6',
-  },
-  modeTabText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#64748B',
-  },
-  modeTabTextActive: {
-    color: '#FFFFFF',
-  },
-  locBlock: {
-    marginVertical: 4,
-  },
-  locHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 6,
-    gap: 6,
-  },
-  dotIndicator: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  locTitle: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#94A3B8',
-    letterSpacing: 0.5,
-  },
+  modeTabActive: { backgroundColor: '#2563EB', borderColor: '#3B82F6' },
+  modeTabText: { fontSize: 13, fontWeight: '600', color: '#94A3B8' },
+  modeTabTextActive: { color: '#FFFFFF', fontWeight: '700' },
+  locBlock: { marginTop: 4 },
+  locHeaderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 6 },
+  dotIndicator: { width: 8, height: 8, borderRadius: 4 },
+  locTitle: { fontSize: 11, fontWeight: '800', color: '#94A3B8', letterSpacing: 0.5 },
   locInputBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: 'rgba(255,255,255,0.03)',
     borderRadius: 12,
-    padding: 12,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
+    padding: 12,
   },
-  locMainText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  locSubText: {
-    fontSize: 12,
-    color: '#94A3B8',
-    marginTop: 2,
-  },
-  quickActionsRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 8,
-  },
+  locMainText: { fontSize: 14, fontWeight: '700', color: '#FFFFFF' },
+  locSubText: { fontSize: 12, color: '#94A3B8', marginTop: 2 },
+  quickActionsRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
   quickActionChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
+    gap: 6,
   },
-  quickActionText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#E2E8F0',
-  },
-  routeDivider: {
-    height: 1,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    marginVertical: 14,
-  },
-  routeStatsRow: {
+  quickActionText: { fontSize: 11, fontWeight: '600', color: '#E2E8F0' },
+  routeDivider: { height: 1, backgroundColor: 'rgba(255,255,255,0.06)', marginVertical: 14 },
+  hexListContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  hexChip: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  statLabel: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#94A3B8',
-    letterSpacing: 0.5,
-  },
-  statVal: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginTop: 2,
-  },
-  configInputsRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 8,
-  },
-  configField: {
-    flex: 1,
-  },
-  fieldLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#94A3B8',
-    marginBottom: 6,
-  },
-  fieldInput: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    color: '#FFFFFF',
-    fontSize: 14,
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
+    paddingHorizontal: 12,
+    paddingVertical: 9,
   },
-  serviceGrid: {
+  hexChipSelected: { borderColor: '#3B82F6', backgroundColor: '#3B82F615' },
+  hexChipText: { fontSize: 12, color: '#94A3B8', fontWeight: '500' },
+  hexChipTextSelected: { color: '#FFFFFF', fontWeight: '700' },
+  hexSummaryBadge: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginTop: 8,
+    alignItems: 'center',
+    backgroundColor: '#3B82F610',
+    padding: 10,
+    borderRadius: 10,
+    marginTop: 12,
+    gap: 8,
   },
-  serviceCard: {
-    width: (SCREEN_W - 54) / 2,
+  hexSummaryText: { fontSize: 12, color: '#93C5FD', fontWeight: '600' },
+  routeStatsRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  statLabel: { fontSize: 10, fontWeight: '800', color: '#64748B', letterSpacing: 0.5 },
+  statVal: { fontSize: 16, fontWeight: '800', color: '#FFFFFF', marginTop: 2 },
+  configInputsRow: { flexDirection: 'row', gap: 10 },
+  configField: { flex: 1 },
+  fieldLabel: { fontSize: 12, fontWeight: '600', color: '#94A3B8', marginBottom: 6 },
+  fieldInput: {
     backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#FFFFFF',
+  },
+  serviceGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  serviceCard: {
+    width: (SCREEN_W - 64) / 2,
+    backgroundColor: 'rgba(255,255,255,0.02)',
     borderRadius: 14,
     padding: 12,
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.06)',
+    position: 'relative',
   },
-  srvIconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
-  },
-  srvTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginBottom: 2,
-  },
-  srvDesc: {
-    fontSize: 11,
-    color: '#94A3B8',
-    lineHeight: 15,
-  },
-  checkBadge: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  metaForm: {
-    marginTop: 4,
-  },
-  pillRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 4,
-  },
+  srvIconCircle: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
+  srvTitle: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
+  srvDesc: { fontSize: 11, color: '#64748B', marginTop: 2 },
+  checkBadge: { position: 'absolute', top: 10, right: 10, width: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  metaForm: { marginTop: 4 },
+  pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   choicePill: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
-  choicePillActive: {
-    backgroundColor: '#3B82F6',
-    borderColor: '#3B82F6',
-  },
-  choicePillText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#94A3B8',
-  },
-  choicePillTextActive: {
-    color: '#FFFFFF',
-  },
-  orgBox: {
+  choicePillActive: { backgroundColor: '#3B82F6', borderColor: '#3B82F6' },
+  choicePillText: { fontSize: 12, fontWeight: '600', color: '#94A3B8' },
+  choicePillTextActive: { color: '#FFFFFF', fontWeight: '700' },
+  orgDropdownList: { gap: 8 },
+  orgCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(139,92,246,0.1)',
+    backgroundColor: 'rgba(255,255,255,0.02)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    padding: 12,
+  },
+  orgCardSelected: { borderColor: '#8B5CF6', backgroundColor: '#8B5CF612' },
+  orgCardTitle: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
+  orgCardSub: { fontSize: 11, color: '#94A3B8', marginTop: 2 },
+  routeCardItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.02)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    padding: 10,
+    marginTop: 6,
+  },
+  routeCardItemSelected: { borderColor: '#8B5CF6', backgroundColor: '#8B5CF612' },
+  routeItemTitle: { fontSize: 12, fontWeight: '700', color: '#FFFFFF' },
+  routeItemTime: { fontSize: 11, color: '#A78BFA', marginTop: 2 },
+  rosterContainer: {
+    backgroundColor: 'rgba(255,255,255,0.02)',
     borderRadius: 12,
     padding: 12,
+    marginTop: 14,
     borderWidth: 1,
-    borderColor: 'rgba(139,92,246,0.3)',
-    marginTop: 4,
+    borderColor: 'rgba(255,255,255,0.06)',
   },
-  orgNameText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
+  memberRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 8 },
+  memberName: { fontSize: 12, fontWeight: '700', color: '#E2E8F0' },
+  memberStop: { fontSize: 11, color: '#94A3B8', flex: 1 },
+  proximityAlertNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#10B98115',
+    padding: 12,
+    borderRadius: 12,
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: '#10B98130',
+    gap: 10,
   },
-  orgSubText: {
-    fontSize: 12,
-    color: '#C4B5FD',
-    marginTop: 2,
-  },
-  orgNoteText: {
-    fontSize: 12,
-    color: '#94A3B8',
-    marginTop: 8,
-    lineHeight: 16,
-  },
+  proximityAlertText: { fontSize: 12, color: '#A7F3D0', fontWeight: '500', flex: 1, lineHeight: 17 },
   dateTimeBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: 'rgba(255,255,255,0.03)',
     borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
     padding: 12,
     marginTop: 12,
   },
-  dateTimeText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  switchRow: {
+  dateTimeText: { fontSize: 13, color: '#FFFFFF', fontWeight: '600' },
+  switchRow: { flexDirection: 'row', alignItems: 'center', marginTop: 14 },
+  switchTitle: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
+  switchDesc: { fontSize: 11, color: '#64748B', marginTop: 2 },
+  restrictionList: { gap: 10 },
+  restrictionOption: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: 'rgba(255,255,255,0.02)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    padding: 12,
+    gap: 12,
   },
-  switchTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  switchDesc: {
-    fontSize: 11,
-    color: '#94A3B8',
-    marginTop: 2,
-  },
+  restrictionOptionActive: { borderColor: '#3B82F6', backgroundColor: '#3B82F610' },
+  restIconBox: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  restTitle: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
+  restDesc: { fontSize: 11, color: '#94A3B8', marginTop: 2 },
   vehCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: 'rgba(255,255,255,0.02)',
     borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
     padding: 12,
     marginBottom: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
   },
-  vehCardSelected: {
-    borderColor: '#3B82F6',
-    backgroundColor: 'rgba(59,130,246,0.1)',
-  },
-  vehIconBox: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  vehModelText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  vehPlateText: {
-    fontSize: 12,
-    color: '#94A3B8',
-    marginTop: 2,
-  },
-  counterRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 20,
-    marginTop: 10,
-  },
-  counterBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#3B82F6',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  counterValBox: {
-    alignItems: 'center',
-    width: 120,
-  },
-  counterValText: {
-    fontSize: 32,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-  counterValSub: {
-    fontSize: 12,
-    color: '#94A3B8',
-  },
+  vehCardSelected: { borderColor: '#3B82F6', backgroundColor: '#3B82F610' },
+  vehIconBox: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.04)', alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+  vehModelText: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
+  vehPlateText: { fontSize: 11, color: '#64748B', marginTop: 2 },
+  counterRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 20, marginVertical: 8 },
+  counterBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#3B82F6', alignItems: 'center', justifyContent: 'center' },
+  counterValBox: { alignItems: 'center' },
+  counterValText: { fontSize: 28, fontWeight: '800', color: '#FFFFFF' },
+  counterValSub: { fontSize: 11, color: '#64748B' },
   reviewBanner: {
-    backgroundColor: 'rgba(59,130,246,0.12)',
-    borderRadius: 14,
-    padding: 14,
+    backgroundColor: '#3B82F615',
+    padding: 16,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(59,130,246,0.3)',
+    borderColor: '#3B82F630',
   },
-  reviewBannerTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#60A5FA',
-  },
-  reviewBannerSub: {
-    fontSize: 12,
-    color: '#93C5FD',
-    marginTop: 2,
-  },
-  reviewRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  revLabel: {
-    fontSize: 13,
-    color: '#94A3B8',
-    fontWeight: '600',
-  },
-  revValBadge: {
-    backgroundColor: 'rgba(59,130,246,0.2)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  revValBadgeText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#60A5FA',
-  },
-  revValueText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  revSubAddress: {
-    fontSize: 12,
-    color: '#64748B',
-    marginTop: 4,
-  },
-  revDivider: {
-    height: 1,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    marginVertical: 10,
-  },
-  publishCTA: {
-    borderRadius: 14,
-    overflow: 'hidden',
-    marginTop: 10,
-  },
-  publishGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 16,
-  },
-  publishCTAText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
+  reviewBannerTitle: { fontSize: 16, fontWeight: '800', color: '#FFFFFF' },
+  reviewBannerSub: { fontSize: 12, color: '#93C5FD', marginTop: 2 },
+  reviewRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  revLabel: { fontSize: 12, color: '#94A3B8', fontWeight: '500' },
+  revValueText: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
+  revValBadge: { backgroundColor: '#3B82F620', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  revValBadgeText: { fontSize: 11, color: '#3B82F6', fontWeight: '700' },
+  revSubAddress: { fontSize: 11, color: '#64748B', marginTop: 3 },
+  revDivider: { height: 1, backgroundColor: 'rgba(255,255,255,0.06)', marginVertical: 10 },
+  publishCTA: { borderRadius: 14, overflow: 'hidden', marginTop: 10 },
+  publishGradient: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 15 },
+  publishCTAText: { fontSize: 15, fontWeight: '800', color: '#FFFFFF' },
   bottomNav: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#0B1120',
     paddingHorizontal: 16,
     paddingTop: 12,
+    backgroundColor: '#0A0F1D',
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.08)',
+    borderTopColor: 'rgba(255,255,255,0.06)',
   },
   prevBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
     backgroundColor: 'rgba(255,255,255,0.06)',
     gap: 6,
   },
-  prevBtnText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#94A3B8',
-  },
+  prevBtnText: { fontSize: 13, fontWeight: '600', color: '#94A3B8' },
   nextBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#3B82F6',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#2563EB',
+    gap: 6,
   },
-  nextBtnText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'flex-end',
-  },
+  nextBtnText: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
   modalSheet: {
-    backgroundColor: '#1E293B',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 20,
-    maxHeight: '70%',
+    backgroundColor: '#0F172A',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 16,
+    maxHeight: '80%',
   },
-  modalHeader: {
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  modalTitle: { fontSize: 16, fontWeight: '700', color: '#FFFFFF' },
+  addLocHeaderBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  addLocHeaderText: { fontSize: 13, color: '#3B82F6', fontWeight: '700' },
+  savedLocRowWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  modalTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  savedLocRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.06)',
+  },
+  savedLocRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
   },
   savedLocIconBox: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: 'rgba(59,130,246,0.15)',
+    backgroundColor: '#3B82F615',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
   },
-  savedLocLabel: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
+  savedLocLabel: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
+  savedLocAddr: { fontSize: 11, color: '#94A3B8', marginTop: 2 },
+  locActionBtn: { padding: 8 },
+  editLocCard: {
+    backgroundColor: '#0F172A',
+    borderRadius: 20,
+    padding: 18,
+    margin: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
   },
-  savedLocAddr: {
-    fontSize: 12,
-    color: '#94A3B8',
-    marginTop: 2,
+  saveLocModalBtn: {
+    backgroundColor: '#2563EB',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginTop: 18,
   },
+  saveLocModalBtnText: { fontSize: 14, fontWeight: '700', color: '#FFFFFF' },
 })

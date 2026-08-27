@@ -118,6 +118,7 @@ class PackersService:
             "subtotal": subtotal,
             "gst_5_percent": gst_amount,
             "estimated_fare": total_fare,
+            "estimated_total": total_fare,
         }
 
     # ─────────────────────────────────────────────────────────────────
@@ -497,3 +498,86 @@ class PackersService:
             "refund_amount": float(refund_amount),
             "message": "Moving order cancelled. 100% deposit refunded to wallet.",
         }
+
+    # ─────────────────────────────────────────────────────────────────
+    # 8. GET ORDER DETAILS & CUSTOMER ORDERS
+    # ─────────────────────────────────────────────────────────────────
+    async def get_order_details(self, order_id: str) -> Dict[str, Any]:
+        """Fetch full moving order specification, inventory items, quotes, and POD."""
+        o_uuid = uuid.UUID(order_id) if isinstance(order_id, str) else order_id
+        order = await self.db.get(MovingOrder, o_uuid)
+        if not order:
+            res = await self.db.execute(select(MovingOrder).where(MovingOrder.reference == order_id))
+            order = res.scalar_one_or_none()
+            if not order:
+                raise HTTPException(status_code=404, detail="Moving order not found")
+
+        # Inventory Items
+        items_res = await self.db.execute(select(MovingItem).where(MovingItem.order_id == order.id))
+        items = items_res.scalars().all()
+
+        # Quotes
+        quotes_res = await self.db.execute(select(MovingQuote).where(MovingQuote.order_id == order.id))
+        quotes = quotes_res.scalars().all()
+
+        return {
+            "order_id": str(order.id),
+            "reference": order.reference,
+            "move_size": order.move_size.value if hasattr(order.move_size, "value") else str(order.move_size),
+            "scheduled_move_date": order.scheduled_move_date.isoformat() if order.scheduled_move_date else None,
+            "pickup_address": order.pickup_address,
+            "pickup_lat": order.pickup_lat,
+            "pickup_lng": order.pickup_lng,
+            "drop_address": order.drop_address,
+            "drop_lat": order.drop_lat,
+            "drop_lng": order.drop_lng,
+            "distance_km": order.distance_km,
+            "status": order.status.value if hasattr(order.status, "value") else str(order.status),
+            "base_estimate": float(order.base_estimate),
+            "final_fare": float(order.final_fare) if order.final_fare else float(order.base_estimate),
+            "delivery_otp": order.delivery_otp,
+            "items": [
+                {
+                    "id": str(it.id),
+                    "category": it.category,
+                    "item_name": it.item_name,
+                    "quantity": it.quantity,
+                    "is_fragile": it.is_fragile,
+                    "needs_disassembly": it.needs_disassembly,
+                }
+                for it in items
+            ],
+            "quotes": [
+                {
+                    "quote_id": str(q.id),
+                    "mover_id": str(q.mover_id),
+                    "quoted_fare": float(q.quoted_fare),
+                    "crew_size": q.crew_size,
+                    "truck_type": q.truck_type,
+                    "estimated_hours": q.estimated_hours,
+                    "status": q.status.value if hasattr(q.status, "value") else str(q.status),
+                }
+                for q in quotes
+            ],
+        }
+
+    async def get_customer_orders(self, customer_id_str: str) -> List[Dict[str, Any]]:
+        """Fetch all moving orders for a customer."""
+        c_uuid = uuid.UUID(customer_id_str) if isinstance(customer_id_str, str) else customer_id_str
+        # Check CustomerProfile id or user_id
+        res = await self.db.execute(
+            select(MovingOrder)
+            .where(or_(MovingOrder.customer_id == c_uuid, MovingOrder.customer_id.in_(
+                select(CustomerProfile.id).where(CustomerProfile.user_id == c_uuid)
+            )))
+            .order_by(desc(MovingOrder.created_at))
+        )
+        orders = res.scalars().all()
+        results = []
+        for o in orders:
+            try:
+                dt = await self.get_order_details(str(o.id))
+                results.append(dt)
+            except Exception:
+                pass
+        return results

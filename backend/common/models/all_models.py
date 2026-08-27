@@ -439,6 +439,7 @@ class CustomerProfile(Base, UUIDMixin, TimestampMixin):
     pending_refund_balance: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0, nullable=False)
     subscription_plan_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("subscription_plans.id"), nullable=True)
     women_only_mode: Mapped[bool] = mapped_column(Boolean, default=False)
+    service_preferences: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)  # {default_service, pinned_services, ladies_only, push_notifications, arrival_alerts, marketing_emails}
     referral_code: Mapped[Optional[str]] = mapped_column(String(20), unique=True, nullable=True)
     rating: Mapped[Decimal] = mapped_column(Numeric(3, 2), default=Decimal("5.00"), nullable=False)
     total_ratings: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -2350,7 +2351,14 @@ class DriverPreference(Base, UUIDMixin, TimestampMixin):
     allow_local: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     allow_airport: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     allow_outstation: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    allow_rental: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    allow_parcel: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    allow_transport: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    allow_packers: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    allow_carpool: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     allow_scheduled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    ladies_only_accepted: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    service_customizations: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     min_earning_cutoff: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     max_pickup_distance_km: Mapped[float] = mapped_column(Float, default=7.0, nullable=False)
     max_pickup_eta_min: Mapped[int] = mapped_column(Integer, default=15, nullable=False)
@@ -5170,5 +5178,27 @@ class MovingPOD(Base, UUIDMixin, TimestampMixin):
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now(), nullable=False)
 
     order: Mapped["MovingOrder"] = relationship("MovingOrder", back_populates="pod")
+
+
+# ============================================================
+# NOTIFICATION SYSTEM
+# ============================================================
+
+class NotificationLog(Base, UUIDMixin, TimestampMixin):
+    """
+    Idempotency log for push notifications.
+    Prevents duplicate delivery of the same notification event.
+    Also provides a full audit trail of all push notifications sent.
+    """
+    __tablename__ = "notification_logs"
+
+    idempotency_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    delivery_status: Mapped[str] = mapped_column(String(30), default="sent", nullable=False)  # sent, failed, suppressed
+    device_token_prefix: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # first 10 chars for debugging
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

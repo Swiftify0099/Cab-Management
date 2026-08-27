@@ -1,6 +1,9 @@
 """
 Atomic Multi-Driver Matching Engine — Feature 6.
 Ensures zero race conditions and single authoritative assignment when multiple drivers express interest in Smart Radar rides.
+
+Also provides acquire_seats_transactionally() for intercity trip seat booking
+to prevent double-booking of the last available seat.
 """
 from __future__ import annotations
 
@@ -16,11 +19,115 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.models.all_models import (
     Driver, DriverStatus, RideRequest, RideRequestStatus,
-    RideOffer, RideOfferStatus,
+    RideOffer, RideOfferStatus, Trip, TripStatus, Booking, BookingStatus,
 )
 from common.utils.redis_client import get_redis, publish_event
 
 logger = structlog.get_logger(__name__)
+
+
+async def acquire_seats_transactionally(
+    trip_id: uuid.UUID,
+    seat_count: int,
+    db: AsyncSession,
+) -> tuple[bool, str]:
+    """
+    Atomically reserve seats on an intercity trip using SELECT FOR UPDATE.
+
+    This prevents double-booking when two customers attempt to book the last
+    available seat at the same time.
+
+    Returns:
+        (True, "ok")                — seats reserved, trip state updated
+        (False, "trip_not_found")   — trip does not exist
+        (False, "trip_not_published")— trip is not in PUBLISHED state
+        (False, "insufficient_seats")— not enough available_seats
+        (False, "trip_full")        — trip.is_full is already True
+    """
+    try:
+        # Lock the trip row for the duration of this transaction
+        trip_res = await db.execute(
+            select(Trip)
+            .where(Trip.id == trip_id)
+            .with_for_update()
+        )
+        trip = trip_res.scalar_one_or_none()
+
+        if not trip:
+            return False, "trip_not_found"
+
+        if trip.status not in (TripStatus.PUBLISHED, TripStatus.ACTIVE):
+            return False, "trip_not_published"
+
+        if trip.is_full:
+            return False, "trip_full"
+
+        if trip.available_seats < seat_count:
+            return False, "insufficient_seats"
+
+        # Decrement seats
+        trip.available_seats -= seat_count
+        trip.occupied_seats = (trip.occupied_seats or 0) + seat_count
+
+        # Auto-set FULL state if no seats remain
+        if trip.available_seats <= 0:
+            trip.available_seats = 0
+            trip.is_full = True
+            trip.status = TripStatus.FULL
+
+        await db.flush()  # Flush within transaction (not commit — caller commits)
+
+        logger.info(
+            "Seats acquired atomically",
+            trip_id=str(trip_id),
+            seats_taken=seat_count,
+            seats_remaining=trip.available_seats,
+            is_full=trip.is_full,
+        )
+        return True, "ok"
+
+    except Exception as exc:
+        logger.exception("acquire_seats_transactionally failed", trip_id=str(trip_id), error=str(exc))
+        await db.rollback()
+        return False, "db_error"
+
+
+async def release_seats_transactionally(
+    trip_id: uuid.UUID,
+    seat_count: int,
+    db: AsyncSession,
+) -> bool:
+    """
+    Return seats to a trip atomically (called when a booking is cancelled or rejected).
+    Clears the FULL state if applicable.
+    """
+    try:
+        trip_res = await db.execute(
+            select(Trip)
+            .where(Trip.id == trip_id)
+            .with_for_update()
+        )
+        trip = trip_res.scalar_one_or_none()
+        if not trip:
+            return False
+
+        trip.available_seats = min(trip.available_seats + seat_count, trip.total_seats)
+        trip.occupied_seats = max((trip.occupied_seats or 0) - seat_count, 0)
+
+        # Un-full the trip if seats are available again
+        if trip.is_full and trip.available_seats > 0:
+            trip.is_full = False
+            if trip.status == TripStatus.FULL:
+                trip.status = TripStatus.PUBLISHED
+
+        await db.flush()
+        return True
+
+    except Exception as exc:
+        logger.exception("release_seats_transactionally failed", trip_id=str(trip_id), error=str(exc))
+        await db.rollback()
+        return False
+
 
 
 class AtomicMatchingEngine:

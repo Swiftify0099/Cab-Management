@@ -490,6 +490,26 @@ class AirportService:
         }
 
     @staticmethod
+    async def get_customer_bookings(db: AsyncSession, customer_id: uuid.UUID) -> List[Dict[str, Any]]:
+        """List active and historical airport bookings for the customer."""
+        stmt = (
+            select(AirportBooking)
+            .where(AirportBooking.customer_id == customer_id)
+            .order_by(AirportBooking.created_at.desc())
+        )
+        res = await db.execute(stmt)
+        bookings = res.scalars().all()
+
+        results = []
+        for b in bookings:
+            try:
+                detail = await AirportService.get_booking_details(db, b.id)
+                results.append(detail)
+            except Exception:
+                pass
+        return results
+
+    @staticmethod
     async def handle_flight_delay_recalculation(
         db: AsyncSession,
         flight_number: str,

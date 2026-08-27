@@ -48,7 +48,14 @@ class SmartRadarService:
                 allow_local=True,
                 allow_airport=True,
                 allow_outstation=False,
+                allow_rental=True,
+                allow_parcel=True,
+                allow_transport=True,
+                allow_packers=True,
+                allow_carpool=True,
                 allow_scheduled=True,
+                ladies_only_accepted=True,
+                service_customizations=None,
                 min_earning_cutoff=0.0,
                 max_pickup_distance_km=15.0,
                 max_pickup_eta_min=30,
@@ -67,7 +74,14 @@ class SmartRadarService:
         allow_local: Optional[bool] = None,
         allow_airport: Optional[bool] = None,
         allow_outstation: Optional[bool] = None,
+        allow_rental: Optional[bool] = None,
+        allow_parcel: Optional[bool] = None,
+        allow_transport: Optional[bool] = None,
+        allow_packers: Optional[bool] = None,
+        allow_carpool: Optional[bool] = None,
         allow_scheduled: Optional[bool] = None,
+        ladies_only_accepted: Optional[bool] = None,
+        service_customizations: Optional[dict] = None,
         min_earning_cutoff: Optional[float] = None,
         max_pickup_distance_km: Optional[float] = None,
         max_pickup_eta_min: Optional[int] = None,
@@ -82,7 +96,18 @@ class SmartRadarService:
         if allow_local is not None: pref.allow_local = allow_local
         if allow_airport is not None: pref.allow_airport = allow_airport
         if allow_outstation is not None: pref.allow_outstation = allow_outstation
+        if allow_rental is not None: pref.allow_rental = allow_rental
+        if allow_parcel is not None: pref.allow_parcel = allow_parcel
+        if allow_transport is not None: pref.allow_transport = allow_transport
+        if allow_packers is not None: pref.allow_packers = allow_packers
+        if allow_carpool is not None: pref.allow_carpool = allow_carpool
         if allow_scheduled is not None: pref.allow_scheduled = allow_scheduled
+        if ladies_only_accepted is not None: pref.ladies_only_accepted = ladies_only_accepted
+        if service_customizations is not None:
+            # Merge if existing
+            current_cust = dict(pref.service_customizations or {})
+            current_cust.update(service_customizations)
+            pref.service_customizations = current_cust
         if min_earning_cutoff is not None: pref.min_earning_cutoff = min_earning_cutoff
         if max_pickup_distance_km is not None: pref.max_pickup_distance_km = max_pickup_distance_km
         if max_pickup_eta_min is not None: pref.max_pickup_eta_min = max_pickup_eta_min
@@ -196,16 +221,30 @@ class SmartRadarService:
             if req.id in excluded_req_ids:
                 continue
 
-            # ── VISIBILITY MODE COVERAGE FILTER ──
-            if visibility_mode == "all_city":
-                # In all_city mode, all cities are eligible
-                pass
-            elif visibility_mode == "specific_city":
-                if req.pickup_city_id and selected_city_ids and req.pickup_city_id not in selected_city_ids:
-                    continue
-            elif visibility_mode == "specific_hex":
-                if req.pickup_hex_id and covered_hex_ids and req.pickup_hex_id not in covered_hex_ids:
-                    continue
+            # ── SERVICE TYPE PERMISSION FILTER ──
+            st = (getattr(req, 'service_type', 'cab') or 'cab').lower()
+            if st in ('cab', 'local') and not pref.allow_local:
+                continue
+            elif st == 'airport' and not pref.allow_airport:
+                continue
+            elif st == 'outstation' and not pref.allow_outstation:
+                continue
+            elif st == 'rental' and not pref.allow_rental:
+                continue
+            elif st == 'parcel' and not pref.allow_parcel:
+                continue
+            elif st in ('transport', 'goods') and not pref.allow_transport:
+                continue
+            elif st in ('packers', 'movers') and not pref.allow_packers:
+                continue
+            elif st == 'carpool' and not pref.allow_carpool:
+                continue
+
+            # Scheduled & Women-only checks
+            if getattr(req, 'is_scheduled', False) and not pref.allow_scheduled:
+                continue
+            if getattr(req, 'women_only', False) and not pref.ladies_only_accepted:
+                continue
 
             # Straight line pickup distance (Physical proximity check)
             pickup_dist = haversine_distance_km(driver_lat, driver_lng, req.pickup_lat, req.pickup_lng)

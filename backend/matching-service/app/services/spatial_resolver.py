@@ -174,12 +174,14 @@ class SpatialResolverService:
         max_pickup_radius_km: float = 15.0,
         excluded_driver_ids: Optional[List[str]] = None,
         discovery_mode: str = "ALL",  # ALL, NEARBY, CITY, HEX
+        service_type: str = "cab",
     ) -> List[dict]:
         """
-        Common Dispatch Candidate Engine supporting 3 matching modes:
+        Common Dispatch Candidate Engine supporting 3 matching modes and all service type permissions:
           1. NEARBY: Physical spatial distance (PostGIS ST_DWithin) + location freshness + active status
           2. CITY COVERAGE: Driver selected specific city coverage matching pickup_city_id (or all_city)
           3. HEX / ZONE COVERAGE: Driver selected H3 hex coverage matching pickup_hex_id
+          4. SERVICE PERMISSIONS: Enforces driver service preferences (allow_local, allow_airport, etc.)
 
         All candidates go through the unified eligibility, ranking, and fanout pipeline.
         """
@@ -201,6 +203,26 @@ class SpatialResolverService:
             mode_condition = f"AND (dp.visibility_mode = 'specific_city' AND dcc.city_id = CAST('{city_id_str}' AS uuid) AND dcc.is_selected = TRUE)" if city_id_str else "AND FALSE"
         elif mode_upper == "HEX":
             mode_condition = f"AND (dp.visibility_mode = 'specific_hex' AND dhc.hex_id = CAST('{hex_id_str}' AS uuid))" if hex_id_str else "AND FALSE"
+
+        # Service permission filter condition
+        st = (service_type or "cab").lower()
+        service_clause = ""
+        if st in ("cab", "local"):
+            service_clause = "AND (dp.allow_local IS NULL OR dp.allow_local = TRUE)"
+        elif st == "airport":
+            service_clause = "AND (dp.allow_airport IS NULL OR dp.allow_airport = TRUE)"
+        elif st == "outstation":
+            service_clause = "AND (dp.allow_outstation IS NULL OR dp.allow_outstation = TRUE)"
+        elif st == "rental":
+            service_clause = "AND (dp.allow_rental IS NULL OR dp.allow_rental = TRUE)"
+        elif st == "parcel":
+            service_clause = "AND (dp.allow_parcel IS NULL OR dp.allow_parcel = TRUE)"
+        elif st in ("transport", "goods"):
+            service_clause = "AND (dp.allow_transport IS NULL OR dp.allow_transport = TRUE)"
+        elif st in ("packers", "movers"):
+            service_clause = "AND (dp.allow_packers IS NULL OR dp.allow_packers = TRUE)"
+        elif st == "carpool":
+            service_clause = "AND (dp.allow_carpool IS NULL OR dp.allow_carpool = TRUE)"
 
         sql = text(f"""
             SELECT DISTINCT
@@ -262,6 +284,7 @@ class SpatialResolverService:
                     (CAST(:city_id AS text) IS NULL)
                 )
                 {mode_condition}
+                {service_clause}
                 -- Exclude drivers who already rejected or had this offer removed
                 AND d.id NOT IN (
                     SELECT ro.driver_id FROM ride_offers ro

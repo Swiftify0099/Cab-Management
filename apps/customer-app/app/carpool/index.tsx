@@ -4,7 +4,7 @@
  * Features: Route corridor search, seat-by-seat selection, ladies-only filter,
  * carbon emissions badge, host chauffeur rating, instant wallet booking, and boarding OTP voucher.
  */
-import React, { useState } from 'react'
+import React, { useState, useCallback, useEffect } from 'react'
 import {
   View,
   ScrollView,
@@ -22,101 +22,107 @@ import { LinearGradient } from 'expo-linear-gradient'
 import { useTheme } from '../../src/contexts/ThemeContext'
 import { useTranslation } from '../../src/i18n'
 import { AppText, AppButton, AppCard, AppBadge, AppDivider } from '../../src/components/ui'
+import { api } from '../../src/api/client'
 
-const MOCK_CARPOOLS = [
-  {
-    id: 'pool_1',
-    reference: 'POOL-260825-U2XE',
-    host_name: 'Abhijit Kulkarni',
-    host_rating: 4.94,
-    total_trips: 310,
-    vehicle: 'Hyundai Creta SX (Titan Grey)',
-    origin: 'Wakad Bridge, Pune',
-    destination: 'BKC, Mumbai',
-    departure: 'Tomorrow, 07:30 AM',
-    seats_available: 3,
-    price_per_seat: 450,
-    ladies_only: false,
-    co2_saved_kg: 18.0,
-    waypoints: ['Lonavala Toll', 'Vashi Flyover'],
-  },
-  {
-    id: 'pool_2',
-    reference: 'POOL-260825-L98Q',
-    host_name: 'Dr. Priya Shah',
-    host_rating: 4.98,
-    total_trips: 185,
-    vehicle: 'Honda City ZX (Pearl White)',
-    origin: 'Kothrud, Pune',
-    destination: 'Dadar West, Mumbai',
-    departure: 'Tomorrow, 08:00 AM',
-    seats_available: 2,
-    price_per_seat: 480,
-    ladies_only: true,
-    co2_saved_kg: 18.0,
-    waypoints: ['Khandala Point', 'Chembur Diamond Garden'],
-  },
-  {
-    id: 'pool_3',
-    reference: 'POOL-260825-N44R',
-    host_name: 'Suresh Patil',
-    host_rating: 4.91,
-    total_trips: 420,
-    vehicle: 'Maruti Suzuki Grand Vitara',
-    origin: 'Viman Nagar, Pune',
-    destination: 'Dwarka Circle, Nashik',
-    departure: 'Tomorrow, 06:00 AM',
-    seats_available: 4,
-    price_per_seat: 380,
-    ladies_only: false,
-    co2_saved_kg: 24.5,
-    waypoints: ['Alephata Junction', 'Sinnar Phata'],
-  },
-]
+// Real trips loaded from the backend /matching/trips/search endpoint
 
 export default function CarpoolScreen() {
   const { theme, isDark } = useTheme()
   const { t } = useTranslation()
   const params = useLocalSearchParams<{ origin?: string; destination?: string }>()
 
-  const [originCity, setOriginCity] = useState(params?.origin || 'Pune')
-  const [destinationCity, setDestinationCity] = useState(params?.destination || 'Mumbai')
+  const [originCity, setOriginCity] = useState(params?.origin || '')
+  const [destinationCity, setDestinationCity] = useState(params?.destination || '')
   const [seatsNeeded, setSeatsNeeded] = useState<number>(1)
   const [ladiesOnly, setLadiesOnly] = useState<boolean>(false)
   const [loading, setLoading] = useState<boolean>(false)
+  const [searching, setSearching] = useState<boolean>(false)
+  const [trips, setTrips] = useState<any[]>([])
+  const [searched, setSearched] = useState(false)
   const [selectedRide, setSelectedRide] = useState<any | null>(null)
   const [confirmedBooking, setConfirmedBooking] = useState<any | null>(null)
 
-  const filteredRides = MOCK_CARPOOLS.filter((r) => {
-    if (ladiesOnly && !r.ladies_only) return false
-    if (r.seats_available < seatsNeeded) return false
-    return true
-  })
-
-  const handleBookCarpool = (ride: any) => {
-    setLoading(true)
-    setTimeout(() => {
-      setLoading(false)
-      const mockOtp = Math.floor(1000 + Math.random() * 9000).toString()
-      setConfirmedBooking({
-        reference: `PBK-${Date.now().toString().slice(-6)}`,
-        trip_ref: ride.reference,
-        host_name: ride.host_name,
-        vehicle: ride.vehicle,
+  const searchTrips = useCallback(async () => {
+    setSearching(true)
+    setSearched(true)
+    try {
+      const params: any = {
         seats: seatsNeeded,
-        total_fare: ride.price_per_seat * seatsNeeded,
-        departure: ride.departure,
-        pickup: ride.origin,
-        drop: ride.destination,
-        otp: mockOtp,
-        co2_saved: (ride.co2_saved_kg * seatsNeeded).toFixed(1),
+        women_only: ladiesOnly,
+        service_type: 'cab',
+      }
+      if (originCity.trim()) params.pickup_city = originCity.trim()
+      if (destinationCity.trim()) params.destination_city = destinationCity.trim()
+      const res = await api.get('/matching/trips/search', { params })
+      setTrips(res.data?.data?.trips || [])
+    } catch (err: any) {
+      console.warn('[Carpool] Search error:', err?.response?.data || err?.message)
+      setTrips([])
+    } finally {
+      setSearching(false)
+    }
+  }, [originCity, destinationCity, seatsNeeded, ladiesOnly])
+
+  // Auto-search if origin/destination prefilled from params
+  useEffect(() => {
+    if (params?.origin || params?.destination) {
+      searchTrips()
+    }
+  }, [])
+
+  const filteredRides = trips  // Already filtered server-side
+
+  const handleBookCarpool = async (ride: any) => {
+    setLoading(true)
+    try {
+      const res = await api.post('/matching/trips/book-seat', {
+        trip_id: ride.trip_id,
+        seat_count: seatsNeeded,
+        pickup_address: ride.pickup?.address || originCity,
+        pickup_lat: ride.pickup?.lat,
+        pickup_lng: ride.pickup?.lng,
+        drop_address: ride.destination?.address || destinationCity,
+        drop_lat: ride.destination?.lat,
+        drop_lng: ride.destination?.lng,
+        has_parcel: false,
+        window_seat: false,
       })
+      const data = res.data?.data || {}
+      const booking = {
+        reference: data.booking_id || `BK-${Date.now().toString().slice(-6)}`,
+        trip_ref: ride.trip_id,
+        host_name: ride.driver?.full_name || 'Driver',
+        vehicle: ride.vehicle ? `${ride.vehicle.make} ${ride.vehicle.model}` : 'Vehicle',
+        seats: seatsNeeded,
+        total_fare: data.total_fare || ride.base_fare * seatsNeeded,
+        departure: ride.departure_time
+          ? new Date(ride.departure_time).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true })
+          : 'TBD',
+        pickup: ride.pickup?.address || originCity,
+        drop: ride.destination?.address || destinationCity,
+        otp: data.otp || '—',
+        co2_saved: (0.18 * (ride.distance_km || 1) * seatsNeeded).toFixed(1),
+      }
+      setConfirmedBooking(booking)
       Alert.alert(
         'Seat Reserved! 🚗👥',
-        `Your seat on ${ride.reference} is confirmed.\nBoarding OTP: ${mockOtp}`,
-        [{ text: 'View Voucher', onPress: () => { } }]
+        `Your seat is confirmed.\nBoarding OTP: ${booking.otp}`,
+        [{
+          text: 'View Voucher',
+          onPress: () => router.push({
+            pathname: '/track',
+            params: { bookingId: data.booking_id || booking.reference, tripId: ride.trip_id },
+          } as any),
+        }]
       )
-    }, 800)
+    } catch (err: any) {
+      Alert.alert(
+        'Booking Failed',
+        err?.response?.data?.detail || err?.response?.data?.message || 'Could not book seat. Please try again.',
+      )
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -271,40 +277,63 @@ export default function CarpoolScreen() {
           </LinearGradient>
         )}
 
+        {/* Search Button */}
+        <AppButton
+          onPress={searchTrips}
+          loading={searching}
+          disabled={searching}
+          style={{ marginHorizontal: 16, marginBottom: 12, marginTop: 4 }}
+        >
+          {searching ? 'Searching...' : '🔍 Search Trips'}
+        </AppButton>
+
         {/* Available Rides Section */}
         <View style={styles.sectionHeader}>
           <AppText style={[styles.sectionTitle, { color: theme.colors.textPrimary }]}>
-            Available Carpools ({filteredRides.length})
+            {searched ? `Available Trips (${filteredRides.length})` : 'Find Intercity Trips'}
           </AppText>
           <AppText style={[styles.subLabel, { color: theme.colors.textSecondary }]}>
-            Verified host drivers
+            {searched ? 'Real-time results' : 'Enter cities and search'}
           </AppText>
         </View>
 
+        {searched && filteredRides.length === 0 && !searching && (
+          <View style={{ alignItems: 'center', paddingVertical: 40, gap: 12 }}>
+            <MaterialCommunityIcons name="car-off" size={48} color={theme.colors.textSecondary} />
+            <AppText style={[styles.hostName, { color: theme.colors.textSecondary, textAlign: 'center' }]}>
+              No trips found matching your filters.
+            </AppText>
+            <AppText style={[styles.vehicleDesc, { color: theme.colors.textSecondary, textAlign: 'center' }]}>
+              Try different cities or dates, or check back later.
+            </AppText>
+          </View>
+        )}
+
         {filteredRides.map((ride) => (
-          <AppCard key={ride.id} style={[styles.rideCard, { backgroundColor: theme.colors.card }]}>
+          <AppCard key={ride.trip_id} style={[styles.rideCard, { backgroundColor: theme.colors.card }]}>
             <View style={styles.rideTop}>
               <View style={{ flex: 1 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                   <AppText style={[styles.hostName, { color: theme.colors.textPrimary }]}>
-                    {ride.host_name}
+                    {ride.driver?.full_name || 'Driver'}
                   </AppText>
                   <View style={styles.ratingBadge}>
                     <Ionicons name="star" size={12} color="#F59E0B" />
-                    <AppText style={styles.ratingText}>{ride.host_rating}</AppText>
+                    <AppText style={styles.ratingText}>{(ride.driver?.rating || 4.5).toFixed(2)}</AppText>
                   </View>
-                  {ride.ladies_only && (
+                  {ride.women_only && (
                     <AppBadge label="Women Only" variant="info" size="sm" />
                   )}
                 </View>
                 <AppText style={[styles.vehicleDesc, { color: theme.colors.textSecondary }]}>
-                  {ride.vehicle}
+                  {ride.vehicle ? `${ride.vehicle.make} ${ride.vehicle.model}` : 'Vehicle'}
+                  {ride.vehicle?.registration_number ? ` • ${ride.vehicle.registration_number}` : ''}
                 </AppText>
               </View>
 
               <View style={styles.priceContainer}>
                 <AppText style={[styles.priceValue, { color: theme.colors.primary }]}>
-                  ₹{ride.price_per_seat * seatsNeeded}
+                  ₹{((ride.base_fare || 0) * seatsNeeded).toFixed(0)}
                 </AppText>
                 <AppText style={[styles.pricePerSeat, { color: theme.colors.textSecondary }]}>
                   for {seatsNeeded} seat(s)
@@ -318,20 +347,25 @@ export default function CarpoolScreen() {
               <View style={styles.routeRow}>
                 <Ionicons name="time-outline" size={16} color={theme.colors.primary} />
                 <AppText style={[styles.departureText, { color: theme.colors.textPrimary }]}>
-                  {ride.departure}
+                  {ride.departure_time
+                    ? new Date(ride.departure_time).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true })
+                    : 'TBD'}
                 </AppText>
               </View>
 
               <View style={styles.routeRow}>
                 <Ionicons name="navigate-outline" size={16} color="#10B981" />
                 <AppText style={[styles.routeAddress, { color: theme.colors.textSecondary }]}>
-                  {ride.origin} → {ride.destination}
+                  {ride.pickup?.city || ride.pickup?.address || originCity} → {ride.destination?.city || ride.destination?.address || destinationCity}
                 </AppText>
               </View>
 
               <View style={styles.waypointsRow}>
                 <AppText style={[styles.waypointLabel, { color: theme.colors.textSecondary }]}>
-                  Corridor Stops: {ride.waypoints.join(' • ')}
+                  {ride.distance_km ? `${ride.distance_km} km` : ''}
+                  {ride.non_stop ? ' • Non-Stop' : ''}
+                  {ride.parcel_enabled ? ' • Parcel OK' : ''}
+                  {ride.available_seats != null ? ` • ${ride.available_seats} seats left` : ''}
                 </AppText>
               </View>
             </View>
@@ -340,7 +374,7 @@ export default function CarpoolScreen() {
               <View style={styles.ecoBadge}>
                 <MaterialCommunityIcons name="leaf" size={14} color="#10B981" />
                 <AppText style={styles.ecoText}>
-                  Save {(ride.co2_saved_kg * seatsNeeded).toFixed(1)} kg CO2
+                  Save {(0.18 * (ride.distance_km || 1) * seatsNeeded).toFixed(1)} kg CO2
                 </AppText>
               </View>
 
@@ -351,11 +385,11 @@ export default function CarpoolScreen() {
                 size="sm"
                 style={styles.bookBtn}
               >
-                {`Book Seat (₹${ride.price_per_seat * seatsNeeded})`}
+                {`Book Seat (₹${((ride.base_fare || 0) * seatsNeeded).toFixed(0)})`}
               </AppButton>
             </View>
           </AppCard>
-        ))}
+        ))}}
       </ScrollView>
     </SafeAreaView>
   )

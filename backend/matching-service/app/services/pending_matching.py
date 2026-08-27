@@ -101,6 +101,7 @@ class PendingMatchingService:
                 pb.from_time                AS from_time,
                 pb.to_time                  AS to_time,
                 pb.women_only               AS women_only,
+                pb.service_type             AS service_type,
                 ST_Distance(
                     pb.pickup_location::geography,
                     ST_MakePoint(:trip_lng, :trip_lat)::geography
@@ -123,7 +124,7 @@ class PendingMatchingService:
                     pb.destination_location::geography,
                     ST_MakePoint(:dest_lng, :dest_lat)::geography
                 ) <= :dest_radius_m
-                -- Women-only safety filter
+                -- Women-only safety filter (bidirectional)
                 AND (
                     (:trip_women_only = FALSE)
                     OR (pb.women_only = TRUE)
@@ -132,20 +133,33 @@ class PendingMatchingService:
                     (pb.women_only = FALSE)
                     OR (:trip_women_only = TRUE)
                 )
+                -- Parcel capability: if customer needs parcel, trip must allow it
+                AND (
+                    (pb.parcel = FALSE)
+                    OR (:trip_parcel_enabled = TRUE)
+                )
+                -- Service type must match
+                AND (
+                    (:trip_service_type = 'cab')
+                    OR (pb.service_type = :trip_service_type)
+                    OR (pb.service_type IS NULL)
+                )
             ORDER BY pickup_dist_m ASC
             LIMIT 50
         """)
 
         result = await self.db.execute(sql, {
-            "trip_lat":        trip.pickup_latitude,
-            "trip_lng":        trip.pickup_longitude,
-            "dest_lat":        trip.destination_latitude,
-            "dest_lng":        trip.destination_longitude,
-            "travel_date":     trip.departure_time.date(),
-            "available_seats": trip.available_seats,
-            "pickup_radius_m": PICKUP_RADIUS_M,
-            "dest_radius_m":   DESTINATION_RADIUS_M,
-            "trip_women_only": trip.women_only,
+            "trip_lat":              trip.pickup_latitude,
+            "trip_lng":              trip.pickup_longitude,
+            "dest_lat":              trip.destination_latitude,
+            "dest_lng":              trip.destination_longitude,
+            "travel_date":           trip.departure_time.date(),
+            "available_seats":       trip.available_seats,
+            "pickup_radius_m":       PICKUP_RADIUS_M,
+            "dest_radius_m":         DESTINATION_RADIUS_M,
+            "trip_women_only":       trip.women_only,
+            "trip_parcel_enabled":   trip.parcel_enabled,
+            "trip_service_type":     trip.service_type or "cab",
         })
         rows = result.mappings().all()
         matched = []
@@ -170,25 +184,26 @@ class PendingMatchingService:
             customer_id = str(row["customer_id"])
             await publish_event(f"customer:{customer_id}:events", match_payload)
 
-            # Also publish to notification service for FCM push
+            # FCM push via centralized dispatcher (idempotent)
             user = await self._get_user(row["customer_id"])
             if user and user.device_token:
-                await publish_event("notification:events", {
-                    "event":        "MATCH_FOUND",
-                    "user_id":      customer_id,
-                    "user_type":    "customer",
-                    "device_token": user.device_token,
-                    "title":        "🚗 Matching Ride Found!",
-                    "body":         (
+                from common.services.notification_dispatcher import dispatch_notification
+                await dispatch_notification(
+                    event_type="MATCH_FOUND",
+                    user_id=customer_id,
+                    device_token=user.device_token,
+                    title="🚗 Matching Ride Found!",
+                    body=(
                         f"Driver heading to your destination at "
                         f"{trip.departure_time.strftime('%H:%M')}"
                     ),
-                    "data": {
+                    data={
                         "screen":  "RideDetails",
                         "trip_id": trip_id,
                     },
-                    "trip_id": trip_id,
-                })
+                    idempotency_key=f"match_found:{trip_id}:{customer_id}",
+                    user_type="customer",
+                )
 
             matched.append(dict(row))
             logger.info(
@@ -577,22 +592,24 @@ class PendingMatchingService:
                 if cp:
                     user = await self._get_user(cp.user_id)
                     if user and user.device_token:
-                        await publish_event("notification:events", {
-                            "event":        "ARRIVAL_ALERT",
-                            "user_id":      customer_user_id,
-                            "user_type":    "customer",
-                            "device_token": user.device_token,
-                            "title":        "🚗 Driver is almost here!",
-                            "body":         (
+                        from common.services.notification_dispatcher import dispatch_notification
+                        await dispatch_notification(
+                            event_type="ARRIVAL_ALERT",
+                            user_id=customer_user_id,
+                            device_token=user.device_token,
+                            title="🚗 Driver is almost here!",
+                            body=(
                                 f"{driver_name} is {round(dist_km, 1)} KM away"
                                 + (f", ~{eta_min} min" if eta_min else "")
                             ),
-                            "data": {
+                            data={
                                 "screen":     "TrackDriver",
                                 "trip_id":    trip_id,
                                 "booking_id": str(booking.id),
                             },
-                        })
+                            idempotency_key=f"arrival_alert:{booking.id}",
+                            user_type="customer",
+                        )
 
                 logger.info(
                     "ARRIVAL_ALERT sent",
@@ -600,6 +617,119 @@ class PendingMatchingService:
                     dist_km=dist_km,
                     eta_min=eta_min,
                 )
+
+        # ── Organization Student 3KM Alert (Phase 6) ──────────────────────────
+        # If this is an org trip, send ORG_STUDENT_APPROACHING when driver < 3KM
+        await self._check_org_student_alert(trip_id, driver_lat, driver_lng, distance_remaining_km, r)
+
+    async def _check_org_student_alert(
+        self,
+        trip_id: str,
+        driver_lat: float,
+        driver_lng: float,
+        distance_remaining_km: Optional[float],
+        r,  # Redis client
+    ) -> None:
+        """
+        For organization trips, notify each student (booking customer) when
+        the driver enters a 3KM radius around their pickup location.
+
+        Uses Haversine to compute pickup distance (not remaining-to-destination).
+        One-time alert per booking (idempotency via Redis key).
+        """
+        ORG_STUDENT_ALERT_KM = 3.0
+
+        # Only proceed if this is an org trip
+        trip = await self._get_trip(trip_id)
+        if not trip or not trip.organization_id:
+            return
+
+        # Get all active org bookings
+        result = await self.db.execute(
+            select(Booking).where(
+                and_(
+                    Booking.trip_id == uuid.UUID(trip_id),
+                    Booking.status.in_([BookingStatus.CONFIRMED, BookingStatus.DRIVER_ACCEPTED]),
+                )
+            )
+        )
+        bookings = result.scalars().all()
+        if not bookings:
+            return
+
+        from app.services.tracking import haversine_km
+        from common.models.all_models import CustomerProfile, User
+
+        for booking in bookings:
+            # Skip if already sent for this booking
+            alert_key = f"org:student:alert:{booking.id}"
+            if await r.exists(alert_key):
+                continue
+
+            # We need the customer's pickup lat/lng to compute distance from driver
+            # pickup_lat/lng stored on Booking if available, else fallback to trip pickup
+            if hasattr(booking, 'pickup_lat') and booking.pickup_lat and booking.pickup_lng:
+                pickup_lat = float(booking.pickup_lat)
+                pickup_lng = float(booking.pickup_lng)
+            else:
+                # Use trip pickup as proxy
+                pickup_lat = trip.pickup_latitude or driver_lat
+                pickup_lng = trip.pickup_longitude or driver_lng
+
+            dist_to_pickup = haversine_km(driver_lat, driver_lng, pickup_lat, pickup_lng)
+
+            if dist_to_pickup > ORG_STUDENT_ALERT_KM:
+                continue
+
+            # Mark as sent
+            await r.setex(alert_key, 86400, "1")
+
+            # Resolve customer user_id
+            cp_res = await self.db.execute(
+                select(CustomerProfile).where(CustomerProfile.id == booking.customer_id)
+            )
+            cp = cp_res.scalar_one_or_none()
+            if not cp:
+                continue
+
+            customer_user_id = str(cp.user_id)
+
+            # Socket event → customer sees in-app alert
+            await publish_event(f"customer:{customer_user_id}:events", {
+                "event":       "ORG_STUDENT_APPROACHING",
+                "trip_id":     trip_id,
+                "booking_id":  str(booking.id),
+                "distance_km": round(dist_to_pickup, 2),
+                "message":     f"Your bus is {round(dist_to_pickup, 1)} KM away. Please get ready!",
+            })
+
+            # FCM push via dispatcher
+            user_res = await self.db.execute(select(User).where(User.id == cp.user_id))
+            cust_user = user_res.scalar_one_or_none()
+            if cust_user and cust_user.device_token:
+                from common.services.notification_dispatcher import dispatch_notification
+                await dispatch_notification(
+                    event_type="ORG_STUDENT_APPROACHING",
+                    user_id=customer_user_id,
+                    device_token=cust_user.device_token,
+                    title="🏫 Bus is approaching!",
+                    body=f"Your school bus is {round(dist_to_pickup, 1)} KM away. Get ready!",
+                    data={
+                        "screen":     "TrackDriver",
+                        "trip_id":    trip_id,
+                        "booking_id": str(booking.id),
+                    },
+                    idempotency_key=f"org_student_alert:{booking.id}",
+                    user_type="customer",
+                )
+
+            logger.info(
+                "ORG_STUDENT_APPROACHING alert sent",
+                booking_id=str(booking.id),
+                dist_km=round(dist_to_pickup, 2),
+                trip_id=trip_id,
+            )
+
 
     # ─────────────────────────────────────────────────────────────────────────
     # Helpers

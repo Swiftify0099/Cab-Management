@@ -57,6 +57,7 @@ class CustomerProfileUpdate(BaseModel):
     emergency_contact: Optional[str] = Field(None, min_length=10, max_length=15)
     language: Optional[str] = Field(None, max_length=10)
     women_only_mode: Optional[bool] = None
+    service_preferences: Optional[dict] = None  # Phase 10: {default_service, pinned_services, ladies_only, ...}
 
 
 class CustomerProfileResponse(BaseModel):
@@ -72,6 +73,7 @@ class CustomerProfileResponse(BaseModel):
     wallet_balance: Decimal
     referral_code: Optional[str]
     women_only_mode: bool
+    service_preferences: Optional[dict] = None  # Phase 10
     subscription_plan_id: Optional[uuid.UUID]
 
 

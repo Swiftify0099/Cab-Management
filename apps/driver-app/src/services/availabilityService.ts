@@ -425,12 +425,29 @@ class AvailabilityServiceClass {
    * Update live location coordinates and zone.
    */
   public updateLocation(lat: number, lng: number, accuracy?: number) {
+    // ── Delta guard — skip re-render if position hasn't meaningfully changed ──
+    // 0.00005° ≈ 5 metres — avoids flickering re-renders from background pings
+    const prevLat = this.stateData.lat ?? lat
+    const prevLng = this.stateData.lng ?? lng
+    const latDelta = Math.abs(lat - prevLat)
+    const lngDelta = Math.abs(lng - prevLng)
+
+    let newGpsStatus = this.stateData.gpsStatus
+    if (accuracy !== undefined) {
+      newGpsStatus = accuracy < 15 ? 'EXCELLENT' : accuracy < 35 ? 'GOOD' : 'FAIR'
+    }
+
+    const positionUnchanged = latDelta < 0.00005 && lngDelta < 0.00005
+    const statusUnchanged = newGpsStatus === this.stateData.gpsStatus
+
     this.stateData.lat = lat
     this.stateData.lng = lng
-    if (accuracy !== undefined) {
-      this.stateData.gpsStatus = accuracy < 15 ? 'EXCELLENT' : accuracy < 35 ? 'GOOD' : 'FAIR'
+    this.stateData.gpsStatus = newGpsStatus
+
+    // Only notify subscribers (and trigger React re-renders) if something actually changed
+    if (!positionUnchanged || !statusUnchanged) {
+      this.notify()
     }
-    this.notify()
   }
 
   public setZone(zone: string, city: string) {

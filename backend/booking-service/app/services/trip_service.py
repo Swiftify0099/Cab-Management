@@ -18,7 +18,7 @@ from geoalchemy2.elements import WKTElement
 
 from common.models.all_models import (
     Trip, TripStatus, Driver, DriverStatus, RouteStop, Booking, BookingStatus,
-    DriverSavedLocation, TripScheduleTemplate
+    DriverSavedLocation, TripScheduleTemplate, Organization, OrganizationRoute, OrganizationMember
 )
 from app.services.fare_engine import get_distance_km, VEHICLE_RATES, VEHICLE_CAPACITY
 from app.services.recurrence_engine import RecurrenceEngineService
@@ -379,6 +379,79 @@ class TripService:
         )
         await self.db.commit()
         return res.rowcount > 0
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Organization & College Campus Fleet
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def list_organizations(self, org_type: Optional[str] = None) -> List[dict]:
+        """List registered colleges / corporate organizations."""
+        query = select(Organization).where(Organization.is_active == True)
+        if org_type and org_type != "all":
+            query = query.where(Organization.org_type == org_type)
+        query = query.order_by(Organization.name)
+        res = await self.db.execute(query)
+        orgs = res.scalars().all()
+        return [
+            {
+                "id": str(o.id),
+                "name": o.name,
+                "code": o.code,
+                "org_type": o.org_type,
+                "address": o.address,
+                "latitude": o.latitude,
+                "longitude": o.longitude,
+                "city": o.city,
+                "contact_phone": o.contact_phone,
+                "contact_email": o.contact_email,
+            }
+            for o in orgs
+        ]
+
+    async def list_organization_routes(self, organization_id: str) -> List[dict]:
+        """List pre-configured routes for an organization."""
+        res = await self.db.execute(
+            select(OrganizationRoute).where(
+                and_(OrganizationRoute.organization_id == uuid.UUID(organization_id), OrganizationRoute.is_active == True)
+            ).order_by(OrganizationRoute.route_name)
+        )
+        routes = res.scalars().all()
+        return [
+            {
+                "id": str(r.id),
+                "organization_id": str(r.organization_id),
+                "route_name": r.route_name,
+                "assigned_driver_id": str(r.assigned_driver_id) if r.assigned_driver_id else None,
+                "stop_points": r.stop_points or [],
+                "scheduled_start_time": r.scheduled_start_time,
+                "scheduled_end_time": r.scheduled_end_time,
+                "capacity": r.capacity,
+            }
+            for r in routes
+        ]
+
+    async def list_route_members(self, route_id: str) -> List[dict]:
+        """List registered students/employees assigned to this route."""
+        res = await self.db.execute(
+            select(OrganizationMember).where(
+                and_(OrganizationMember.route_id == uuid.UUID(route_id), OrganizationMember.is_active == True)
+            )
+        )
+        members = res.scalars().all()
+        return [
+            {
+                "id": str(m.id),
+                "organization_id": str(m.organization_id),
+                "user_id": str(m.user_id),
+                "member_type": m.member_type,
+                "registration_no": m.registration_no,
+                "pickup_address": m.pickup_address,
+                "pickup_lat": m.pickup_latitude,
+                "pickup_lng": m.pickup_longitude,
+                "drop_address": m.drop_address,
+            }
+            for m in members
+        ]
 
     async def _trigger_forward_match(self, trip_id: str) -> None:
         """Trigger matching service to evaluate corridor matches for this trip."""

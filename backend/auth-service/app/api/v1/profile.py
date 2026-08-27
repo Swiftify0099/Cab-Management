@@ -95,6 +95,7 @@ async def setup_profile(
         wallet_balance=profile.wallet_balance,
         referral_code=profile.referral_code,
         women_only_mode=profile.women_only_mode,
+        service_preferences=profile.service_preferences,
         subscription_plan_id=profile.subscription_plan_id,
     )
 

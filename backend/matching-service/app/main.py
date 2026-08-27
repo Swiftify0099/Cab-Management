@@ -22,6 +22,7 @@ from common.utils.redis_client import close_redis
 from app.services.tracking import consume_location_updates
 from app.services.corridor_matcher import consume_customer_location_updates
 from app.services.redispatch_consumer import consume_redispatch_events
+from app.workers.recurrence_engine import recurrence_loop
 
 logger = structlog.get_logger(__name__)
 limiter = Limiter(key_func=get_remote_address)
@@ -29,14 +30,15 @@ limiter = Limiter(key_func=get_remote_address)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info(" Matching Service starting", env=matching_settings.ENVIRONMENT)
+    logger.info("⚡ Matching Service starting", env=matching_settings.ENVIRONMENT)
     tasks = [
         asyncio.create_task(consume_location_updates(async_session_maker)),
         asyncio.create_task(consume_customer_location_updates(async_session_maker)),
         asyncio.create_task(consume_redispatch_events(async_session_maker)),
+        asyncio.create_task(recurrence_loop(async_session_maker)),  # Daily trip recurrence engine
     ]
     yield
-    logger.info(" Matching Service shutting down")
+    logger.info("⚡ Matching Service shutting down")
     for task in tasks:
         task.cancel()
     await close_redis()

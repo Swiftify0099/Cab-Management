@@ -350,6 +350,22 @@ export default function ProfileTab() {
               </TouchableOpacity>
               <AppDivider marginLeft={64} />
 
+              {/* Service Preferences — Phase 10 */}
+              <TouchableOpacity
+                style={styles.menuRow}
+                onPress={() => router.push('/profile/service-preferences' as any)}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.menuIconCircle, { backgroundColor: '#10B98118' }]}>
+                  <Feather name="sliders" size={18} color="#10B981" />
+                </View>
+                <AppText variant="body" semibold style={{ flex: 1 }}>
+                  Service Preferences
+                </AppText>
+                <Feather name="chevron-right" size={18} color={theme.colors.textMuted} />
+              </TouchableOpacity>
+              <AppDivider marginLeft={64} />
+
               {/* Active Sessions & Devices */}
               <TouchableOpacity
                 style={styles.menuRow}

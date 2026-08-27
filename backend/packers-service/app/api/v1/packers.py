@@ -10,14 +10,21 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.database import async_session_maker
+from common.middleware.auth import get_current_user_optional, get_current_user, AuthenticatedUser
 from app.services.packers_service import PackersService
 
-router = APIRouter(prefix="/packers", tags=["Packers & Movers Logistics"])
+router = APIRouter(prefix="", tags=["Packers & Movers Logistics"])
 
 
 async def get_db():
     async with async_session_maker() as session:
         yield session
+
+
+def resolve_user_id(user: Optional[Any]) -> str:
+    if user and hasattr(user, 'id'):
+        return str(user.id)
+    return "00000000-0000-0000-0000-000000000001"
 
 
 class EstimateMoveRequest(BaseModel):
@@ -34,7 +41,7 @@ class EstimateMoveRequest(BaseModel):
 
 
 class CreateMovingOrderRequest(BaseModel):
-    customer_id: str
+    customer_id: Optional[str] = None
     move_size: str = "1_BHK"
     scheduled_move_date: str
     pickup_address: str
@@ -87,9 +94,33 @@ async def estimate_moving_cost(payload: EstimateMoveRequest, db: AsyncSession = 
 
 
 @router.post("/orders")
-async def create_moving_order(payload: CreateMovingOrderRequest, db: AsyncSession = Depends(get_db)):
+async def create_moving_order(
+    payload: CreateMovingOrderRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[Any] = Depends(get_current_user_optional),
+):
     svc = PackersService(db)
-    return await svc.create_moving_order(**payload.dict())
+    c_id = payload.customer_id or resolve_user_id(current_user)
+    data = payload.dict()
+    data["customer_id"] = c_id
+    return await svc.create_moving_order(**data)
+
+
+@router.get("/orders/{order_id}")
+async def get_moving_order_details(order_id: str, db: AsyncSession = Depends(get_db)):
+    svc = PackersService(db)
+    return await svc.get_order_details(order_id)
+
+
+@router.get("/my-orders")
+async def get_my_moving_orders(
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[Any] = Depends(get_current_user_optional),
+):
+    svc = PackersService(db)
+    c_id = resolve_user_id(current_user)
+    orders = await svc.get_customer_orders(c_id)
+    return {"status": "success", "data": orders}
 
 
 @router.post("/orders/{order_id}/quotes")

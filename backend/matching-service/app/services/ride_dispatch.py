@@ -213,6 +213,7 @@ class RideDispatchService:
         await self.db.commit()
 
         # Step 1: Find eligible drivers using 3-mode Spatial Candidate Provider
+        service_type_val = getattr(ride_req, "service_type", "cab") or "cab"
         candidates = await self.spatial.find_eligible_drivers_for_request(
             pickup_lat=ride_req.pickup_lat,
             pickup_lng=ride_req.pickup_lng,
@@ -221,6 +222,7 @@ class RideDispatchService:
             ride_request_id=ride_req.id,
             max_pickup_radius_km=max_pickup_radius_km,
             excluded_driver_ids=excluded_driver_ids,
+            service_type=service_type_val,
         )
 
         if not candidates and wave == 1 and max_pickup_radius_km < 25.0:

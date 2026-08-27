@@ -449,6 +449,56 @@ class DriverSocketServiceClass {
       this.notify()
     })
 
+    // ── Daily Trip Renewal (Recurrence Engine) ─────────────────────────────
+    s.on('DAILY_TRIP_RENEWAL', (data: any) => {
+      console.log('[DriverSocketService] DAILY_TRIP_RENEWAL received:', data.trip_id)
+      const tripId = data.trip_id || ''
+      const route = data.route || 'Your Route'
+      const departure = data.departure || 'Scheduled'
+
+      // Show local notification for renewal
+      try {
+        Notifications.scheduleNotificationAsync({
+          content: {
+            title: '📅 Today\'s Trip Ready',
+            body: `${route} at ${departure}. Tap to confirm.`,
+            data: { screen: 'my-trips', trip_id: tripId, event: 'DAILY_TRIP_RENEWAL' },
+            sound: 'default',
+          },
+          trigger: null, // immediate
+        })
+      } catch (e) {
+        console.warn('[DriverSocketService] Could not schedule renewal notification:', e)
+      }
+
+      // Also vibrate to alert driver
+      try { Vibration.vibrate([0, 200, 100, 200]) } catch {}
+
+      // Emit to custom listeners (e.g. screens can listen for this)
+      const handlers = this.customEventListeners.get('DAILY_TRIP_RENEWAL')
+      if (handlers) {
+        handlers.forEach(h => {
+          try { h(data) } catch (e) { console.warn('[DriverSocketService] DAILY_TRIP_RENEWAL handler error:', e) }
+        })
+      }
+    })
+
+    // ── Org Student Approaching (3KM Alert) ────────────────────────────────
+    s.on('ORG_STUDENT_APPROACHING', (data: any) => {
+      console.log('[DriverSocketService] ORG_STUDENT_APPROACHING:', data)
+      try {
+        Notifications.scheduleNotificationAsync({
+          content: {
+            title: '🏫 Bus Approaching',
+            body: `Your school bus is ${data.distance_km || 3}km away. Get ready!`,
+            data: { event: 'ORG_STUDENT_APPROACHING', trip_id: data.trip_id },
+            sound: 'default',
+          },
+          trigger: null,
+        })
+      } catch {}
+    })
+
     // Forward any other registered events
     s.onAny((event, ...args) => {
       const handlers = this.customEventListeners.get(event)

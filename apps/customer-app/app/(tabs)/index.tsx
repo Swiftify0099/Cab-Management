@@ -52,6 +52,7 @@ import DevModeModal from '../../src/components/dev/DevModeModal'
 import { PromotionsSheet } from '../../src/components/promotions/PromotionsSheet'
 import { SmartCompanionCard } from '../../src/components/smart/SmartCompanionCard'
 import { reverseGeocodeCoordinate } from '../../src/utils/maps'
+import { useCustomerSocket } from '../../src/hooks/useCustomerSocket'
 
 const { width: SCREEN_W } = Dimensions.get('window')
 
@@ -268,6 +269,10 @@ export default function HomeScreen() {
   // Feature 27 Smart Intelligence State
   const [smartDestinations, setSmartDestinations] = useState<SmartDestination[]>([])
   const [smartCompanions, setSmartCompanions] = useState<SmartCompanion[]>([])
+
+  // Phase 6: Org Student proximity alert from socket
+  const { orgStudentAlert, clearOrgStudentAlert } = useCustomerSocket()
+
   const [smartDemand, setSmartDemand] = useState<SmartDemand | null>(null)
   const [smartGreeting, setSmartGreeting] = useState<string>('')
 
@@ -771,6 +776,50 @@ export default function HomeScreen() {
                   View Full Journey →
                 </AppText>
               </View>
+            </TouchableOpacity>
+          )}
+
+          {/* ── Phase 6: Org Student Proximity Alert Banner ── */}
+          {orgStudentAlert && (
+            <TouchableOpacity
+              onPress={() => {
+                clearOrgStudentAlert()
+                if (orgStudentAlert.booking_id) {
+                  router.push(`/book/seats` as any)
+                }
+              }}
+              activeOpacity={0.85}
+              style={{
+                marginHorizontal: 16,
+                marginBottom: 12,
+                borderRadius: 16,
+                overflow: 'hidden',
+              }}
+            >
+              <LinearGradient
+                colors={['#7C3AED', '#5B21B6']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  padding: 14,
+                  gap: 12,
+                }}
+              >
+                <MaterialCommunityIcons name="bus-alert" size={28} color="#FFFFFF" />
+                <View style={{ flex: 1 }}>
+                  <AppText variant="bodyS" bold style={{ color: '#FFFFFF' }}>
+                    🚌 Your Bus is Almost Here!
+                  </AppText>
+                  <AppText variant="caption" style={{ color: 'rgba(255,255,255,0.85)', marginTop: 2 }}>
+                    {orgStudentAlert.message || `Bus is ${orgStudentAlert.distance_km?.toFixed(1)} KM away. Head to the pickup point.`}
+                  </AppText>
+                </View>
+                <TouchableOpacity onPress={clearOrgStudentAlert} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                  <Feather name="x" size={18} color="rgba(255,255,255,0.7)" />
+                </TouchableOpacity>
+              </LinearGradient>
             </TouchableOpacity>
           )}
 

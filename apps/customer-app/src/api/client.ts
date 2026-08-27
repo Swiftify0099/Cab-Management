@@ -152,6 +152,10 @@ export const profileApi = {
       longitude: data.longitude,
     }),
   deleteAddress: (id: string) => api.delete(`/profile/me/addresses/${id}`),
+
+  // Convenience aliases used by service-preferences.tsx and other screens
+  getProfile: () => api.get('/profile/me'),
+  updateProfile: (data: object) => api.patch('/profile/me', data),
 }
 
 export const addressApi = profileApi
@@ -1779,4 +1783,96 @@ export const orchestrationApi = {
     scenario: string
     details?: Record<string, any>
   }) => api.post('/orchestration/dev/simulate', data),
+}
+
+// ── FEATURE 24: PACKERS & MOVERS LOGISTICS API ──────────────────────────────
+export const packersApi = {
+  /**
+   * Estimate home shifting or office relocation cost.
+   */
+  estimate: (data: {
+    move_size?: string
+    distance_km?: number
+    pickup_floor?: number
+    pickup_has_lift?: boolean
+    drop_floor?: number
+    drop_has_lift?: boolean
+    requires_assembly?: boolean
+    requires_fragile_packing?: boolean
+    insurance_opted?: boolean
+    declared_value?: number
+  }) => api.post('/packers/estimate', data),
+
+  /**
+   * Create moving order with full inventory.
+   */
+  createOrder: (data: {
+    customer_id?: string
+    move_size: string
+    scheduled_move_date: string
+    pickup_address: string
+    pickup_lat: number
+    pickup_lng: number
+    drop_address: string
+    drop_lat: number
+    drop_lng: number
+    distance_km?: number
+    pickup_floor?: number
+    pickup_has_lift?: boolean
+    drop_floor?: number
+    drop_has_lift?: boolean
+    requires_assembly?: boolean
+    requires_fragile_packing?: boolean
+    insurance_opted?: boolean
+    declared_value?: number
+    items?: Array<{
+      category: string
+      item_name: string
+      quantity: number
+      is_fragile?: boolean
+      needs_disassembly?: boolean
+    }>
+    payment_method?: string
+  }) => api.post('/packers/orders', data),
+
+  /**
+   * Fetch customer moving order history.
+   */
+  getMyOrders: () => api.get('/packers/my-orders'),
+
+  /**
+   * Get single moving order details, quotes, and milestone status.
+   */
+  getOrderDetails: (orderId: string) => api.get(`/packers/orders/${orderId}`),
+
+  /**
+   * Customer accepts winning mover quote.
+   */
+  acceptQuote: (orderId: string, quoteId: string) =>
+    api.post(`/packers/orders/${orderId}/quotes/${quoteId}/accept`),
+
+  /**
+   * Advance moving order milestone (PACKING -> LOADING -> IN_TRANSIT -> UNLOADING).
+   */
+  advanceMilestone: (orderId: string, newStatus: string) =>
+    api.post(`/packers/orders/${orderId}/milestone`, { new_status: newStatus }),
+
+  /**
+   * Complete moving order with Delivery OTP & POD signoff.
+   */
+  completeOrder: (
+    orderId: string,
+    data: {
+      delivery_otp: string
+      signature_url?: string
+      damage_reported?: boolean
+      damage_description?: string
+    }
+  ) => api.post(`/packers/orders/${orderId}/complete`, data),
+
+  /**
+   * Cancel moving order and refund wallet balance.
+   */
+  cancelOrder: (orderId: string, reason?: string) =>
+    api.post(`/packers/orders/${orderId}/cancel`, { reason }),
 }

@@ -122,7 +122,7 @@ export default function DriverHomeScreen() {
     try {
       setLoading(true)
       const [tripsRes, statsRes, vehList, destRes, aiRes, radarCntRes, covRes, pendingOffers] = await Promise.allSettled([
-        api.get('/trips/my-trips'),
+        api.get('/matching/trips/my-trips'),
         api.get('/driver/stats'),
         VehicleService.getVehicles(),
         DestinationModeService.getStatus(),
@@ -589,6 +589,27 @@ export default function DriverHomeScreen() {
               <View style={{ marginLeft: 12 }}>
                 <Text style={styles.createBtnText}>Publish Intercity Trip</Text>
                 <Text style={styles.createBtnSub}>Post empty seats & accept passengers</Text>
+              </View>
+              <Feather name="arrow-right" size={20} color="rgba(255,255,255,0.7)" style={{ marginLeft: 'auto' }} />
+            </LinearGradient>
+          </TouchableOpacity>
+
+          {/* My Published Trips — quick access to trip management */}
+          <TouchableOpacity
+            style={[styles.createBtn, { marginTop: 8 }]}
+            onPress={() => router.push('/my-trips' as any)}
+            activeOpacity={0.85}
+          >
+            <LinearGradient
+              colors={['#059669', '#0D9488']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.createBtnGradient}
+            >
+              <MaterialCommunityIcons name="format-list-bulleted" size={24} color="#FFFFFF" />
+              <View style={{ marginLeft: 12 }}>
+                <Text style={styles.createBtnText}>My Published Trips</Text>
+                <Text style={styles.createBtnSub}>Manage recurring trips & passengers</Text>
               </View>
               <Feather name="arrow-right" size={20} color="rgba(255,255,255,0.7)" style={{ marginLeft: 'auto' }} />
             </LinearGradient>

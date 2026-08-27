@@ -51,6 +51,26 @@ interface UseDriverSocketReturn {
   off: (event: string, callback?: (...args: any[]) => void) => void
 }
 
+// Lightweight shallow equality check to prevent spurious re-renders on heartbeat ticks
+function shallowEqual(a: any, b: any): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  const keysA = Object.keys(a)
+  const keysB = Object.keys(b)
+  if (keysA.length !== keysB.length) return false
+  for (const key of keysA) {
+    // For objects/arrays (like pendingCustomers) do a JSON compare
+    const va = a[key]
+    const vb = b[key]
+    if (typeof va === 'object' && va !== null) {
+      if (JSON.stringify(va) !== JSON.stringify(vb)) return false
+    } else if (va !== vb) {
+      return false
+    }
+  }
+  return true
+}
+
 export function useDriverSocket(): UseDriverSocketReturn {
   const [socketState, setSocketState] = useState(() => DriverSocketService.getState())
 
@@ -58,13 +78,15 @@ export function useDriverSocket(): UseDriverSocketReturn {
     // Ensure singleton is initialized
     DriverSocketService.init()
 
-    // Subscribe to state changes
+    // Subscribe to state changes — guard with shallowEqual to prevent
+    // unnecessary re-renders from heartbeat ticks that don't change visible state
     const unsub = DriverSocketService.subscribe((s) => {
-      setSocketState(s)
+      setSocketState(prev => shallowEqual(prev, s) ? prev : s)
     })
 
     return unsub
   }, [])
+
 
   const clearRequest = useCallback(() => {
     DriverSocketService.clearIncomingRequest()

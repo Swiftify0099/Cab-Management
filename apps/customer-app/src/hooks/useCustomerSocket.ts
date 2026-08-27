@@ -79,6 +79,9 @@ export type SocketEvent =
   | 'PARCEL_IN_TRANSIT'
   | 'PARCEL_AT_DESTINATION'
   | 'PARCEL_DELIVERED'
+  // Phase 6: Org student proximity alert
+  | 'ORG_STUDENT_APPROACHING'
+  | 'NEW_CARPOOL_BOOKING'
 
 // ─── Data shapes ──────────────────────────────────────────────────────────────
 export interface DriverInfo {
@@ -378,6 +381,10 @@ interface UseCustomerSocketReturn {
   // 3KM OTP Proximity stateful events
   otpData: { ride_request_id: string; otp: string; distance_km: number; eta_min: number; message: string } | null
 
+  // Phase 6: Org Student proximity alert
+  orgStudentAlert: { trip_id: string; booking_id: string; distance_km: number; message: string } | null
+  clearOrgStudentAlert: () => void
+
   // Clearers
   clearMatchFound: () => void
   clearTripAccepted: () => void
@@ -446,6 +453,8 @@ export function useCustomerSocket(): UseCustomerSocketReturn {
   const [sosAlert, setSosAlert] = useState<SOSAlertPayload | null>(null)
   const [safetyAlert, setSafetyAlert] = useState<SafetyAlertPayload | null>(null)
   const [otpData, setOtpData] = useState<{ ride_request_id: string; otp: string; distance_km: number; eta_min: number; message: string } | null>(null)
+  // Phase 6: Org student proximity state
+  const [orgStudentAlert, setOrgStudentAlert] = useState<{ trip_id: string; booking_id: string; distance_km: number; message: string } | null>(null)
 
   useEffect(() => {
     let socket: Socket | null = null
@@ -704,6 +713,23 @@ export function useCustomerSocket(): UseCustomerSocketReturn {
         console.log('[CustomerSocket] UNEXPECTED_STOP detected')
         setSafetyAlert(data)
       })
+
+      // ── Phase 6: Organization Student 3KM Proximity Alert ───────────────────
+      socket.on('ORG_STUDENT_APPROACHING', (data: any) => {
+        console.log('[CustomerSocket] ORG_STUDENT_APPROACHING distance:', data.distance_km, 'km')
+        setOrgStudentAlert({
+          trip_id:    data.trip_id || '',
+          booking_id: data.booking_id || '',
+          distance_km: data.distance_km || 3,
+          message:    data.message || `Your bus is ${data.distance_km || 3} KM away. Get ready!`,
+        })
+      })
+
+      // ── Carpool: new booking confirmation for driver ─────────────────────────
+      socket.on('NEW_CARPOOL_BOOKING', (data: any) => {
+        console.log('[CustomerSocket] NEW_CARPOOL_BOOKING booking_id:', data.booking_id)
+        // Custom listeners on this event (e.g. my-trips refresh)
+      })
     }
 
     connect()
@@ -759,7 +785,10 @@ export function useCustomerSocket(): UseCustomerSocketReturn {
   const clearTripCompleted = useCallback(() => setTripCompleted(null), [])
   const clearSOSAlert = useCallback(() => setSosAlert(null), [])
   const clearSafetyAlert = useCallback(() => setSafetyAlert(null), [])
+  // Phase 6: Org student alert clearer
+  const clearOrgStudentAlert = useCallback(() => setOrgStudentAlert(null), [])
   const clearOtpData = useCallback(() => setOtpData(null), [])
+
 
   // ─── Feature 4: Reconnect sync registration ──────────────────────────────────
   /**
@@ -821,6 +850,9 @@ export function useCustomerSocket(): UseCustomerSocketReturn {
     arrivalAlert,
     driverLocation,
     otpData,
+    // Phase 6: Org student proximity alert
+    orgStudentAlert,
+    clearOrgStudentAlert,
     // Feature 4: Reservation events
     reservationDriverAssigned,
     reservationReminder,

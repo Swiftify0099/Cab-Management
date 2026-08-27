@@ -194,6 +194,33 @@ async def driver_respond(
 
     if request.accepted:
         # ── ACCEPT ──────────────────────────────────────────────────────────
+        # Step 1: Atomically acquire seats on the trip (race-condition safe)
+        from app.services.atomic_matching import acquire_seats_transactionally
+        if booking.trip_id:
+            ok, reason = await acquire_seats_transactionally(
+                trip_id=booking.trip_id,
+                seat_count=booking.seat_count or 1,
+                db=db,
+            )
+            if not ok:
+                if reason == "insufficient_seats":
+                    return SuccessResponse(
+                        success=False,
+                        message="Not enough seats remaining on this trip. Cannot accept.",
+                    )
+                elif reason == "trip_full":
+                    return SuccessResponse(
+                        success=False,
+                        message="This trip is now full. Cannot accept new passengers.",
+                    )
+                elif reason in ("trip_not_found", "trip_not_published"):
+                    return SuccessResponse(
+                        success=False,
+                        message="Trip is no longer available.",
+                    )
+                # db_error: proceed anyway (don't block driver due to seat tracking error)
+                logger.warning("Seat acquisition failed (non-blocking)", reason=reason, booking_id=request.booking_id)
+
         booking.status = BookingStatus.DRIVER_ACCEPTED
         await db.commit()
 
@@ -228,24 +255,26 @@ async def driver_respond(
                 "driver":     driver_info,
             })
 
-            # FCM push
+            # FCM push via centralized dispatcher (with idempotency)
             cust_user_res = await db.execute(
                 select(User).where(User.id == cp.user_id)
             )
             cust_user = cust_user_res.scalar_one_or_none()
             if cust_user and cust_user.device_token:
-                await publish_event("notification:events", {
-                    "event":        "TRIP_ACCEPTED",
-                    "user_id":      customer_user_id,
-                    "user_type":    "customer",
-                    "device_token": cust_user.device_token,
-                    "title":        "Your ride is confirmed!",
-                    "body":         f"Driver {driver.full_name} is on the way.",
-                    "data": {
+                from common.services.notification_dispatcher import dispatch_notification
+                await dispatch_notification(
+                    event_type="TRIP_ACCEPTED",
+                    user_id=customer_user_id,
+                    device_token=cust_user.device_token,
+                    title="Your ride is confirmed! 🎉",
+                    body=f"Driver {driver.full_name} accepted your booking.",
+                    data={
                         "screen":     "TrackDriver",
                         "booking_id": request.booking_id,
                     },
-                })
+                    idempotency_key=f"trip_accepted:{request.booking_id}",
+                    user_type="customer",
+                )
 
         return SuccessResponse(success=True, message="Trip accepted")
 
@@ -264,17 +293,14 @@ async def driver_respond(
             except Exception:
                 await db.rollback()  # Unique constraint hit = already rejected, ignore
 
-        # 2. Restore seat count to trip if booking was pending
-        if booking.status == BookingStatus.PENDING:
-            from common.models.all_models import Trip, TripStatus
-            trip_res = await db.execute(
-                select(Trip).where(Trip.id == booking.trip_id)
+        # 2. Restore seat count to trip atomically (race-condition safe)
+        if booking.status == BookingStatus.PENDING and booking.trip_id:
+            from app.services.atomic_matching import release_seats_transactionally
+            await release_seats_transactionally(
+                trip_id=booking.trip_id,
+                seat_count=booking.seat_count or 1,
+                db=db,
             )
-            trip = trip_res.scalar_one_or_none()
-            if trip:
-                trip.available_seats += booking.seat_count
-                if trip.status == TripStatus.FULL:
-                    trip.status = TripStatus.PUBLISHED
 
         booking.status = BookingStatus.CANCELLED
         booking.cancellation_reason = "Driver rejected"
@@ -300,18 +326,20 @@ async def driver_respond(
             )
             cust_user = cust_user_res.scalar_one_or_none()
             if cust_user and cust_user.device_token:
-                await publish_event("notification:events", {
-                    "event":        "TRIP_REJECTED",
-                    "user_id":      customer_user_id,
-                    "user_type":    "customer",
-                    "device_token": cust_user.device_token,
-                    "title":        "Driver couldn't accept",
-                    "body":         "Don't worry — other drivers are looking for you.",
-                    "data": {
-                        "screen":         "MatchingWaiting",
-                        "booking_id":     request.booking_id,
+                from common.services.notification_dispatcher import dispatch_notification
+                await dispatch_notification(
+                    event_type="TRIP_REJECTED",
+                    user_id=customer_user_id,
+                    device_token=cust_user.device_token,
+                    title="Driver couldn't accept",
+                    body="Don't worry — other drivers are looking for you.",
+                    data={
+                        "screen":     "MatchingWaiting",
+                        "booking_id": request.booking_id,
                     },
-                })
+                    idempotency_key=f"trip_rejected:{request.booking_id}:{str(driver.id)}",
+                    user_type="customer",
+                )
 
         # 4. Also set Redis response key so dispatch loop can move to next driver
         await r.setex(
@@ -637,6 +665,679 @@ async def internal_match_corridor(
     return {"matches": len(matches), "trip_id": trip_id}
 
 
+# ============================================================
+# CUSTOMER: INTERCITY TRIP SEARCH
+# ============================================================
+
+class TripSearchRequest(BaseModel):
+    pickup_lat: Optional[float] = None
+    pickup_lng: Optional[float] = None
+    pickup_city: Optional[str] = None
+    destination_lat: Optional[float] = None
+    destination_lng: Optional[float] = None
+    destination_city: Optional[str] = None
+    date: Optional[str] = None          # "YYYY-MM-DD"
+    service_type: Optional[str] = None  # cab, transport, organization, parcel, hotel, airport, packers
+    seats: int = 1
+    women_only: bool = False
+    page: int = 1
+    page_size: int = 20
+
+
+@router.get(
+    "/trips/search",
+    response_model=SuccessResponse,
+    summary="Customer: Search published intercity trips",
+)
+async def search_trips(
+    pickup_lat: Optional[float] = Query(None),
+    pickup_lng: Optional[float] = Query(None),
+    pickup_city: Optional[str] = Query(None),
+    destination_lat: Optional[float] = Query(None),
+    destination_lng: Optional[float] = Query(None),
+    destination_city: Optional[str] = Query(None),
+    date: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    service_type: Optional[str] = Query(None),
+    seats: int = Query(1, ge=1, le=10),
+    women_only: bool = Query(False),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Customer-facing intercity trip search.
+
+    Matching strategy:
+      1. If pickup lat/lng provided → PostGIS ST_DWithin within 30 KM
+      2. If only pickup_city provided → match by pickup_city string
+      3. Same for destination
+      4. Filter by: service_type, women_only, available_seats >= seats, date
+
+    Returns published trips with driver info (NO phone number),
+    vehicle details, fare, available seats, and departure schedule.
+    Excludes: FULL, CANCELLED, EXPIRED, DRAFT trips.
+    """
+    from common.models.all_models import Trip, TripStatus, Driver, Vehicle
+    from datetime import datetime, date as date_type
+    import pytz
+
+    offset = (page - 1) * page_size
+
+    # Build base query
+    conditions = [
+        Trip.status.in_([TripStatus.PUBLISHED, TripStatus.ACTIVE]),
+        Trip.is_full == False,
+        Trip.available_seats >= seats,
+    ]
+
+    # Service type filter
+    if service_type:
+        conditions.append(Trip.service_type == service_type)
+
+    # Women-only filter
+    if women_only:
+        conditions.append(Trip.women_only == True)
+
+    # Date filter (departure_time on the given date)
+    if date:
+        try:
+            target_date = datetime.strptime(date, "%Y-%m-%d")
+            from sqlalchemy import cast, Date as SADate
+            conditions.append(
+                cast(Trip.departure_time, SADate) == target_date.date()
+            )
+        except ValueError:
+            pass  # Invalid date format — skip filter
+
+    # Pickup geo filter
+    if pickup_lat is not None and pickup_lng is not None:
+        conditions.append(
+            text(
+                "ST_DWithin(pickup_location::geography, "
+                "ST_SetSRID(ST_MakePoint(:pickup_lng, :pickup_lat), 4326)::geography, "
+                "30000)"  # 30 KM radius
+            ).bindparams(pickup_lat=pickup_lat, pickup_lng=pickup_lng)
+        )
+    elif pickup_city:
+        conditions.append(Trip.pickup_city.ilike(f"%{pickup_city}%"))
+
+    # Destination geo filter
+    if destination_lat is not None and destination_lng is not None:
+        conditions.append(
+            text(
+                "ST_DWithin(destination_location::geography, "
+                "ST_SetSRID(ST_MakePoint(:dest_lng, :dest_lat), 4326)::geography, "
+                "30000)"  # 30 KM radius
+            ).bindparams(dest_lat=destination_lat, dest_lng=destination_lng)
+        )
+    elif destination_city:
+        conditions.append(Trip.destination_city.ilike(f"%{destination_city}%"))
+
+    # Execute query
+    from sqlalchemy import asc
+    trip_res = await db.execute(
+        select(Trip)
+        .where(and_(*conditions))
+        .order_by(asc(Trip.departure_time))
+        .offset(offset)
+        .limit(page_size)
+    )
+    trips = trip_res.scalars().all()
+
+    # Build response payload
+    results = []
+    for trip in trips:
+        # Load driver
+        driver_res = await db.execute(
+            select(Driver).where(Driver.id == trip.driver_id)
+        )
+        driver = driver_res.scalar_one_or_none()
+
+        # Load vehicle
+        vehicle = None
+        if driver:
+            vehicle_res = await db.execute(
+                select(Vehicle).where(Vehicle.driver_id == driver.id)
+            )
+            vehicle = vehicle_res.scalar_one_or_none()
+
+        results.append({
+            "trip_id":             str(trip.id),
+            "service_type":        trip.service_type,
+            "pickup": {
+                "address":   trip.pickup_address,
+                "city":      trip.pickup_city,
+                "lat":       trip.pickup_latitude,
+                "lng":       trip.pickup_longitude,
+            },
+            "destination": {
+                "address":   trip.destination_address,
+                "city":      trip.destination_city,
+                "lat":       trip.destination_latitude,
+                "lng":       trip.destination_longitude,
+            },
+            "departure_time":      trip.departure_time.isoformat() if trip.departure_time else None,
+            "estimated_arrival":   trip.estimated_arrival.isoformat() if trip.estimated_arrival else None,
+            "distance_km":         trip.distance_km,
+            "available_seats":     trip.available_seats,
+            "total_seats":         trip.total_seats,
+            "base_fare":           float(trip.base_fare),
+            "per_km_rate":         float(trip.per_km_rate),
+            "min_fare":            float(trip.min_fare) if trip.min_fare else None,
+            "is_negotiable":       trip.is_negotiable,
+            "women_only":          trip.women_only,
+            "parcel_enabled":      trip.parcel_enabled,
+            "non_stop":            trip.non_stop,
+            "window_seat_charge":  float(trip.window_seat_charge),
+            "vehicle_type":        trip.vehicle_type,
+            "driver": {
+                "driver_id":  str(driver.id) if driver else None,
+                "full_name":  driver.full_name if driver else "Unknown",
+                "rating":     float(driver.rating) if driver else 4.5,
+                "total_trips": driver.total_trips if driver else 0,
+                # NO phone number at search stage
+            },
+            "vehicle": {
+                "make":                vehicle.make if vehicle else None,
+                "model":               vehicle.model if vehicle else None,
+                "color":               vehicle.color if vehicle else None,
+                "registration_number": vehicle.registration_number if vehicle else None,
+                "has_ac":              vehicle.has_ac if vehicle else True,
+                "seat_capacity":       vehicle.seat_capacity if vehicle else trip.total_seats,
+            } if vehicle else None,
+        })
+
+    return SuccessResponse(
+        success=True,
+        message=f"{len(results)} trips found",
+        data={
+            "trips":     results,
+            "page":      page,
+            "page_size": page_size,
+            "count":     len(results),
+        },
+    )
+
+
+# ── Customer Book Seat on Intercity Trip ──────────────────────────────────────
+
+class BookSeatRequest(BaseModel):
+    trip_id: str
+    seat_count: int = Field(1, ge=1, le=6)
+    pickup_address: Optional[str] = None
+    pickup_lat: Optional[float] = None
+    pickup_lng: Optional[float] = None
+    drop_address: Optional[str] = None
+    drop_lat: Optional[float] = None
+    drop_lng: Optional[float] = None
+    has_parcel: bool = False
+    window_seat: bool = False
+    notes: Optional[str] = None
+
+
+@router.post(
+    "/trips/book-seat",
+    response_model=SuccessResponse,
+    summary="Customer: Book seat(s) on an intercity trip",
+)
+async def book_seat_on_trip(
+    payload: BookSeatRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Customer books N seats on a published intercity trip.
+    - Verifies seats are available (with row-level lock)
+    - Creates Booking record
+    - Generates 4-digit boarding OTP
+    - Notifies driver via Socket.IO
+    """
+    import random
+    from common.models.all_models import Trip, TripStatus, Booking, BookingStatus, CustomerProfile
+
+    # Load customer profile
+    cp_res = await db.execute(select(CustomerProfile).where(CustomerProfile.user_id == current_user.id))
+    customer = cp_res.scalar_one_or_none()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer profile not found")
+
+    # Acquire seats atomically (SELECT FOR UPDATE)
+    from app.services.atomic_matching import acquire_seats_transactionally
+    ok, reason = await acquire_seats_transactionally(
+        trip_id=uuid.UUID(payload.trip_id),
+        seat_count=payload.seat_count,
+        db=db,
+    )
+
+    if not ok:
+        detail_map = {
+            "trip_not_found":    "Trip not found.",
+            "trip_not_published": "Trip is not accepting bookings.",
+            "trip_full":         "This trip is fully booked.",
+            "insufficient_seats": f"Only {payload.seat_count - 1} seat(s) left. Reduce your seat count.",
+            "db_error":          "Booking failed due to a server error. Please try again.",
+        }
+        raise HTTPException(
+            status_code=409,
+            detail=detail_map.get(reason, "Seat booking failed."),
+        )
+
+    # Load the trip (already flushed in acquire_seats, re-fetch to get latest state)
+    trip_res = await db.execute(select(Trip).where(Trip.id == uuid.UUID(payload.trip_id)))
+    trip = trip_res.scalar_one_or_none()
+
+    # Generate boarding OTP
+    otp = str(random.randint(1000, 9999))
+
+    # Pickup location geometry
+    from geoalchemy2.elements import WKTElement
+    pickup_geom = None
+    if payload.pickup_lat and payload.pickup_lng:
+        pickup_geom = WKTElement(
+            f"POINT({payload.pickup_lng} {payload.pickup_lat})", srid=4326
+        )
+
+    # Create Booking using actual Booking model column names
+    booking = Booking(
+        trip_id=uuid.UUID(payload.trip_id),
+        customer_id=customer.id,
+        seat_count=payload.seat_count,
+        window_seat=payload.window_seat,
+        has_parcel=payload.has_parcel,
+        pickup_address=payload.pickup_address or (trip.pickup_address if trip else ""),
+        drop_address=payload.drop_address or (trip.destination_address if trip else ""),
+        base_fare=float(trip.base_fare) if trip else 0.0,
+        window_seat_charge=float(trip.window_seat_charge) * payload.seat_count if (trip and payload.window_seat) else 0.0,
+        total_fare=float(trip.base_fare) * payload.seat_count if trip else 0.0,
+        status=BookingStatus.CONFIRMED,
+    )
+    db.add(booking)
+    await db.commit()
+    await db.refresh(booking)
+
+    # Notify driver via socket
+    if trip:
+        await publish_event(f"driver:{str(trip.driver_id)}:events", {
+            "event":         "NEW_CARPOOL_BOOKING",
+            "trip_id":       str(trip.id),
+            "booking_id":    str(booking.id),
+            "customer_name": booking.customer_name,
+            "seat_count":    payload.seat_count,
+            "pickup":        payload.pickup_address or "Customer's pickup",
+        })
+
+    logger.info(
+        "Carpool seat booked",
+        trip_id=payload.trip_id,
+        booking_id=str(booking.id),
+        seat_count=payload.seat_count,
+        customer_id=str(customer.id),
+    )
+
+    return SuccessResponse(
+        success=True,
+        message="Seat booked successfully!",
+        data={
+            "booking_id":  str(booking.id),
+            "trip_id":     payload.trip_id,
+            "seat_count":  payload.seat_count,
+            "total_fare":  float(booking.total_fare) if booking.total_fare else 0.0,
+            "otp":         otp,
+            "status":      "confirmed",
+        },
+    )
+
+
+@router.get(
+    "/trips/my-trips",
+    response_model=SuccessResponse,
+    summary="Driver: Get own published trips with status filter",
+)
+async def get_my_trips(
+    status: Optional[str] = Query(None, description="Filter: published,active,completed,cancelled,full,draft"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    """
+    Returns a driver's own trips, ordered by most recent departure first.
+    Used by the Driver Published Trips management screen.
+    """
+    from common.models.all_models import Trip, TripStatus, Driver
+    from sqlalchemy import desc
+
+    driver_res = await db.execute(select(Driver).where(Driver.user_id == current_user.id))
+    driver = driver_res.scalar_one_or_none()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver not found")
+
+    conditions = [Trip.driver_id == driver.id]
+
+    if status:
+        status_map = {
+            "published":   TripStatus.PUBLISHED,
+            "active":      TripStatus.ACTIVE,
+            "completed":   TripStatus.COMPLETED,
+            "cancelled":   TripStatus.CANCELLED,
+            "full":        TripStatus.FULL,
+            "draft":       TripStatus.DRAFT,
+            "in_progress": TripStatus.IN_PROGRESS,
+        }
+        mapped = status_map.get(status.lower())
+        if mapped:
+            conditions.append(Trip.status == mapped)
+
+    offset = (page - 1) * page_size
+    trip_res = await db.execute(
+        select(Trip)
+        .where(and_(*conditions))
+        .order_by(desc(Trip.departure_time))
+        .offset(offset)
+        .limit(page_size)
+    )
+    trips = trip_res.scalars().all()
+
+    data = []
+    for t in trips:
+        # Count accepted bookings
+        from common.models.all_models import Booking, BookingStatus
+        booking_count_res = await db.execute(
+            select(Booking).where(
+                and_(
+                    Booking.trip_id == t.id,
+                    Booking.status.in_([
+                        BookingStatus.DRIVER_ACCEPTED,
+                        BookingStatus.CONFIRMED,
+                        BookingStatus.TRIP_STARTED,
+                        BookingStatus.COMPLETED,
+                    ])
+                )
+            )
+        )
+        bookings = booking_count_res.scalars().all()
+
+        data.append({
+            "trip_id":         str(t.id),
+            "service_type":    t.service_type,
+            "status":          t.status.value if hasattr(t.status, "value") else str(t.status),
+            "pickup_city":     t.pickup_city,
+            "pickup_address":  t.pickup_address,
+            "destination_city":t.destination_city,
+            "destination_address": t.destination_address,
+            "departure_time":  t.departure_time.isoformat() if t.departure_time else None,
+            "total_seats":     t.total_seats,
+            "available_seats": t.available_seats,
+            "occupied_seats":  t.occupied_seats,
+            "is_full":         t.is_full,
+            "base_fare":       float(t.base_fare),
+            "distance_km":     t.distance_km,
+            "women_only":      t.women_only,
+            "recurrence_type": t.recurrence_type,
+            "accepted_bookings": len(bookings),
+            "schedule_template_id": str(t.schedule_template_id) if t.schedule_template_id else None,
+        })
+
+    return SuccessResponse(
+        success=True,
+        message=f"{len(data)} trips found",
+        data={"trips": data, "page": page, "page_size": page_size},
+    )
+
+
+@router.get(
+    "/trips/{trip_id}/customers",
+    response_model=SuccessResponse,
+    summary="Driver: Get accepted customers on a trip",
+)
+async def get_trip_customers(
+    trip_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    """
+    Returns all accepted customers for a driver's trip.
+    Shows name, seat count, pickup address, parcel info.
+    Does NOT include phone number (only revealed in ARRIVAL_ALERT).
+    """
+    from common.models.all_models import Trip, Booking, BookingStatus, CustomerProfile, Driver
+
+    driver_res = await db.execute(select(Driver).where(Driver.user_id == current_user.id))
+    driver = driver_res.scalar_one_or_none()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver not found")
+
+    trip_res = await db.execute(
+        select(Trip).where(and_(Trip.id == uuid.UUID(trip_id), Trip.driver_id == driver.id))
+    )
+    trip = trip_res.scalar_one_or_none()
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found or access denied")
+
+    booking_res = await db.execute(
+        select(Booking).where(
+            and_(
+                Booking.trip_id == trip.id,
+                Booking.status.in_([
+                    BookingStatus.DRIVER_ACCEPTED,
+                    BookingStatus.CONFIRMED,
+                    BookingStatus.TRIP_STARTED,
+                    BookingStatus.COMPLETED,
+                ])
+            )
+        )
+    )
+    bookings = booking_res.scalars().all()
+
+    customers = []
+    for b in bookings:
+        cp_res = await db.execute(select(CustomerProfile).where(CustomerProfile.id == b.customer_id))
+        cp = cp_res.scalar_one_or_none()
+        customers.append({
+            "booking_id":      str(b.id),
+            "customer_name":   cp.full_name if cp else "Unknown",
+            "seat_count":      b.seat_count,
+            "window_seat":     b.window_seat,
+            "has_parcel":      b.has_parcel,
+            "pickup_address":  b.pickup_address,
+            "drop_address":    b.drop_address,
+            "status":          b.status.value if hasattr(b.status, "value") else str(b.status),
+            "total_fare":      float(b.total_fare),
+        })
+
+    return SuccessResponse(
+        success=True,
+        message=f"{len(customers)} customers on this trip",
+        data=customers,
+    )
+
+
+@router.post(
+    "/trips/{trip_id}/cancel",
+    response_model=SuccessResponse,
+    summary="Driver: Cancel a published trip",
+)
+async def cancel_trip(
+    trip_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    """
+    Driver cancels a trip. Notifies all accepted customers via socket + FCM.
+    Only allowed for trips in DRAFT, PUBLISHED, or ACTIVE state.
+    """
+    from common.models.all_models import Trip, TripStatus, Booking, BookingStatus, CustomerProfile, User, Driver
+
+    driver_res = await db.execute(select(Driver).where(Driver.user_id == current_user.id))
+    driver = driver_res.scalar_one_or_none()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver not found")
+
+    trip_res = await db.execute(
+        select(Trip).where(and_(Trip.id == uuid.UUID(trip_id), Trip.driver_id == driver.id))
+    )
+    trip = trip_res.scalar_one_or_none()
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found or access denied")
+
+    if trip.status not in (TripStatus.DRAFT, TripStatus.PUBLISHED, TripStatus.ACTIVE):
+        return SuccessResponse(success=False, message=f"Cannot cancel a trip in {trip.status} state")
+
+    trip.status = TripStatus.CANCELLED
+
+    # Cancel all pending/accepted bookings and notify customers
+    booking_res = await db.execute(
+        select(Booking).where(
+            and_(
+                Booking.trip_id == trip.id,
+                Booking.status.notin_([BookingStatus.CANCELLED, BookingStatus.COMPLETED]),
+            )
+        )
+    )
+    bookings = booking_res.scalars().all()
+
+    for booking in bookings:
+        booking.status = BookingStatus.CANCELLED
+        booking.cancellation_reason = "Driver cancelled the trip"
+
+        # Notify customer
+        cp_res = await db.execute(select(CustomerProfile).where(CustomerProfile.id == booking.customer_id))
+        cp = cp_res.scalar_one_or_none()
+        if cp:
+            await publish_event(f"customer:{str(cp.user_id)}:events", {
+                "event":      "TRIP_CANCELLED_BY_DRIVER",
+                "booking_id": str(booking.id),
+                "trip_id":    trip_id,
+                "message":    "The driver cancelled this trip. We apologize for the inconvenience.",
+            })
+            # FCM push
+            user_res = await db.execute(select(User).where(User.id == cp.user_id))
+            cust_user = user_res.scalar_one_or_none()
+            if cust_user and cust_user.device_token:
+                from common.services.notification_dispatcher import dispatch_notification
+                await dispatch_notification(
+                    event_type="TRIP_CANCELLED_BY_DRIVER",
+                    user_id=str(cp.user_id),
+                    device_token=cust_user.device_token,
+                    title="Trip Cancelled",
+                    body="The driver cancelled this trip. Please book another one.",
+                    data={"screen": "Home", "trip_id": trip_id},
+                    idempotency_key=f"trip_cancel:{trip_id}:{str(cp.user_id)}",
+                    user_type="customer",
+                )
+
+    await db.commit()
+    return SuccessResponse(success=True, message="Trip cancelled. All customers notified.")
+
+
+# ── Trip Instance Management (Daily Recurrence) ──────────────────────────────
+
+@router.post(
+    "/trips/{trip_id}/confirm",
+    response_model=SuccessResponse,
+    summary="Driver: Confirm today's daily trip instance (publish it)",
+)
+async def confirm_trip_instance(
+    trip_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    """
+    Driver confirms a DRAFT daily trip instance created by the recurrence engine.
+    Changes status from DRAFT → PUBLISHED, making it visible to customers.
+    """
+    from common.models.all_models import Trip, TripStatus, Driver
+
+    driver_res = await db.execute(select(Driver).where(Driver.user_id == current_user.id))
+    driver = driver_res.scalar_one_or_none()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver not found")
+
+    trip_res = await db.execute(
+        select(Trip).where(and_(Trip.id == uuid.UUID(trip_id), Trip.driver_id == driver.id))
+    )
+    trip = trip_res.scalar_one_or_none()
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found or access denied")
+
+    if trip.status != TripStatus.DRAFT:
+        return SuccessResponse(
+            success=False,
+            message=f"Trip is already in {trip.status} state — cannot confirm.",
+        )
+
+    trip.status = TripStatus.PUBLISHED
+    await db.commit()
+
+    # Trigger forward matching against pending bookings
+    from app.services.pending_matching import PendingMatchingService
+    import asyncio
+    async def _run_match():
+        async with db.__class__(bind=db.get_bind()) as match_db:
+            svc = PendingMatchingService(match_db)
+            await svc.match_pending_bookings(str(trip.id))
+    # Run in background so response is immediate
+    asyncio.create_task(_run_match())
+
+    return SuccessResponse(
+        success=True,
+        message="Trip confirmed and published. Customers can now book seats.",
+        data={"trip_id": trip_id, "status": "published"},
+    )
+
+
+@router.post(
+    "/trips/{trip_id}/cancel-today",
+    response_model=SuccessResponse,
+    summary="Driver: Cancel today's daily trip instance (template stays active)",
+)
+async def cancel_trip_today(
+    trip_id: str,
+    reason: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+):
+    """
+    Driver cancels today's daily trip instance without affecting the recurring template.
+    The template will still generate a new instance tomorrow.
+    """
+    from common.models.all_models import Trip, TripStatus, Driver
+
+    driver_res = await db.execute(select(Driver).where(Driver.user_id == current_user.id))
+    driver = driver_res.scalar_one_or_none()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver not found")
+
+    trip_res = await db.execute(
+        select(Trip).where(and_(Trip.id == uuid.UUID(trip_id), Trip.driver_id == driver.id))
+    )
+    trip = trip_res.scalar_one_or_none()
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found or access denied")
+
+    if trip.status in (TripStatus.COMPLETED, TripStatus.IN_PROGRESS):
+        return SuccessResponse(
+            success=False,
+            message="Cannot cancel an in-progress or completed trip.",
+        )
+
+    trip.status = TripStatus.CANCELLED
+    trip.notes = f"[DAILY_CANCEL] {reason or 'Driver unavailable today'}"
+    await db.commit()
+
+    logger.info(
+        "Daily trip instance cancelled (template preserved)",
+        trip_id=trip_id,
+        template_id=str(trip.schedule_template_id),
+        reason=reason,
+    )
+
+    return SuccessResponse(
+        success=True,
+        message="Today's trip cancelled. Your recurring schedule remains active.",
+        data={"trip_id": trip_id, "template_id": str(trip.schedule_template_id)},
+    )
 
 
 # ============================================================
@@ -1501,10 +2202,18 @@ from app.services.atomic_matching import AtomicMatchingEngine
 
 class UpdateDriverPreferenceSchema(BaseModel):
     mode: Optional[str] = None
+    visibility_mode: Optional[str] = None
     allow_local: Optional[bool] = None
     allow_airport: Optional[bool] = None
     allow_outstation: Optional[bool] = None
+    allow_rental: Optional[bool] = None
+    allow_parcel: Optional[bool] = None
+    allow_transport: Optional[bool] = None
+    allow_packers: Optional[bool] = None
+    allow_carpool: Optional[bool] = None
     allow_scheduled: Optional[bool] = None
+    ladies_only_accepted: Optional[bool] = None
+    service_customizations: Optional[dict] = None
     min_earning_cutoff: Optional[float] = None
     max_pickup_distance_km: Optional[float] = None
     max_pickup_eta_min: Optional[int] = None
@@ -1529,7 +2238,7 @@ async def get_driver_preferences(
     db: AsyncSession = Depends(get_db),
     current_user: AuthenticatedUser = Depends(get_current_active_driver),
 ):
-    """Fetch driver's active driving mode, trip types, and pickup constraints."""
+    """Fetch driver's active driving mode, trip types, service customizations, and pickup constraints."""
     from common.models.all_models import Driver
     d_res = await db.execute(select(Driver).where(Driver.user_id == current_user.id))
     driver = d_res.scalar_one_or_none()
@@ -1543,10 +2252,18 @@ async def get_driver_preferences(
         message="Preferences retrieved",
         data={
             "mode": pref.mode,
+            "visibility_mode": pref.visibility_mode,
             "allow_local": pref.allow_local,
             "allow_airport": pref.allow_airport,
             "allow_outstation": pref.allow_outstation,
+            "allow_rental": pref.allow_rental,
+            "allow_parcel": pref.allow_parcel,
+            "allow_transport": pref.allow_transport,
+            "allow_packers": pref.allow_packers,
+            "allow_carpool": pref.allow_carpool,
             "allow_scheduled": pref.allow_scheduled,
+            "ladies_only_accepted": pref.ladies_only_accepted,
+            "service_customizations": pref.service_customizations or {},
             "min_earning_cutoff": pref.min_earning_cutoff,
             "max_pickup_distance_km": pref.max_pickup_distance_km,
             "max_pickup_eta_min": pref.max_pickup_eta_min,
@@ -1568,7 +2285,7 @@ async def update_driver_preferences_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user: AuthenticatedUser = Depends(get_current_active_driver),
 ):
-    """Update driver driving mode (Balanced, Best Earnings, Nearby Focus, Airport), constraints, and destination mode."""
+    """Update driver driving mode, service permissions, service-specific customizations, constraints, and destination mode."""
     from common.models.all_models import Driver
     d_res = await db.execute(select(Driver).where(Driver.user_id == current_user.id))
     driver = d_res.scalar_one_or_none()
@@ -1579,10 +2296,18 @@ async def update_driver_preferences_endpoint(
     pref = await service.update_driver_preferences(
         driver_id=driver.id,
         mode=request.mode,
+        visibility_mode=request.visibility_mode,
         allow_local=request.allow_local,
         allow_airport=request.allow_airport,
         allow_outstation=request.allow_outstation,
+        allow_rental=request.allow_rental,
+        allow_parcel=request.allow_parcel,
+        allow_transport=request.allow_transport,
+        allow_packers=request.allow_packers,
+        allow_carpool=request.allow_carpool,
         allow_scheduled=request.allow_scheduled,
+        ladies_only_accepted=request.ladies_only_accepted,
+        service_customizations=request.service_customizations,
         min_earning_cutoff=request.min_earning_cutoff,
         max_pickup_distance_km=request.max_pickup_distance_km,
         max_pickup_eta_min=request.max_pickup_eta_min,
@@ -1596,10 +2321,18 @@ async def update_driver_preferences_endpoint(
         message="Preferences saved successfully",
         data={
             "mode": pref.mode,
+            "visibility_mode": pref.visibility_mode,
             "allow_local": pref.allow_local,
             "allow_airport": pref.allow_airport,
             "allow_outstation": pref.allow_outstation,
+            "allow_rental": pref.allow_rental,
+            "allow_parcel": pref.allow_parcel,
+            "allow_transport": pref.allow_transport,
+            "allow_packers": pref.allow_packers,
+            "allow_carpool": pref.allow_carpool,
             "allow_scheduled": pref.allow_scheduled,
+            "ladies_only_accepted": pref.ladies_only_accepted,
+            "service_customizations": pref.service_customizations or {},
             "min_earning_cutoff": pref.min_earning_cutoff,
             "max_pickup_distance_km": pref.max_pickup_distance_km,
             "max_pickup_eta_min": pref.max_pickup_eta_min,

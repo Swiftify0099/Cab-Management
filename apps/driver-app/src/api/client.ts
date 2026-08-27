@@ -236,6 +236,8 @@ export const rideApi = {
   getCategories: () => api.get('/matching/rides/categories'),
   cancelRide: (rideRequestId: string, reason?: string) =>
     api.post('/matching/rides/cancel', { ride_request_id: rideRequestId, reason }),
+  getCancellationHistory: (limit = 30) =>
+    api.get('/matching/drivers/cancellation-history', { params: { limit } }),
 }
 
 // ── Fuel & Expenses API ──────────────────────────────────────────────────

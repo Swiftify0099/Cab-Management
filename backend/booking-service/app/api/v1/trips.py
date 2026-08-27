@@ -305,6 +305,50 @@ async def renew_daily_trip_instance(
     return SuccessResponse(success=True, message="Today's trip instance renewed", data={"trip_id": str(trip.id)})
 
 
+# ─── Organizations & Campus Fleets ────────────────────────────────────────────
+
+@trip_router.get(
+    "/organizations",
+    response_model=SuccessResponse,
+    summary="List registered colleges / corporate organizations",
+)
+async def get_organizations(
+    org_type: Optional[str] = Query(None, description="college, corporate, or all"),
+    db: AsyncSession = Depends(get_db),
+):
+    service = TripService(db)
+    orgs = await service.list_organizations(org_type)
+    return SuccessResponse(success=True, message="Organizations retrieved", data=orgs)
+
+
+@trip_router.get(
+    "/organizations/{org_id}/routes",
+    response_model=SuccessResponse,
+    summary="List configured routes for an organization",
+)
+async def get_organization_routes(
+    org_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    service = TripService(db)
+    routes = await service.list_organization_routes(org_id)
+    return SuccessResponse(success=True, message="Organization routes retrieved", data=routes)
+
+
+@trip_router.get(
+    "/organizations/routes/{route_id}/members",
+    response_model=SuccessResponse,
+    summary="List registered students / members assigned to a route",
+)
+async def get_route_members(
+    route_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    service = TripService(db)
+    members = await service.list_route_members(route_id)
+    return SuccessResponse(success=True, message="Route members retrieved", data=members)
+
+
 async def _store_route_and_match(
     trip_id: str,
     encoded_polyline: str,

@@ -19,12 +19,58 @@ export type SmartRadarFilterType =
   | 'closest'
   | 'airport'
 
+export interface ServiceCustomizationsData {
+  transport?: {
+    max_payload_kg?: number
+    helpers_provided?: number
+    accept_fragile?: boolean
+    vehicle_category?: string
+  }
+  airport?: {
+    meet_and_greet_enabled?: boolean
+    auto_flight_delay_adjust?: boolean
+    queue_mode?: boolean
+  }
+  packers?: {
+    crew_size?: number
+    provides_assembly?: boolean
+    provides_fragile_packing?: boolean
+    truck_type?: string
+  }
+  parcel?: {
+    max_parcel_kg?: number
+    accept_express?: boolean
+  }
+  rental?: {
+    min_package_hours?: number
+    max_package_hours?: number
+  }
+  outstation?: {
+    accept_round_trip?: boolean
+    accept_one_way?: boolean
+    max_distance_km?: number
+  }
+  carpool?: {
+    luggage_friendly?: boolean
+    ac_available?: boolean
+    quiet_ride?: boolean
+  }
+}
+
 export interface DriverPreferencesData {
   mode: DrivingFocusMode
+  visibility_mode?: string
   allow_local: boolean
   allow_airport: boolean
   allow_outstation: boolean
+  allow_rental: boolean
+  allow_parcel: boolean
+  allow_transport: boolean
+  allow_packers: boolean
+  allow_carpool: boolean
   allow_scheduled: boolean
+  ladies_only_accepted: boolean
+  service_customizations: ServiceCustomizationsData
   min_earning_cutoff: number
   max_pickup_distance_km: number
   max_pickup_eta_min: number
