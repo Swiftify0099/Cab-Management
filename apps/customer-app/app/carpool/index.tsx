@@ -63,11 +63,9 @@ export default function CarpoolScreen() {
     }
   }, [originCity, destinationCity, seatsNeeded, ladiesOnly])
 
-  // Auto-search if origin/destination prefilled from params
+  // Load real published trips on initial mount & whenever params change
   useEffect(() => {
-    if (params?.origin || params?.destination) {
-      searchTrips()
-    }
+    searchTrips()
   }, [])
 
   const filteredRides = trips  // Already filtered server-side

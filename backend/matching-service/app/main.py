@@ -77,7 +77,9 @@ async def global_exc(request: Request, exc: Exception):
 
 # Mount routers
 app.include_router(matching_router, prefix="/api/v1/matching", tags=["Matching"])
+app.include_router(matching_router, prefix="/api/v1", tags=["Matching Direct"])
 app.include_router(tracking_router, prefix="/api/v1/tracking", tags=["Tracking"])
+app.include_router(tracking_router, prefix="/api/v1", tags=["Tracking Direct"])
 
 
 @app.get("/health", tags=["Health"])

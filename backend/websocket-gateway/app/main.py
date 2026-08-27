@@ -388,22 +388,142 @@ async def sos_trigger(sid, data):
 
 
 @sio.event
-async def DRIVER_ONLINE(sid, data):
-    """Driver goes online - ensure entered in room and notify ready."""
+async def JOIN_CUSTOMER_ROOM(sid, data):
+    """Explicitly join customer personal and broadcast rooms."""
     client = _connected_clients.get(sid, {})
+    customer_id = (data or {}).get("customer_id") or client.get("user_id")
+    if customer_id:
+        await sio.enter_room(sid, f"customer:{customer_id}")
+        await sio.enter_room(sid, f"user:{customer_id}")
+        logger.info("Customer joined personal room", sid=sid, customer_id=customer_id)
+        await sio.emit("CUSTOMER_SOCKET_READY", {"status": "ready", "customer_id": customer_id, "room": f"customer:{customer_id}"}, to=sid)
+
+
+@sio.event
+async def JOIN_DRIVER_ROOM(sid, data):
+    """Explicitly join driver personal and radar rooms."""
+    client = _connected_clients.get(sid, {})
+    driver_id = (data or {}).get("driver_id") or client.get("user_id")
+    if driver_id:
+        await sio.enter_room(sid, f"driver:{driver_id}")
+        await sio.enter_room(sid, f"user:{driver_id}")
+        logger.info("Driver joined personal room", sid=sid, driver_id=driver_id)
+        await sio.emit("DRIVER_SOCKET_READY", {"status": "ready", "driver_id": driver_id, "room": f"driver:{driver_id}"}, to=sid)
+
+
+@sio.event
+async def LOCATION_UPDATE(sid, data):
+    """
+    Driver sends GPS update via WebSocket (from useDriverSocket.ts LOCATION_UPDATE emit).
+    Broadcasts to trip room AND publishes to Redis for tracking persistence and PostGIS candidate discovery.
+    """
+    client = _connected_clients.get(sid, {})
+    trip_id = data.get("trip_id")
     driver_id = data.get("driver_id") or client.get("user_id")
+    data["driver_id"] = driver_id
+
+    if trip_id:
+        # Broadcast live location to everyone tracking this trip
+        await sio.emit("LOCATION_UPDATE", data, room=f"trip:{trip_id}", skip_sid=sid)
+
+    lat = data.get("lat") or data.get("latitude")
+    lng = data.get("lng") or data.get("longitude")
+    if driver_id and lat and lng:
+        try:
+            r = await get_redis()
+            await r.setex(
+                f"driver:location:{driver_id}",
+                60,
+                json.dumps({"driver_id": driver_id, "latitude": lat, "longitude": lng, "speed": data.get("speed", 0)}),
+            )
+            await r.publish("live:location:updates", json.dumps({**data, "driver_id": driver_id, "lat": lat, "lng": lng}))
+        except Exception as e:
+            logger.warning("LOCATION_UPDATE redis error", exc_info=e)
+
+
+@sio.event
+async def heartbeat(sid, data):
+    """Driver heartbeat — updates online status TTL in Redis and PostGIS."""
+    client = _connected_clients.get(sid, {})
+    driver_id = (data or {}).get("driver_id") or client.get("user_id")
+    if driver_id:
+        lat = (data or {}).get("latitude") or (data or {}).get("lat")
+        lng = (data or {}).get("longitude") or (data or {}).get("lng")
+        if lat and lng:
+            try:
+                r = await get_redis()
+                await r.setex(
+                    f"driver:location:{driver_id}",
+                    60,
+                    json.dumps({"driver_id": driver_id, "latitude": lat, "longitude": lng}),
+                )
+                await r.publish("live:location:updates", json.dumps({"driver_id": driver_id, "lat": lat, "lng": lng, "speed": 0, "heading": 0}))
+            except Exception as e:
+                logger.warning("Heartbeat redis error", exc_info=e)
+        await sio.emit("HEARTBEAT_ACK", {"ts": (data or {}).get("ts")}, to=sid)
+
+
+@sio.event
+async def CUSTOMER_LOCATION_UPDATE(sid, data):
+    """
+    Customer sends GPS position while searching for rides.
+    Publishes to matching-service via Redis for corridor membership check.
+    """
+    client = _connected_clients.get(sid, {})
+    customer_id = client.get("user_id")
+    if not customer_id:
+        return
+
+    lat = (data or {}).get("lat") or (data or {}).get("latitude")
+    lng = (data or {}).get("lng") or (data or {}).get("longitude")
+    if lat is None or lng is None:
+        return
+
+    try:
+        r = await get_redis()
+        await r.publish(
+            "customer:location:updates",
+            json.dumps({"customer_id": customer_id, "lat": lat, "lng": lng}),
+        )
+        await r.setex(
+            f"customer:location:{customer_id}",
+            60,
+            json.dumps({"lat": lat, "lng": lng}),
+        )
+    except Exception as e:
+        logger.warning("CUSTOMER_LOCATION_UPDATE redis error", exc_info=e)
+
+
+@sio.event
+async def DRIVER_ONLINE(sid, data):
+    """Driver goes online - ensure entered in room, update PostGIS coordinates, and notify ready."""
+    client = _connected_clients.get(sid, {})
+    driver_id = (data or {}).get("driver_id") or client.get("user_id")
+    lat = (data or {}).get("lat") or (data or {}).get("latitude")
+    lng = (data or {}).get("lng") or (data or {}).get("longitude")
     if driver_id:
         room = f"driver:{driver_id}"
         await sio.enter_room(sid, room)
         logger.info("Driver online event received", driver_id=driver_id, room=room)
         await sio.emit("DRIVER_SOCKET_READY", {"status": "ready", "driver_id": driver_id, "room": room}, to=sid)
+        if lat and lng:
+            try:
+                r = await get_redis()
+                await r.setex(
+                    f"driver:location:{driver_id}",
+                    60,
+                    json.dumps({"driver_id": driver_id, "latitude": lat, "longitude": lng}),
+                )
+                await r.publish("live:location:updates", json.dumps({"driver_id": driver_id, "lat": lat, "lng": lng, "speed": 0, "heading": 0}))
+            except Exception:
+                pass
 
 
 @sio.event
 async def DRIVER_OFFLINE(sid, data):
     """Driver goes offline."""
     client = _connected_clients.get(sid, {})
-    driver_id = data.get("driver_id") or client.get("user_id")
+    driver_id = (data or {}).get("driver_id") or client.get("user_id")
     if driver_id:
         await sio.leave_room(sid, f"driver:{driver_id}")
         logger.info("Driver offline event received", driver_id=driver_id)
@@ -413,34 +533,38 @@ async def DRIVER_OFFLINE(sid, data):
 async def DRIVER_PING(sid, data):
     """Lightweight 15s driver heartbeat and location update."""
     client = _connected_clients.get(sid, {})
-    driver_id = client.get("user_id") or data.get("driver_id")
+    driver_id = client.get("user_id") or (data or {}).get("driver_id")
     if driver_id:
-        lat = data.get("lat") or data.get("latitude")
-        lng = data.get("lng") or data.get("longitude")
+        lat = (data or {}).get("lat") or (data or {}).get("latitude")
+        lng = (data or {}).get("lng") or (data or {}).get("longitude")
         if lat and lng:
             try:
                 r = await get_redis()
                 await r.setex(
                     f"driver:location:{driver_id}",
-                    35,
+                    60,
                     json.dumps({"driver_id": driver_id, "latitude": lat, "longitude": lng}),
                 )
+                await r.publish("live:location:updates", json.dumps({"driver_id": driver_id, "lat": lat, "lng": lng, "speed": 0, "heading": 0}))
             except Exception:
                 pass
-    await sio.emit("PONG", {"ts": data.get("t") or data.get("ts")}, to=sid)
+    await sio.emit("PONG", {"ts": (data or {}).get("t") or (data or {}).get("ts")}, to=sid)
 
 
 @sio.event
 async def BOOKING_RESPONSE(sid, data):
     """Driver accepts or rejects booking."""
-    booking_id = data.get("booking_id")
-    driver_id = data.get("driver_id") or (_connected_clients.get(sid, {})).get("user_id")
-    accepted = data.get("accepted", False)
+    booking_id = (data or {}).get("booking_id")
+    driver_id = (data or {}).get("driver_id") or (_connected_clients.get(sid, {})).get("user_id")
+    accepted = (data or {}).get("accepted", False)
     if booking_id and driver_id:
-        r = await get_redis()
-        response_key = f"dispatch:response:{booking_id}:{driver_id}"
-        await r.setex(response_key, 120, "accepted" if accepted else "rejected")
-        logger.info("Driver BOOKING_RESPONSE", driver_id=driver_id, booking_id=booking_id, accepted=accepted)
+        try:
+            r = await get_redis()
+            response_key = f"dispatch:response:{booking_id}:{driver_id}"
+            await r.setex(response_key, 120, "accepted" if accepted else "rejected")
+            logger.info("Driver BOOKING_RESPONSE", driver_id=driver_id, booking_id=booking_id, accepted=accepted)
+        except Exception as e:
+            logger.warning("BOOKING_RESPONSE error", exc_info=e)
 
 
 @sio.event
@@ -450,23 +574,26 @@ async def ride_request_respond(sid, data):
     Stores response in Redis for RideDispatchService sequential queue.
     """
     client = _connected_clients.get(sid, {})
-    offer_id = data.get("offer_id")
-    accepted = data.get("accepted", False)
-    rejection_reason = data.get("rejection_reason")
+    offer_id = (data or {}).get("offer_id")
+    accepted = (data or {}).get("accepted", False)
+    rejection_reason = (data or {}).get("rejection_reason")
     driver_id = client.get("user_id")
 
     if not offer_id:
         return
 
-    r = await get_redis()
-    response_key = f"ride_offer:response:{offer_id}"
-    await r.setex(response_key, 60, "accepted" if accepted else "rejected")
-    logger.info("Driver responded to ride offer via WS", driver_id=driver_id, offer_id=offer_id, accepted=accepted)
+    try:
+        r = await get_redis()
+        response_key = f"ride_offer:response:{offer_id}"
+        await r.setex(response_key, 60, "accepted" if accepted else "rejected")
+        logger.info("Driver responded to ride offer via WS", driver_id=driver_id, offer_id=offer_id, accepted=accepted)
 
-    await sio.emit("RIDE_OFFER_ACK", {
-        "offer_id": offer_id,
-        "accepted": accepted,
-    }, to=sid)
+        await sio.emit("RIDE_OFFER_ACK", {
+            "offer_id": offer_id,
+            "accepted": accepted,
+        }, to=sid)
+    except Exception as e:
+        logger.warning("ride_request_respond error", exc_info=e)
 
 
 @app.get("/health")
@@ -479,8 +606,8 @@ async def health():
 
 
 # ── Mount Socket.IO as ASGI app ──────────────────────────────────────────────
-socket_app = socketio.ASGIApp(sio, other_asgi_app=app, socketio_path="/socket.io")
+# When mounted on FastAPI root at /socket.io, FastAPI strips the prefix, so socketio_path="" handles all /socket.io paths
+app.mount("/socket.io", socketio.ASGIApp(sio, socketio_path=""))
+socket_app = socketio.ASGIApp(sio, other_asgi_app=app, socketio_path="socket.io")
 
-# Also mount on FastAPI app root so running `uvicorn app.main:app` handles /socket.io correctly
-app.mount("/socket.io", socketio.ASGIApp(sio))
 

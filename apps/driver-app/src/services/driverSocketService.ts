@@ -20,7 +20,7 @@ import { Vibration } from 'react-native'
 import { DriverSoundService } from './driverSoundService'
 import { RideRequestService } from './rideRequestService'
 
-const WS_URL = (process.env.EXPO_PUBLIC_WS_URL || 'https://cab-management-1.onrender.com').replace(/\/api\/v1$/, '')
+const WS_URL = (process.env.EXPO_PUBLIC_WS_URL?.trim() || 'https://cab-management-1.onrender.com').replace(/\/+$/, '').replace(/\/api\/v1$/, '')
 
 export interface LocationUpdatePayload {
   driver_id: string
@@ -241,6 +241,9 @@ class DriverSocketServiceClass {
       this.notify()
 
       await this.resolveDriverId()
+      if (this.driverUserId && this.driverUserId !== 'unknown') {
+        s.emit('JOIN_DRIVER_ROOM', { driver_id: this.driverUserId })
+      }
 
       try {
         const { AvailabilityService } = require('./availabilityService')
@@ -300,6 +303,9 @@ class DriverSocketServiceClass {
       this.notify()
 
       await this.resolveDriverId()
+      if (this.driverUserId && this.driverUserId !== 'unknown') {
+        s.emit('JOIN_DRIVER_ROOM', { driver_id: this.driverUserId })
+      }
 
       try {
         const { AvailabilityService } = require('./availabilityService')

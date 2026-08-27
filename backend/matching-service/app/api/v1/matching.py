@@ -5242,3 +5242,82 @@ async def simulate_settings_dev_scenario(
         driver_id=driver.id if driver else uuid.uuid4(),
         scenario_key=scenario_key
     )
+
+@router.get(
+    "/rides/{ride_id}",
+    response_model=SuccessResponse,
+    summary="Get Ride Request details by ID (Customer / Driver)",
+)
+@router.get(
+    "/matching/rides/{ride_id}",
+    response_model=SuccessResponse,
+    summary="Get Ride Request details by ID (Customer / Driver alias)",
+)
+async def get_ride_request_by_id(
+    ride_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Returns live RideRequest details including status, pickup/destination, fare,
+    assigned driver profile and vehicle details.
+    """
+    from common.models.all_models import RideRequest, Driver, Vehicle
+    try:
+        r_uuid = uuid.UUID(str(ride_id))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid ride ID format")
+
+    res = await db.execute(select(RideRequest).where(RideRequest.id == r_uuid))
+    ride = res.scalar_one_or_none()
+    if not ride:
+        raise HTTPException(status_code=404, detail="Ride request not found")
+
+    driver_info = None
+    vehicle_info = None
+    if ride.assigned_driver_id:
+        d_res = await db.execute(select(Driver).where(Driver.id == ride.assigned_driver_id))
+        drv = d_res.scalar_one_or_none()
+        if drv:
+            v_res = await db.execute(select(Vehicle).where(Vehicle.driver_id == drv.id))
+            veh = v_res.scalar_one_or_none()
+            driver_info = {
+                "id": str(drv.id),
+                "full_name": drv.full_name,
+                "phone": drv.phone,
+                "rating": float(drv.rating or 4.85),
+                "total_trips": getattr(drv, "total_trips", 0) or 0,
+                "profile_photo": drv.profile_photo,
+            }
+            if veh:
+                vehicle_info = {
+                    "make": veh.make or "Standard",
+                    "model": veh.model or "Cab",
+                    "color": veh.color or "White",
+                    "registration_number": veh.registration_number or "MH-12-REG",
+                    "vehicle_type": str(veh.vehicle_type.value) if hasattr(veh.vehicle_type, 'value') else str(veh.vehicle_type or 'SEDAN'),
+                }
+
+    return SuccessResponse(
+        success=True,
+        message="Ride details retrieved",
+        data={
+            "id": str(ride.id),
+            "ride_id": str(ride.id),
+            "booking_id": str(ride.id),
+            "status": ride.status.value if hasattr(ride.status, "value") else str(ride.status),
+            "pickup_address": ride.pickup_address,
+            "pickup_lat": float(ride.pickup_lat),
+            "pickup_lng": float(ride.pickup_lng),
+            "destination_address": ride.destination_address,
+            "destination_lat": float(ride.destination_lat),
+            "destination_lng": float(ride.destination_lng),
+            "estimated_fare": float(ride.estimated_fare or 0.0),
+            "start_pin": getattr(ride, "start_pin", None),
+            "start_pin_plain": getattr(ride, "start_pin_plain", None),
+            "driver": driver_info,
+            "vehicle": vehicle_info,
+            "created_at": ride.created_at.isoformat() if hasattr(ride, "created_at") and ride.created_at else None,
+            "assigned_at": ride.assigned_at.isoformat() if hasattr(ride, "assigned_at") and ride.assigned_at else None,
+        },
+    )

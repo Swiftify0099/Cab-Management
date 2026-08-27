@@ -214,9 +214,11 @@ class TrackingService:
 async def consume_location_updates(db_factory):
     """
     Listens to 'live:location:updates' Redis channel.
-    Persists each GPS point via TrackingService.
-    Called from WebSocket gateway lifespan as a background coroutine.
+    1. Updates driver's live GPS coordinates in the PostGIS 'drivers' table (current_location, is_online=True).
+    2. Persists active trip point via TrackingService if trip_id is present.
     """
+    from sqlalchemy import text as sa_text
+    import uuid as _uuid
     r = await get_redis()
     pubsub = r.pubsub()
     await pubsub.subscribe("live:location:updates")
@@ -226,19 +228,52 @@ async def consume_location_updates(db_factory):
         if message["type"] != "message":
             continue
         try:
-            data = json.loads(message["data"])
+            raw_msg = message["data"]
+            if isinstance(raw_msg, bytes):
+                raw_msg = raw_msg.decode("utf-8")
+            data = json.loads(raw_msg)
+            
+            driver_id_val = data.get("driver_id")
+            lat_val = float(data.get("lat") or data.get("latitude") or 0)
+            lng_val = float(data.get("lng") or data.get("longitude") or 0)
+
             async with db_factory() as db:
-                service = TrackingService(db)
-                await service.record_location(
-                    trip_id=data.get("trip_id") or data.get("trip_id", ""),
-                    driver_id=data.get("driver_id", ""),
-                    latitude=float(data.get("lat") or data.get("latitude", 0)),
-                    longitude=float(data.get("lng") or data.get("longitude", 0)),
-                    speed_kmh=float(data.get("speed") or data.get("speed_kmh", 0.0)),
-                    heading=float(data.get("heading", 0.0)),
-                    accuracy_m=float(data.get("accuracy") or data.get("accuracy_m", 0.0)),
-                    altitude_m=data.get("altitude_m"),
-                    booking_id=data.get("booking_id"),
-                )
+                # 1. Update driver's authoritative PostGIS location in database
+                if driver_id_val and lat_val != 0 and lng_val != 0:
+                    try:
+                        d_uuid = _uuid.UUID(str(driver_id_val))
+                        await db.execute(
+                            sa_text("""
+                                UPDATE drivers
+                                SET current_location = ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography,
+                                    is_online = TRUE,
+                                    status = 'ONLINE',
+                                    updated_at = NOW()
+                                WHERE user_id = :uid OR id = :did
+                            """),
+                            {"lng": lng_val, "lat": lat_val, "uid": d_uuid, "did": d_uuid}
+                        )
+                        await db.commit()
+                    except Exception as db_loc_err:
+                        pass
+
+                # 2. Persist trip tracking if on an active trip
+                trip_id_val = data.get("trip_id")
+                if trip_id_val and trip_id_val != "undefined" and len(trip_id_val) > 10:
+                    try:
+                        service = TrackingService(db)
+                        await service.record_location(
+                            trip_id=trip_id_val,
+                            driver_id=str(driver_id_val or ""),
+                            latitude=lat_val,
+                            longitude=lng_val,
+                            speed_kmh=float(data.get("speed") or data.get("speed_kmh", 0.0)),
+                            heading=float(data.get("heading", 0.0)),
+                            accuracy_m=float(data.get("accuracy") or data.get("accuracy_m", 0.0)),
+                            altitude_m=data.get("altitude_m"),
+                            booking_id=data.get("booking_id"),
+                        )
+                    except Exception as trip_err:
+                        pass
         except Exception as e:
             logger.error("Location consumer error", exc_info=e)

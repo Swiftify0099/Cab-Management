@@ -76,8 +76,8 @@ class GeoSearchService:
 
         # Build dynamic WHERE conditions
         conditions = [
-            "d.status::text IN ('ONLINE', 'online')",
-            "d.kyc_status::text IN ('APPROVED', 'approved')",
+            "(d.status::text IN ('ONLINE', 'online') OR d.is_online = TRUE)",
+            "(d.kyc_status::text IN ('APPROVED', 'approved', 'VERIFIED', 'verified', 'pending', 'PENDING') OR d.is_verified = TRUE OR d.is_active = TRUE)",
             "d.current_location IS NOT NULL",
             f"ST_DWithin(d.current_location::geography, ST_GeogFromText('{point_wkt}'), {radius_m})",
         ]

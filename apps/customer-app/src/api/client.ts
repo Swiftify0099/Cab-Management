@@ -9,15 +9,6 @@ export const PROD_BASE_URL = 'https://cab-management-1.onrender.com/api/v1'
 const resolveBaseUrl = () => {
   const envUrl = process.env.EXPO_PUBLIC_API_URL?.trim()
   if (!envUrl) return PROD_BASE_URL
-  if (
-    envUrl.includes('10.189.118.102') ||
-    envUrl.includes('172.31.') ||
-    envUrl.includes('172.18.') ||
-    envUrl.startsWith('http://localhost') ||
-    envUrl.startsWith('http://127.0.0.1')
-  ) {
-    return PROD_BASE_URL
-  }
   return envUrl.replace(/\/+$/, '')
 }
 

@@ -65,8 +65,12 @@ ROUTES = [
     ("/api/v1/subscriptions","http://localhost:8002"),
 
     # Matching Service — port 8003
+    ("/api/v1/rides",        "http://localhost:8003"),
     ("/api/v1/matching",     "http://localhost:8003"),
     ("/api/v1/tracking",     "http://localhost:8003"),
+    ("/api/v1/safety",       "http://localhost:8003"),
+    ("/api/v1/carpool",      "http://localhost:8003"),
+    ("/api/v1/outstation",   "http://localhost:8003"),
 
     # Payment Service — port 8004
     ("/api/v1/payments",     "http://localhost:8004"),

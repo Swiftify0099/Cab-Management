@@ -221,65 +221,55 @@ export default function TrackTripScreen() {
   const [chatInputText, setChatInputText] = useState('')
   const [sendingMsg, setSendingMsg] = useState(false)
 
-  // ── 1. Fetch Booking Details ──
+  // ── 1. Fetch Booking / Ride Details (Real Data Only — Zero Fake Mock Data) ──
   const fetchBooking = useCallback(async () => {
     if (!bookingId && !tripId) {
-      // Demo mock state
-      setBooking({
-        id: 'bk_demo_4921',
-        driver: {
-          id: 'drv_demo_01',
-          full_name: 'Sunil Shinde',
-          phone: '+919876543210',
-          rating: 4.9,
-          vehicle_model: 'White Swift Dzire',
-          license_plate: 'MH-12-DE-4921',
-        },
-        pickup_address: 'Shivajinagar Station, Pune',
-        dropoff_address: 'Dadar TT Circle, Mumbai',
-        estimated_fare: 1850,
-        start_pin: '4921',
-      })
-      setFare(1850)
       return
     }
 
+    const bId = bookingId || tripId
     try {
-      const bId = bookingId || tripId
-      const res = await api.get(`/bookings/${bId}`)
-      const data = res.data?.data || res.data
-      setBooking(data)
-      if (data.start_pin || data.start_pin_plain) {
-        setStartOtp(data.start_pin || data.start_pin_plain)
+      let data: any = null
+      // 1. Try on-demand ride endpoint
+      try {
+        const rideRes = await api.get(`/rides/${bId}`)
+        data = rideRes.data?.data || rideRes.data
+      } catch {
+        // 2. Fallback to booking service
+        try {
+          const bookRes = await api.get(`/bookings/${bId}`)
+          data = bookRes.data?.data || bookRes.data
+        } catch {
+          // 3. Fallback to matching rides endpoint
+          const mRes = await api.get(`/matching/rides/${bId}`)
+          data = mRes.data?.data || mRes.data
+        }
       }
-      if (data.estimated_fare || data.current_estimated_fare) {
-        setFare(data.current_estimated_fare || data.estimated_fare)
+
+      if (data) {
+        setBooking(data)
+        if (data.start_pin || data.start_pin_plain) {
+          setStartOtp(data.start_pin || data.start_pin_plain)
+        }
+        if (data.estimated_fare || data.current_estimated_fare) {
+          setFare(data.current_estimated_fare || data.estimated_fare)
+        }
+        if (data.destination_address) {
+          setDropAddress(data.destination_address)
+        }
+        const st = (data.status || '').toUpperCase()
+        if (st === 'IN_PROGRESS') {
+          setStage('IN_PROGRESS')
+        } else if (st === 'ARRIVED') {
+          setStage('ARRIVED')
+        } else if (st === 'COMPLETED') {
+          setStage('COMPLETED')
+        } else if (st === 'ASSIGNED') {
+          setStage('ASSIGNED')
+        }
       }
-      if (data.destination_address) {
-        setDropAddress(data.destination_address)
-      }
-      if (data.status === 'in_progress' || data.status === 'IN_PROGRESS') {
-        setStage('IN_PROGRESS')
-      } else if (data.status === 'arrived' || data.status === 'ARRIVED') {
-        setStage('ARRIVED')
-      }
-    } catch {
-      // Fallback
-      setBooking({
-        id: bookingId || 'bk_demo',
-        driver: {
-          id: 'drv_demo_01',
-          full_name: 'Sunil Shinde',
-          phone: '+919876543210',
-          rating: 4.9,
-          vehicle_model: 'White Swift Dzire',
-          license_plate: 'MH-12-DE-4921',
-        },
-        pickup_address: 'Shivajinagar Station, Pune',
-        dropoff_address: 'Dadar TT Circle, Mumbai',
-        estimated_fare: 1850,
-        start_pin: '4921',
-      })
+    } catch (err: any) {
+      console.warn('[TrackTrip] fetchBooking error:', err?.message)
     }
   }, [bookingId, tripId])
 
