@@ -42,7 +42,7 @@ TaskManager.defineTask(DRIVER_BACKGROUND_LOCATION_TASK, async ({ data, error }: 
         const { AvailabilityService } = require('./availabilityService')
         AvailabilityService.updateLocation(latitude, longitude, accuracy)
 
-        // 2. Ensure Socket is re-connected (critical: JS engine may have suspended it)
+        // 2. Ensure Socket is re-connected
         const { DriverSocketService } = require('./driverSocketService')
         DriverSocketService.ensureConnected()
 
@@ -56,57 +56,58 @@ TaskManager.defineTask(DRIVER_BACKGROUND_LOCATION_TASK, async ({ data, error }: 
             accuracy: Math.round(accuracy ?? 5),
             trip_id: '',
           })
-
-          // 3b. Poll for pending ride offers and fire a push notification if any
-          //     This is the KEY fix: driver gets a lock-screen alert even while
-          //     the socket was temporarily dormant in background.
-          try {
-            const { RideRequestService } = require('./rideRequestService')
-            const pending = await RideRequestService.fetchPendingOffers()
-            if (Array.isArray(pending) && pending.length > 0) {
-              const offer = pending[0]
-              const offerId = offer.offer_id || offer.booking_id || `bg-${Date.now()}`
-              const now = Date.now()
-
-              // Only notify once per offer, not on every location tick
-              if (_lastNotifiedOfferId !== offerId || now - _lastNotifiedOfferTime > 30000) {
-                _lastNotifiedOfferId = offerId
-                _lastNotifiedOfferTime = now
-
-                // Set the incoming request on the socket service state
-                DriverSocketService.setIncomingRequest(offer)
-
-                // Fire a loud heads-up push notification for the lock screen
-                await Notifications.scheduleNotificationAsync({
-                  content: {
-                    title: `🚖 New Ride Request: ₹${offer.trip?.fare || offer.fare || 0}!`,
-                    body: `From: ${offer.trip?.from || offer.pickup?.address || 'Pickup'} → ${offer.trip?.to || offer.destination?.address || 'Drop'}`,
-                    sound: 'drsiran.mp3',
-                    priority: Notifications.AndroidNotificationPriority.MAX,
-                    categoryIdentifier: offer.service_type === 'parcel' ? 'PARCEL_REQUEST' : 'INCOMING_RIDE',
-                    data: {
-                      offer_id: offerId,
-                      ride_request_id: offer.ride_request_id || offerId,
-                      booking_id: offer.booking_id || offerId,
-                      fare: offer.trip?.fare || offer.fare,
-                    },
-                    vibrate: [0, 600, 300, 600, 300, 600, 300, 1000],
-                  },
-                  trigger: null, // fire immediately
-                }).catch(() => {})
-              }
-            }
-          } catch (_pollErr) {
-            // Non-fatal — don't crash the background task
-          }
         } else {
-          // 3c. Socket not yet reconnected — use REST fallback to keep presence alive
-          //     This tells the backend the driver is still online so offers can be queued
+          // 3b. Socket reconnecting — use REST fallback to keep driver online in backend
           api.patch('/driver/status', {
             status: 'online',
             lat: latitude,
             lng: longitude,
           }).catch(() => {})
+        }
+
+        // 3c. ALWAYS poll for pending ride offers on every background tick (works even when socket is sleeping)
+        try {
+          const { RideRequestService } = require('./rideRequestService')
+          const pending = await RideRequestService.fetchPendingOffers()
+          if (Array.isArray(pending) && pending.length > 0) {
+            const offer = pending[0]
+            const offerId = offer.offer_id || offer.booking_id || `bg-${Date.now()}`
+            const now = Date.now()
+
+            // Only notify once per offer, or re-alert if still waiting after 25s
+            if (_lastNotifiedOfferId !== offerId || now - _lastNotifiedOfferTime > 25000) {
+              _lastNotifiedOfferId = offerId
+              _lastNotifiedOfferTime = now
+
+              // Set the incoming request on the socket service state
+              DriverSocketService.setIncomingRequest(offer)
+
+              const channelId = offer.service_type === 'parcel' ? 'parcel-requests' : 'ride-requests'
+
+              // Fire a loud MAX-priority heads-up push notification for the lock screen & over other apps
+              await Notifications.scheduleNotificationAsync({
+                content: {
+                  title: `🚖 New Ride Request: ₹${offer.trip?.fare || offer.fare || 0}!`,
+                  body: `Pickup: ${offer.trip?.from || offer.pickup?.address || 'Pickup'} → Drop: ${offer.trip?.to || offer.destination?.address || 'Drop'}`,
+                  sound: 'drsiran.mp3',
+                  priority: Notifications.AndroidNotificationPriority.MAX,
+                  categoryIdentifier: offer.service_type === 'parcel' ? 'PARCEL_REQUEST' : 'INCOMING_RIDE',
+                  data: {
+                    offer_id: offerId,
+                    ride_request_id: offer.ride_request_id || offerId,
+                    booking_id: offer.booking_id || offerId,
+                    fare: offer.trip?.fare || offer.fare,
+                  },
+                  vibrate: [0, 600, 300, 600, 300, 600, 300, 1000],
+                  // @ts-ignore — channelId is a valid Android notification parameter
+                  channelId: channelId,
+                },
+                trigger: null, // fire immediately
+              }).catch(() => {})
+            }
+          }
+        } catch (_pollErr) {
+          // Non-fatal — don't crash the background task
         }
       } catch (err) {
         console.warn('[DriverBackgroundService] Location update processing error:', err)
@@ -140,11 +141,11 @@ class DriverBackgroundLocationServiceClass {
         return true
       }
 
-      // 4. Build platform-specific options
+      // 4. Build platform-specific options (distanceInterval: 0 ensures ticks even when vehicle is parked/stationary)
       const locationOptions: Location.LocationTaskOptions = {
         accuracy: Location.Accuracy.Balanced,
-        timeInterval: 8000,       // 8-second interval
-        distanceInterval: 10,     // 10 metres threshold
+        timeInterval: 5000,       // 5-second interval
+        distanceInterval: 0,      // 0 metres threshold so it triggers continuously even when stationary
         deferredUpdatesInterval: 5000,
         showsBackgroundLocationIndicator: true,
         pausesUpdatesAutomatically: false,

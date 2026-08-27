@@ -16,12 +16,14 @@ import { router } from 'expo-router';
 import { useTheme } from '../../src/theme';
 import { NotificationService } from '../../src/services/notificationService';
 import { NotificationPreferences } from '../../src/types/notifications';
+import BatteryOptimizationModal from '../../src/components/common/BatteryOptimizationModal';
 
 export default function NotificationSettingsScreen() {
   const { theme, isDark } = useTheme();
   const [preferences, setPreferences] = useState<NotificationPreferences | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showBatteryModal, setShowBatteryModal] = useState(false);
 
   const loadPrefs = useCallback(async () => {
     try {
@@ -152,6 +154,53 @@ export default function NotificationSettingsScreen() {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingBottom: 60 }}
         >
+          {/* Battery & Background Execution Whitelist Card */}
+          <View style={styles.sectionWrap}>
+            <Text style={styles.sectionTitle}>Background Execution & Battery</Text>
+            <View
+              style={[
+                styles.card,
+                {
+                  backgroundColor: isDark ? '#131B2E' : '#FFFFFF',
+                  borderColor: isDark ? '#1E293B' : '#E2E8F0',
+                  padding: 14,
+                },
+              ]}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <View style={[styles.iconWrap, { backgroundColor: '#10B98120', width: 40, height: 40, borderRadius: 20 }]}>
+                  <MaterialCommunityIcons name="battery-charging-high" size={22} color="#10B981" />
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={[styles.itemLabel, { color: theme.colors.text, fontSize: 14 }]}>
+                    Unrestricted Battery (No Sleep)
+                  </Text>
+                  <Text style={[styles.itemDesc, { color: theme.colors.textSecondary, marginTop: 2 }]}>
+                    Ensure you receive incoming rides even while using Google Maps or when screen is locked.
+                  </Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={{
+                  backgroundColor: '#10B981',
+                  borderRadius: 10,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingVertical: 10,
+                  marginTop: 12,
+                }}
+                onPress={() => setShowBatteryModal(true)}
+              >
+                <Feather name="settings" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 13 }}>
+                  Configure Battery Unrestricted Mode
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
           {prefSections.map((sec, si) => (
             <View key={si} style={styles.sectionWrap}>
               <Text style={styles.sectionTitle}>{sec.title}</Text>
@@ -209,6 +258,12 @@ export default function NotificationSettingsScreen() {
           ))}
         </ScrollView>
       )}
+
+      <BatteryOptimizationModal
+        visible={showBatteryModal}
+        onDismiss={() => setShowBatteryModal(false)}
+        onConfigured={() => setShowBatteryModal(false)}
+      />
     </SafeAreaView>
   );
 }

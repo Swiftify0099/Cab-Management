@@ -50,6 +50,8 @@ import { AICopilotModal } from '../../src/components/ai/AICopilotModal'
 import { PendingRequestsModal } from '../../src/components/matching/PendingRequestsModal'
 import { AISmartDriverService } from '../../src/services/aiSmartDriverService'
 import { DriverAIInsights } from '../../src/types/aiSmartDriver'
+import BatteryOptimizationModal from '../../src/components/common/BatteryOptimizationModal'
+import { BatteryOptimizationService } from '../../src/services/batteryOptimizationService'
 
 
 const STATUS_COLORS: Record<string, string> = {
@@ -77,6 +79,7 @@ export default function DriverHomeScreen() {
   )
   const [blockedReasons, setBlockedReasons] = useState<BlockingReason[]>([])
   const [showBlockedModal, setShowBlockedModal] = useState(false)
+  const [showBatteryModal, setShowBatteryModal] = useState(false)
   const [showDevSheet, setShowDevSheet] = useState(false)
   const [showRideDevSheet, setShowRideDevSheet] = useState(false)
   const [showVehicleSwitchModal, setShowVehicleSwitchModal] = useState(false)
@@ -245,6 +248,12 @@ export default function DriverHomeScreen() {
         if (!res.success && res.reasons && res.reasons.length > 0) {
           setBlockedReasons(res.reasons)
           setShowBlockedModal(true)
+        } else {
+          // Check background battery & location readiness
+          const readiness = await BatteryOptimizationService.checkBackgroundReadiness()
+          if (!readiness.batteryConfigured || !readiness.backgroundLocationGranted) {
+            setShowBatteryModal(true)
+          }
         }
       } catch (err: any) {
         Alert.alert('Error', err.message)
@@ -819,6 +828,13 @@ export default function DriverHomeScreen() {
         onClose={() => setShowPendingModal(false)}
         driverLat={availabilityData.lat || 18.5204}
         driverLng={availabilityData.lng || 73.8567}
+      />
+
+      {/* Battery Optimization & Background Execution Modal */}
+      <BatteryOptimizationModal
+        visible={showBatteryModal}
+        onDismiss={() => setShowBatteryModal(false)}
+        onConfigured={() => setShowBatteryModal(false)}
       />
     </View>
   )

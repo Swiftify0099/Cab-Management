@@ -147,6 +147,8 @@ export async function triggerActionableRideNotification(params: {
     // Start loud siren ringing & continuous vibration
     DriverSoundService.playIncomingAlert({ loop: true })
 
+    const channelId = params.isParcel ? 'parcel-requests' : 'ride-requests'
+
     await Notifications.scheduleNotificationAsync({
       content: {
         title: params.title || 'New Ride Request! 🚖',
@@ -156,6 +158,8 @@ export async function triggerActionableRideNotification(params: {
         categoryIdentifier: params.isParcel ? 'PARCEL_REQUEST' : 'INCOMING_RIDE',
         data: params.data || {},
         vibrate: [0, 600, 300, 600, 300, 600, 300, 1000],
+        // @ts-ignore — channelId is valid on Android
+        channelId: channelId,
       },
       trigger: null, // trigger immediately
     })
