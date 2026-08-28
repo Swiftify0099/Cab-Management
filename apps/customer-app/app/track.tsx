@@ -126,6 +126,7 @@ export default function TrackTripScreen() {
     clearWaitingStatus,
     clearTollAdded,
     clearNewChatMessage,
+    tripAccepted,
     tripCompleted,
     sosAlert,
     safetyAlert,

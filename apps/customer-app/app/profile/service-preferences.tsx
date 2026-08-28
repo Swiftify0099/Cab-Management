@@ -257,11 +257,12 @@ export default function ServicePreferencesScreen() {
         {/* Save */}
         <View style={{ position: 'absolute', bottom: 32, left: 16, right: 16 }}>
           <AppButton
-            label={saving ? 'Saving…' : 'Save Preferences'}
             onPress={handleSave}
             disabled={saving}
             variant="primary"
-          />
+          >
+            {saving ? 'Saving…' : 'Save Preferences'}
+          </AppButton>
         </View>
       </SafeAreaView>
     </View>

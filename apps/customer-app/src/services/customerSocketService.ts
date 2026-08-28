@@ -1,6 +1,6 @@
-/**
- * Customer Socket Singleton Service — Production-Grade Connection Manager
- * ─────────────────────────────────────────────────────────────────────────────
+﻿/**
+ * Customer Socket Singleton Service â€” Production-Grade Connection Manager
+ * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
  * Provides a SINGLE shared persistent Socket.IO connection across the Customer App.
  *
  * Guarantees:
@@ -23,7 +23,7 @@ const resolveWsUrl = () => {
 }
 const WS_URL = resolveWsUrl()
 
-// ─── Event & Payload Types ──────────────────────────────────────────────────
+// â”€â”€â”€ Event & Payload Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export type SocketEvent =
   | 'CONNECTED'
   | 'DRIVER_ACCEPTED'
@@ -423,8 +423,8 @@ class CustomerSocketServiceClass {
       const s = io(WS_URL, {
         path: '/socket.io/',
         transports: ['websocket', 'polling'],
-        auth: { token: Bearer  },
-        query: { token: Bearer  },
+        auth: { token: token ? `Bearer ${token}` : '' },
+        query: { token: token ? `Bearer ${token}` : '' },
         reconnection: true,
         reconnectionDelay: 1500,
         reconnectionDelayMax: 10000,
@@ -452,7 +452,7 @@ class CustomerSocketServiceClass {
       try {
         const token = await SecureStore.getItemAsync('access_token')
         if (token) {
-          this.socket.auth = { token: Bearer  }
+          this.socket.auth = { token: `Bearer ${token}` }
           this.socket.connect()
         }
       } catch (err) {
@@ -502,7 +502,7 @@ class CustomerSocketServiceClass {
     })
 
     s.on('reconnect', async (attempt) => {
-      console.log([CustomerSocketService] Reconnected after  attempts)
+      console.log('[CustomerSocketService] Reconnected after ' + attempt + ' attempts')
       this.state.connected = true
       this.notify()
 
@@ -521,7 +521,7 @@ class CustomerSocketServiceClass {
       })
     })
 
-    // ── Matching & Dispatch Events ──────────────────────────────────────────
+    // â”€â”€ Matching & Dispatch Events â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     s.on('MATCH_FOUND', (data: MatchFoundPayload) => {
       console.log('[CustomerSocketService] MATCH_FOUND trip_id:', data.trip_id)
       this.state.matchFound = data
@@ -591,7 +591,7 @@ class CustomerSocketServiceClass {
       this.notify()
     })
 
-    // ── Location Stream Normalization ───────────────────────────────────────
+    // â”€â”€ Location Stream Normalization â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const handleLocationUpdate = (data: any) => {
       if (!data) return
       const normalized: LocationUpdatePayload = {
@@ -622,7 +622,7 @@ class CustomerSocketServiceClass {
       }
     })
 
-    // ── Feature 4: Reservation Events ───────────────────────────────────────
+    // â”€â”€ Feature 4: Reservation Events â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     s.on('RESERVATION_CONFIRMED', (data: any) => {
       console.log('[CustomerSocketService] RESERVATION_CONFIRMED:', data.booking_id)
       this.triggerReconnectSync()
@@ -657,7 +657,7 @@ class CustomerSocketServiceClass {
       this.triggerReconnectSync()
     })
 
-    // ── Feature 5: Negotiation Events ───────────────────────────────────────
+    // â”€â”€ Feature 5: Negotiation Events â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     s.on('NEGOTIATION_DRIVER_OFFER', (data: NegotiationDriverOfferPayload) => {
       this.state.negotiationDriverOffer = data
       this.notify()
@@ -687,7 +687,7 @@ class CustomerSocketServiceClass {
       this.notify()
     })
 
-    // ── Feature 8: During Ride Events ───────────────────────────────────────
+    // â”€â”€ Feature 8: During Ride Events â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     s.on('STOP_ADDED', (data: StopAddedPayload) => {
       this.state.stopAdded = data
       this.notify()
@@ -732,7 +732,7 @@ class CustomerSocketServiceClass {
       this.state.newChatMessage = {
         event: 'NEW_CHAT_MESSAGE',
         ride_id: data.ride_id,
-        message_id: data.id || data.message_id || msg-,
+        message_id: data.id || data.message_id || ('msg-' + Date.now()),
         sender_type: data.sender_type || 'driver',
         message_text: data.message_text || data.text || '',
         created_at: data.created_at || new Date().toISOString(),
@@ -740,7 +740,7 @@ class CustomerSocketServiceClass {
       this.notify()
     })
 
-    // ── Feature 9 & 10: Safety & Completion Events ──────────────────────────
+    // â”€â”€ Feature 9 & 10: Safety & Completion Events â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     s.on('TRIP_COMPLETED', (data: TripCompletedPayload) => {
       this.state.tripCompleted = data
       this.notify()
@@ -767,13 +767,13 @@ class CustomerSocketServiceClass {
       this.notify()
     })
 
-    // ── Org Student Proximity ───────────────────────────────────────────────
+    // â”€â”€ Org Student Proximity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     s.on('ORG_STUDENT_APPROACHING', (data: any) => {
       this.state.orgStudentAlert = {
         trip_id: data.trip_id || '',
         booking_id: data.booking_id || '',
         distance_km: data.distance_km || 3,
-        message: data.message || Your bus is  KM away. Get ready!,
+        message: data.message || 'Your bus is ' + (data.distance_km || 3) + ' KM away. Get ready!',
       }
       this.notify()
     })
@@ -783,13 +783,13 @@ class CustomerSocketServiceClass {
       const handlers = this.customEventListeners.get(event)
       if (handlers) {
         handlers.forEach((h) => {
-          try { h(...args) } catch (e) { console.warn([CustomerSocketService] Handler error for :, e) }
+          try { h(...args) } catch (e) { console.warn('[CustomerSocketService] Handler error for ' + event + ':', e) }
         })
       }
     })
   }
 
-  // ── Public Room & Action Methods ──────────────────────────────────────────
+  // â”€â”€ Public Room & Action Methods â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   public joinTrip(tripId: string) {
     if (!tripId) return
     this.activeRooms.add(tripId)
@@ -829,7 +829,7 @@ class CustomerSocketServiceClass {
     })
   }
 
-  // ── Subscription & Emitter APIs ───────────────────────────────────────────
+  // â”€â”€ Subscription & Emitter APIs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   public subscribe(listener: CustomerSocketStateListener): () => void {
     this.listeners.add(listener)
     listener({ ...this.state })
@@ -888,7 +888,7 @@ class CustomerSocketServiceClass {
     })
   }
 
-  // ── Clearers ──────────────────────────────────────────────────────────────
+  // â”€â”€ Clearers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   public clearMatchFound() { this.state.matchFound = null; this.notify() }
   public clearTripAccepted() { this.state.tripAccepted = null; this.notify() }
   public clearTripRejected() { this.state.tripRejected = null; this.notify() }

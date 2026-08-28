@@ -387,7 +387,7 @@ export default function CarpoolScreen() {
               </AppButton>
             </View>
           </AppCard>
-        ))}}
+        ))}
       </ScrollView>
     </SafeAreaView>
   )
