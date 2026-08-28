@@ -133,6 +133,7 @@ class DriverSocketServiceClass {
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null
   private listeners: Set<SocketStateListener> = new Set()
   private customEventListeners: Map<string, Set<(...args: any[]) => void>> = new Map()
+  private activeRooms: Set<string> = new Set()
   private lastOfferId: string | null = null
   private lastOfferTime: number = 0
 
@@ -208,6 +209,7 @@ class DriverSocketServiceClass {
         path: '/socket.io/',
         transports: ['websocket', 'polling'],
         auth: { token: `Bearer ${token}` },
+        query: { token: `Bearer ${token}` },
         reconnection: true,
         reconnectionDelay: 1500,
         reconnectionDelayMax: 10000,
@@ -274,6 +276,12 @@ class DriverSocketServiceClass {
 
       this.startHeartbeat()
       this.reconcileStateWithBackend()
+
+      // Re-join any active rooms after connect
+      this.activeRooms.forEach((room) => {
+        s.emit('join_trip', { trip_id: room })
+        s.emit('join_ride_room', { ride_id: room })
+      })
     })
 
     s.on('DRIVER_SOCKET_READY', (data: any) => {
@@ -334,6 +342,12 @@ class DriverSocketServiceClass {
 
       this.startHeartbeat()
       this.reconcileStateWithBackend()
+
+      // Re-join any active rooms after reconnect
+      this.activeRooms.forEach((room) => {
+        s.emit('join_trip', { trip_id: room })
+        s.emit('join_ride_room', { ride_id: room })
+      })
     })
 
     // ── Incoming Ride Request Events ──────────────────────────────────────────
@@ -752,6 +766,21 @@ class DriverSocketServiceClass {
       driver_id: this.driverUserId,
       timestamp: Date.now(),
     })
+  }
+
+  public joinTrip(tripId: string) {
+    if (!tripId) return
+    this.activeRooms.add(tripId)
+    this.socket?.emit('join_trip', { trip_id: tripId })
+    this.socket?.emit('join_ride_room', { ride_id: tripId })
+    console.log('[DriverSocketService] Joined trip/ride room:', tripId)
+  }
+
+  public leaveTrip(tripId: string) {
+    if (!tripId) return
+    this.activeRooms.delete(tripId)
+    this.socket?.emit('leave_trip', { trip_id: tripId })
+    this.socket?.emit('leave_ride_room', { ride_id: tripId })
   }
 
   public respondToRideOffer(offerId: string, accepted: boolean, rejectionReason?: string) {

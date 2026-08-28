@@ -45,6 +45,8 @@ interface UseDriverSocketReturn {
   emitSOS: (payload: { trip_id: string; lat: number; lng: number }) => void
   emitParcelPicked: (parcelId: string, tripId: string) => void
   emitParcelDelivered: (parcelId: string, tripId: string) => void
+  joinTrip: (tripId: string) => void
+  leaveTrip: (tripId: string) => void
   joinDriverScan: (tripId: string) => void
   respondToRideOffer: (offerId: string, accepted: boolean, rejectionReason?: string) => void
   setIncomingRequest: React.Dispatch<React.SetStateAction<any | null>>
@@ -157,6 +159,14 @@ export function useDriverSocket(): UseDriverSocketReturn {
     DriverSocketService.emit('PARCEL_DELIVERED', { parcel_id: parcelId, trip_id: tripId, timestamp: Date.now() })
   }, [])
 
+  const joinTrip = useCallback((tripId: string) => {
+    DriverSocketService.joinTrip(tripId)
+  }, [])
+
+  const leaveTrip = useCallback((tripId: string) => {
+    DriverSocketService.leaveTrip(tripId)
+  }, [])
+
   const joinDriverScan = useCallback((tripId: string) => {
     DriverSocketService.emit('join_driver_scan', { trip_id: tripId })
   }, [])
@@ -195,6 +205,8 @@ export function useDriverSocket(): UseDriverSocketReturn {
     emitSOS,
     emitParcelPicked,
     emitParcelDelivered,
+    joinTrip,
+    leaveTrip,
     joinDriverScan,
     respondToRideOffer,
     setIncomingRequest,

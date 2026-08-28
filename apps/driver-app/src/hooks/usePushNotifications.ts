@@ -65,6 +65,16 @@ export function usePushNotifications() {
       }
     });
 
+    // ── Token Refresh Handler ──
+    const pushTokenSub = Notifications.addPushTokenListener((tokenData) => {
+      const refreshedToken = tokenData.data as string;
+      if (refreshedToken) {
+        console.log('[PushNotif] FCM Token Refreshed:', refreshedToken.substring(0, 24) + '...');
+        setFcmToken(refreshedToken);
+        api.post('/auth/device-token', { token: refreshedToken, platform: Platform.OS }).catch(() => {});
+      }
+    });
+
     notificationListener.current = Notifications.addNotificationReceivedListener(n => {
       console.log('[PushNotif] Notification received:', n);
       setNotification(n);
@@ -76,6 +86,7 @@ export function usePushNotifications() {
 
     return () => {
       if (!Notifications) return;
+      pushTokenSub?.remove?.();
       if (notificationListener.current) notificationListener.current.remove();
       if (responseListener.current) responseListener.current.remove();
     };
@@ -90,17 +101,32 @@ async function registerForPushNotificationsAsync(): Promise<string | undefined> 
     return undefined;
   }
 
-  // Set Android notification channel
+  // Set Android notification channels (ride-requests + default)
   if (Platform.OS === 'android') {
     try {
+      await Notifications.setNotificationChannelAsync('ride-requests', {
+        name: 'Cab Booking & Ride Requests',
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 600, 300, 600, 300, 600, 300, 1000],
+        lightColor: '#10B981',
+        enableVibrate: true,
+        enableLights: true,
+        sound: 'drsiran.mp3',
+        showBadge: true,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+        bypassDnd: true,
+      });
+
       await Notifications.setNotificationChannelAsync('default', {
         name: 'Driver Alerts',
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 250, 250, 250],
         lightColor: '#F59E0B',
         sound: 'siren.mp3',
+        enableVibrate: true,
+        showBadge: true,
       });
-      console.log('[PushNotif] Android notification channel created ✅');
+      console.log('[PushNotif] Android notification channels created ✅');
     } catch (e) {
       console.warn('[PushNotif] Failed to create notification channel:', e);
     }

@@ -294,15 +294,19 @@ export default function TrackTripScreen() {
   // ── 3. Handle Live Driver Location Update & Freshness ──
   useEffect(() => {
     if (!driverLocation) return
-    const { latitude, longitude, eta_minutes, distance_remaining_km, heading } = driverLocation
+    const lat = Number(driverLocation.latitude ?? (driverLocation as any).lat)
+    const lng = Number(driverLocation.longitude ?? (driverLocation as any).lng)
+    const { eta_minutes, distance_remaining_km, heading } = driverLocation
 
     if (eta_minutes !== null && eta_minutes !== undefined) setEta(eta_minutes)
     if (distance_remaining_km !== null && distance_remaining_km !== undefined) setDistKm(distance_remaining_km)
     if (heading !== null && heading !== undefined) setDriverHeading(heading)
 
-    setDriverCoord({ latitude, longitude })
-    setLastLocationTs(Date.now())
-    setFreshness('LIVE')
+    if (Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0)) {
+      setDriverCoord({ latitude: lat, longitude: lng })
+      setLastLocationTs(Date.now())
+      setFreshness('LIVE')
+    }
   }, [driverLocation])
 
   // Freshness Heartbeat Interval

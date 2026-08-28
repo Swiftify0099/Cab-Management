@@ -167,7 +167,7 @@ export default function ActiveTripScreen() {
   })
 
   // Socket & Live Location
-  const { connected } = useDriverSocket()
+  const { connected, joinTrip, leaveTrip, sendLocationUpdate } = useDriverSocket()
   const { location } = useLiveLocation(true)
 
   const driverLat = location?.lat || 18.535
@@ -175,6 +175,31 @@ export default function ActiveTripScreen() {
   const driverHeading = location?.heading || 45
   const driverSpeed = simulatedSpeed !== null ? simulatedSpeed : (location?.speed ? Math.round(location.speed) : 38)
   const driverAccuracy = gpsQuality === 'weak' ? 45.0 : (location?.accuracy || 8.5)
+
+  // Join Trip / Ride room for real-time customer-driver sync
+  useEffect(() => {
+    if (activeRideId) {
+      joinTrip(activeRideId)
+    }
+    return () => {
+      if (activeRideId) {
+        leaveTrip(activeRideId)
+      }
+    }
+  }, [activeRideId, joinTrip, leaveTrip])
+
+  // Broadcast live GPS to trip room so Customer on /track sees live movement in real time
+  useEffect(() => {
+    if (!activeRideId || !location) return
+    sendLocationUpdate({
+      trip_id: activeRideId,
+      lat: driverLat,
+      lng: driverLng,
+      speed: driverSpeed,
+      heading: driverHeading,
+      accuracy: driverAccuracy,
+    })
+  }, [activeRideId, location, driverLat, driverLng, driverSpeed, driverHeading, driverAccuracy, sendLocationUpdate])
 
   // Night Mode for In-Trip Navigation (Feature 7 & 10 UI Requirement)
   const isDarkTheme = phase === 'EN_ROUTE_DESTINATION' || phase === 'ARRIVED_DESTINATION' || systemIsDark

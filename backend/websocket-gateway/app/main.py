@@ -52,10 +52,9 @@ _connected_clients: dict[str, dict] = {}
 async def _redis_listener():
     """
     Subscribe to all Redis event channels and forward to Socket.IO rooms.
-    Pattern: driver:*:events, customer:*:events
+    Pattern: driver:*:events, customer:*:events, trip:*, ride:*
     """
     r = await get_redis()
-    # Use a separate connection for pub/sub
     pubsub_conn = r.pubsub()
     await pubsub_conn.psubscribe(
         "driver:*:events",
@@ -63,10 +62,19 @@ async def _redis_listener():
         "user:*:events",
         "trip:*:events",
         "ride:*:events",
+        "trip:*",
+        "ride:*",
         "city:*:events",
         "driver_scan:*",
-        # Corridor matching events
         "corridor:*",
+        "notification:events",
+    )
+    await pubsub_conn.subscribe(
+        "corridor:match",
+        "trip:updates",
+        "communication:events",
+        "emergency:alerts",
+        "driver:earnings",
     )
     logger.info("📡 Redis pub/sub listener started")
 
@@ -83,45 +91,58 @@ async def _redis_listener():
             data = json.loads(raw_data)
             event_type = data.get("event", "EVENT")
 
-            # Route to Socket.IO room based on channel pattern
-            parts = channel.split(":")
-
-            # Handle 2-part channels (driver_scan:TRIP_ID, corridor:DRIVER_ID)
-            if len(parts) == 2:
-                entity = parts[0]
-                entity_id = parts[1]
-                if entity == "driver_scan":
-                    room = f"driver_scan:{entity_id}"
-                elif entity == "corridor":
-                    room = f"driver:{entity_id}"
-                else:
-                    continue
-                await sio.emit(event_type, data, room=room)
-                logger.debug("Event forwarded", event=event_type, room=room)
+            # Route named channels
+            if channel == "trip:updates":
+                r_id = data.get("ride_id") or (data.get("data") or {}).get("ride_id") or (data.get("data") or {}).get("trip_id")
+                if r_id:
+                    await sio.emit(event_type, data, room=f"trip:{r_id}")
+                    await sio.emit(event_type, data, room=f"ride:{r_id}")
                 continue
 
-            if len(parts) >= 3:
-                entity = parts[0]   # driver, customer, user, trip, ride, city
-                entity_id = parts[1]
+            if channel == "communication:events":
+                r_id = data.get("ride_id")
+                if r_id:
+                    await sio.emit(event_type, data, room=f"trip:{r_id}")
+                    await sio.emit(event_type, data, room=f"ride:{r_id}")
+                cid = data.get("customer_id")
+                did = data.get("driver_id")
+                if cid:
+                    await sio.emit(event_type, data, room=f"customer:{cid}")
+                if did:
+                    await sio.emit(event_type, data, room=f"driver:{did}")
+                continue
 
-                if entity == "driver":
-                    room = f"driver:{entity_id}"
-                elif entity in ("customer", "user"):
-                    await sio.emit(event_type, data, room=f"customer:{entity_id}")
-                    await sio.emit(event_type, data, room=f"user:{entity_id}")
-                    logger.debug("Customer event forwarded", event=event_type, customer_id=entity_id)
-                    continue
-                elif entity == "trip":
-                    room = f"trip:{entity_id}"
-                elif entity == "ride":
-                    room = f"ride:{entity_id}"
-                elif entity == "city":
-                    room = f"city:{entity_id}"
-                else:
-                    continue
+            if channel == "emergency:alerts":
+                r_id = data.get("ride_id")
+                if r_id:
+                    await sio.emit(event_type, data, room=f"trip:{r_id}")
+                    await sio.emit(event_name, data, room=f"ride:{r_id}")
+                await sio.emit(event_type, data, room="safety_monitoring")
+                await sio.emit(event_type, data, room="admins")
+                continue
 
-                await sio.emit(event_type, data, room=room)
-                logger.debug("Event forwarded", event=event_type, room=room)
+            parts = channel.split(":")
+            entity = parts[0]
+            entity_id = parts[1] if len(parts) >= 2 else ""
+
+            if entity == "driver":
+                await sio.emit(event_type, data, room=f"driver:{entity_id}")
+                await sio.emit(event_type, data, room=f"user:{entity_id}")
+            elif entity in ("customer", "user"):
+                await sio.emit(event_type, data, room=f"customer:{entity_id}")
+                await sio.emit(event_type, data, room=f"user:{entity_id}")
+            elif entity == "driver_scan":
+                await sio.emit(event_type, data, room=f"driver_scan:{entity_id}")
+            elif entity == "corridor":
+                await sio.emit(event_type, data, room=f"driver:{entity_id}")
+            elif entity in ("trip", "ride"):
+                if entity_id != "updates":
+                    await sio.emit(event_type, data, room=f"trip:{entity_id}")
+                    await sio.emit(event_type, data, room=f"ride:{entity_id}")
+            elif entity == "city":
+                await sio.emit(event_type, data, room=f"city:{entity_id}")
+
+            logger.debug("Event forwarded", event=event_type, channel=channel)
 
         except Exception as e:
             logger.error("Redis listener error", exc_info=e)
@@ -206,44 +227,67 @@ async def disconnect(sid):
 
 @sio.event
 async def join_trip(sid, data):
-    """Customer or driver joins a trip tracking room."""
-    trip_id = data.get("trip_id")
+    """Customer or driver joins a trip and ride tracking room."""
+    trip_id = data.get("trip_id") or data.get("ride_id")
     if not trip_id:
         return
-    room = f"trip:{trip_id}"
-    await sio.enter_room(sid, room)
-    logger.info("Client joined trip room", sid=sid, trip_id=trip_id)
+    await sio.enter_room(sid, f"trip:{trip_id}")
+    await sio.enter_room(sid, f"ride:{trip_id}")
+    logger.info("Client joined trip and ride room", sid=sid, trip_id=trip_id)
     await sio.emit("JOINED_TRIP", {"trip_id": trip_id}, to=sid)
 
 
 @sio.event
 async def leave_trip(sid, data):
-    """Leave a trip tracking room."""
-    trip_id = data.get("trip_id")
+    """Leave a trip and ride tracking room."""
+    trip_id = data.get("trip_id") or data.get("ride_id")
     if trip_id:
         await sio.leave_room(sid, f"trip:{trip_id}")
+        await sio.leave_room(sid, f"ride:{trip_id}")
+
+
+@sio.event
+async def join_ride_room(sid, data):
+    """Join ride tracking room."""
+    ride_id = data.get("ride_id") or data.get("trip_id")
+    if not ride_id:
+        return
+    await sio.enter_room(sid, f"trip:{ride_id}")
+    await sio.enter_room(sid, f"ride:{ride_id}")
+    logger.info("Client joined ride and trip room", sid=sid, ride_id=ride_id)
+
+
+@sio.event
+async def leave_ride_room(sid, data):
+    """Leave ride tracking room."""
+    ride_id = data.get("ride_id") or data.get("trip_id")
+    if ride_id:
+        await sio.leave_room(sid, f"trip:{ride_id}")
+        await sio.leave_room(sid, f"ride:{ride_id}")
 
 
 @sio.event
 async def location_update(sid, data):
     """
     Driver sends GPS update.
-    Broadcast to everyone in trip room (customer sees live location).
+    Broadcast to everyone in trip & ride rooms (customer sees live location).
     Also publish to Redis for persistence in matching-service.
     """
     client = _connected_clients.get(sid, {})
     if client.get("role") != "driver":
         return
 
-    trip_id = data.get("trip_id")
+    trip_id = data.get("trip_id") or data.get("ride_id")
     if not trip_id:
         return
 
     # Add driver_id to payload
     data["driver_id"] = client.get("user_id")
 
-    # Broadcast to trip room
+    # Broadcast to trip and ride rooms
     await sio.emit("LOCATION_UPDATE", data, room=f"trip:{trip_id}", skip_sid=sid)
+    await sio.emit("LOCATION_UPDATE", data, room=f"ride:{trip_id}", skip_sid=sid)
+    await sio.emit("ride:location", data, room=f"ride:{trip_id}", skip_sid=sid)
 
     # Publish to Redis for matching-service to persist to DB
     r = await get_redis()

@@ -701,39 +701,44 @@ try:
             await sio.enter_room(sid, room)
             print(f"[WS] Driver joined scan room {room}")
 
-    # ── Customer joins trip tracking room (two name aliases) ────────────
+    # ── Customer / Driver joins trip and ride tracking rooms (dual entry) ────────────
     @sio.event
     async def join_trip_room(sid, data):
-        trip_id = data.get('trip_id', '')
+        trip_id = (data or {}).get('trip_id', '') or (data or {}).get('ride_id', '')
         if trip_id:
             await sio.enter_room(sid, f"trip:{trip_id}")
+            await sio.enter_room(sid, f"ride:{trip_id}")
+            print(f"[WS] Client {sid} joined trip and ride room: {trip_id}")
 
     @sio.event
     async def join_trip(sid, data):
-        trip_id = data.get('trip_id', '')
+        trip_id = (data or {}).get('trip_id', '') or (data or {}).get('ride_id', '')
         if trip_id:
             await sio.enter_room(sid, f"trip:{trip_id}")
-            print(f"[WS] Customer joined trip room: trip:{trip_id}")
+            await sio.enter_room(sid, f"ride:{trip_id}")
+            print(f"[WS] Client {sid} joined trip and ride room: {trip_id}")
 
     @sio.event
     async def leave_trip(sid, data):
-        trip_id = data.get('trip_id', '')
+        trip_id = (data or {}).get('trip_id', '') or (data or {}).get('ride_id', '')
         if trip_id:
             await sio.leave_room(sid, f"trip:{trip_id}")
+            await sio.leave_room(sid, f"ride:{trip_id}")
 
     # ── Ride tracking rooms ─────────────────────────────────────────────
     @sio.event
     async def join_ride_room(sid, data):
-        ride_id = data.get('ride_id', '')
+        ride_id = (data or {}).get('ride_id', '') or (data or {}).get('trip_id', '')
         if ride_id:
-            room = f"ride:{ride_id}"
-            await sio.enter_room(sid, room)
-            print(f"[WS] Client {sid} joined ride room {room}")
+            await sio.enter_room(sid, f"trip:{ride_id}")
+            await sio.enter_room(sid, f"ride:{ride_id}")
+            print(f"[WS] Client {sid} joined ride and trip room: {ride_id}")
 
     @sio.event
     async def leave_ride_room(sid, data):
-        ride_id = data.get('ride_id', '')
+        ride_id = (data or {}).get('ride_id', '') or (data or {}).get('trip_id', '')
         if ride_id:
+            await sio.leave_room(sid, f"trip:{ride_id}")
             await sio.leave_room(sid, f"ride:{ride_id}")
 
     # ── GPS location update (driver -> persist + broadcast to trip & ride rooms) ──
@@ -956,9 +961,19 @@ try:
                     "driver_scan:*",
                     "trip:*:events",
                     "ride:*:events",
+                    "trip:*",
+                    "ride:*",
+                    "city:*:events",
+                    "corridor:*",
                     "notification:events",
                 )
-                await pubsub.subscribe("corridor:match")
+                await pubsub.subscribe(
+                    "corridor:match",
+                    "trip:updates",
+                    "communication:events",
+                    "emergency:alerts",
+                    "driver:earnings",
+                )
                 print("[WS] Redis pub/sub consumer started — forwarding to Socket.IO")
 
                 async for message in pubsub.listen():
@@ -979,6 +994,7 @@ try:
                             driver_id = channel.split(":")[1]
                             room = f"driver:{driver_id}"
                             await sio.emit(event_name, payload, room=room)
+                            await sio.emit(event_name, payload, room=f"user:{driver_id}")
                             print(f"[WS->sio] {event_name} -> room {room}")
 
                         elif (channel.startswith("customer:") or channel.startswith("user:")) and channel.endswith(":events"):
@@ -993,15 +1009,40 @@ try:
                             await sio.emit(event_name, payload, room=room)
                             print(f"[WS->sio] {event_name} -> room {room}")
 
-                        elif channel.startswith("trip:") and channel.endswith(":events"):
-                            trip_id = channel.split(":")[1]
-                            room = f"trip:{trip_id}"
-                            await sio.emit(event_name, payload, room=room)
+                        elif channel.startswith("trip:") or channel.startswith("ride:"):
+                            parts = channel.split(":")
+                            if len(parts) >= 2 and parts[1] != "updates":
+                                entity_id = parts[1]
+                                await sio.emit(event_name, payload, room=f"trip:{entity_id}")
+                                await sio.emit(event_name, payload, room=f"ride:{entity_id}")
+                                print(f"[WS->sio] {event_name} -> rooms trip:{entity_id} and ride:{entity_id}")
 
-                        elif channel.startswith("ride:") and channel.endswith(":events"):
-                            ride_id = channel.split(":")[1]
-                            room = f"ride:{ride_id}"
-                            await sio.emit(event_name, payload, room=room)
+                        elif channel == "trip:updates":
+                            r_id = payload.get("ride_id") or (payload.get("data") or {}).get("ride_id") or (payload.get("data") or {}).get("trip_id")
+                            if r_id:
+                                await sio.emit(event_name, payload, room=f"trip:{r_id}")
+                                await sio.emit(event_name, payload, room=f"ride:{r_id}")
+                                print(f"[WS->sio] trip:updates {event_name} -> room ride:{r_id}")
+
+                        elif channel == "communication:events":
+                            r_id = payload.get("ride_id")
+                            if r_id:
+                                await sio.emit(event_name, payload, room=f"trip:{r_id}")
+                                await sio.emit(event_name, payload, room=f"ride:{r_id}")
+                            cid = payload.get("customer_id")
+                            did = payload.get("driver_id")
+                            if cid:
+                                await sio.emit(event_name, payload, room=f"customer:{cid}")
+                            if did:
+                                await sio.emit(event_name, payload, room=f"driver:{did}")
+
+                        elif channel == "emergency:alerts":
+                            r_id = payload.get("ride_id")
+                            if r_id:
+                                await sio.emit(event_name, payload, room=f"trip:{r_id}")
+                                await sio.emit(event_name, payload, room=f"ride:{r_id}")
+                            await sio.emit(event_name, payload, room="safety_monitoring")
+                            await sio.emit(event_name, payload, room="admins")
 
                     except Exception as _msg_err:
                         print(f"[WS] pub/sub message error: {_msg_err}")

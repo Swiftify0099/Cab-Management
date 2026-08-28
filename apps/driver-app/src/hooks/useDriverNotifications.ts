@@ -215,6 +215,15 @@ export function useDriverNotifications() {
       console.log('[DriverNotifications] Notification received in app:', notification.request.content.title)
     })
 
+    // ── Push Token Refresh Listener ──────────────────────────────────────────
+    const pushTokenSub = Notifications.addPushTokenListener((tokenData) => {
+      const refreshedToken = tokenData.data as string
+      if (refreshedToken) {
+        console.log('[DriverNotifications] FCM token refreshed:', refreshedToken.substring(0, 24) + '...')
+        registerTokenWithBackend(refreshedToken)
+      }
+    })
+
     // ── Common Notification Action Button / Tap Handler ─────────────────────
     let lastHandledResponseTime = 0
     const handleNotificationResponse = async (response: Notifications.NotificationResponse) => {
@@ -370,6 +379,7 @@ export function useDriverNotifications() {
       })
 
     return () => {
+      pushTokenSub?.remove?.()
       notifListenerRef.current?.remove()
       responseListenerRef.current?.remove()
     }

@@ -61,45 +61,7 @@ export const RatingAndFeedbackService = {
     } catch (e) {
       console.warn('[RatingService] getRatingHistory error:', e);
     }
-    // Fallback sample records
-    return [
-      {
-        rating_id: 'sample-1',
-        ride_id: 'ride-4819',
-        ride_reference: 'Ride #4819 (Kothrud → Airport)',
-        rating: 5,
-        compliments: ['Clean Vehicle', 'Professional & Polite', 'Smooth Ride'],
-        feedback: 'Very polite driver and immaculate AC car! Would love to ride again.',
-        status: 'APPROVED',
-        is_disputed: false,
-        dispute_reason: null,
-        created_at: new Date(Date.now() - 86400000).toISOString(),
-      },
-      {
-        rating_id: 'sample-2',
-        ride_id: 'ride-4792',
-        ride_reference: 'Ride #4792 (Baner → Hinjawadi Phase 1)',
-        rating: 5,
-        compliments: ['Safe Driving', 'Great Communication'],
-        feedback: 'Smooth navigation despite heavy highway traffic. Arrived right on time.',
-        status: 'APPROVED',
-        is_disputed: false,
-        dispute_reason: null,
-        created_at: new Date(Date.now() - 3 * 86400000).toISOString(),
-      },
-      {
-        rating_id: 'sample-3',
-        ride_id: 'ride-4651',
-        ride_reference: 'Ride #4651 (Viman Nagar → Swargate)',
-        rating: 3,
-        compliments: [],
-        feedback: 'Pickup was delayed by 10 minutes due to road work on bridge.',
-        status: 'APPROVED',
-        is_disputed: false,
-        dispute_reason: null,
-        created_at: new Date(Date.now() - 5 * 86400000).toISOString(),
-      },
-    ];
+    return [];
   },
 
   /**

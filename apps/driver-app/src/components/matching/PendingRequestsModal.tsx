@@ -70,85 +70,14 @@ export function PendingRequestsModal({
         },
       })
       const items = res?.data?.data?.requests || res?.data?.data || []
-      if (Array.isArray(items) && items.length > 0) {
+      if (Array.isArray(items)) {
         setRequests(items)
       } else {
-        // Fallback realistic pending pool items (requested > 5 mins ago)
-        setRequests([
-          {
-            ride_request_id: 'pending-req-1',
-            rider_name: 'Rahul Sharma',
-            pickup_address: 'Shivaji Nagar Bus Stand, Pune',
-            destination_address: 'Viman Nagar IT Park, Pune',
-            pickup_lat: 18.5314,
-            pickup_lng: 73.8446,
-            destination_lat: 18.5679,
-            destination_lng: 73.9143,
-            estimated_fare: 280,
-            estimated_distance_km: 11.4,
-            estimated_duration_min: 24,
-            seats_requested: 2,
-            distance_from_driver_km: 1.8,
-            waiting_mins: 6,
-            created_at: new Date(Date.now() - 360000).toISOString(),
-          },
-          {
-            ride_request_id: 'pending-req-2',
-            rider_name: 'Pooja Patil',
-            pickup_address: 'Hinjawadi Phase 1, Megapolis',
-            destination_address: 'Swargate Metro Station, Pune',
-            pickup_lat: 18.5913,
-            pickup_lng: 73.7389,
-            destination_lat: 18.5018,
-            destination_lng: 73.8636,
-            estimated_fare: 450,
-            estimated_distance_km: 22.0,
-            estimated_duration_min: 40,
-            seats_requested: 1,
-            distance_from_driver_km: 3.2,
-            waiting_mins: 8,
-            created_at: new Date(Date.now() - 480000).toISOString(),
-          },
-          {
-            ride_request_id: 'pending-req-3',
-            rider_name: 'Amit Deshmukh',
-            pickup_address: 'Kothrud Stand, Paud Road',
-            destination_address: 'Pune Airport (PNQ), Lohegaon',
-            pickup_lat: 18.5074,
-            pickup_lng: 73.8077,
-            destination_lat: 18.5822,
-            destination_lng: 73.9197,
-            estimated_fare: 520,
-            estimated_distance_km: 18.5,
-            estimated_duration_min: 35,
-            seats_requested: 3,
-            distance_from_driver_km: 4.5,
-            waiting_mins: 5,
-            created_at: new Date(Date.now() - 300000).toISOString(),
-          },
-        ])
+        setRequests([])
       }
     } catch (e) {
-      console.warn('[PendingRequests] Load fallback list:', e)
-      // Provide fallback list
-      setRequests([
-        {
-          ride_request_id: 'pending-req-1',
-          rider_name: 'Rahul Sharma',
-          pickup_address: 'Shivaji Nagar, Pune',
-          destination_address: 'Viman Nagar, Pune',
-          pickup_lat: 18.5314,
-          pickup_lng: 73.8446,
-          destination_lat: 18.5679,
-          destination_lng: 73.9143,
-          estimated_fare: 280,
-          estimated_distance_km: 11.4,
-          estimated_duration_min: 24,
-          seats_requested: 2,
-          distance_from_driver_km: 1.8,
-          waiting_mins: 6,
-        },
-      ])
+      console.warn('[PendingRequests] Load error:', e)
+      setRequests([])
     } finally {
       setLoading(false)
     }
