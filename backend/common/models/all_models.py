@@ -25,6 +25,8 @@ from sqlalchemy import (
     Text,
     Time,
     UniqueConstraint,
+    Index,
+    text,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -2258,6 +2260,23 @@ class RideRequest(Base, UUIDMixin, TimestampMixin):
     next_ride_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("ride_requests.id", ondelete="SET NULL"), nullable=True)
     next_ride_reserved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     next_ride_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        # Partial unique index: a driver can only have ONE active ride at a time.
+        # 'Active' means status in (assigned, pickup, in_progress).
+        # Back-to-back rides: the service layer enforces the B2B exception before
+        # the second ride reaches ASSIGNED, so this constraint is never violated
+        # in normal B2B flow.
+        Index(
+            'ix_ride_requests_one_active_per_driver',
+            'assigned_driver_id',
+            unique=True,
+            postgresql_where=text(
+                "status IN ('assigned', 'pickup', 'in_progress')" 
+                "AND assigned_driver_id IS NOT NULL"
+            ),
+        ),
+    )
 
     # Relationships
     customer: Mapped["User"] = relationship(foreign_keys=[customer_id])

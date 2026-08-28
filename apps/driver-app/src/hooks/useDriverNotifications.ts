@@ -264,6 +264,14 @@ export function useDriverNotifications() {
             await DriverSocketService.reconcileStateWithBackend()
             return
           }
+          if (result.status === 'driver_busy') {
+            Alert.alert(
+              '⚠️ Active Ride In Progress',
+              'You already have an active ride. Please complete it before accepting a new one.',
+              [{ text: 'OK' }],
+            )
+            return
+          }
           if (result.status === 'expired') {
             Alert.alert('Request Expired', 'This ride request has expired.')
             if (offerId) RideQueueService.removeByOfferId(offerId)

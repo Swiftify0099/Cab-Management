@@ -3,6 +3,7 @@ import {
   View,
   StatusBar,
   StyleSheet,
+  Alert,
   Platform,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
@@ -172,6 +173,18 @@ export default function IncomingRequestScreen({ request, onDismiss }: Props) {
         // Remove from queue — another driver got it
         RideQueueService.removeByOfferId(normalizedOffer.offer_id)
         setTimeout(() => { if (mountedRef.current) onDismiss() }, 2500)
+      } else if (res?.status === 'driver_busy') {
+        // Backend blocked the accept: driver already has an active ride.
+        // Reset to NEW_OFFER so they can explicitly reject this one.
+        if (mountedRef.current) {
+          setRequestState('NEW_OFFER')
+          DriverSoundService.playIncomingAlert({ loop: true })
+          Alert.alert(
+            '⚠️ Active Ride In Progress',
+            'You already have an active ride. Please complete it before accepting a new one.',
+            [{ text: 'OK' }],
+          )
+        }
       } else if (res?.status === 'expired') {
         setRequestState('EXPIRED')
         RideQueueService.removeByOfferId(normalizedOffer.offer_id)

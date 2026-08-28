@@ -505,6 +505,34 @@ class RideDispatchService:
 
         now = _now_utc()
 
+        # Guard: block ACCEPT if driver already has an active ride
+        # Back-to-back (B2B) exception: allow if new ride is_back_to_back AND
+        # current active ride is IN_PROGRESS (driver actively delivering).
+        if accepted:
+            _existing = await self._get_driver_active_ride_by_id(driver.id)
+            if _existing:
+                _new_req_res = await self.db.execute(
+                    select(RideRequest).where(RideRequest.id == offer.ride_request_id)
+                )
+                _new_req = _new_req_res.scalars().first()
+                _is_b2b = _new_req and getattr(_new_req, 'is_back_to_back', False)
+                _in_progress = _existing.status == RideRequestStatus.IN_PROGRESS
+                if not (_is_b2b and _in_progress):
+                    offer.status = RideOfferStatus.SUPERSEDED
+                    offer.responded_at = now
+                    await self.db.commit()
+                    logger.warning(
+                        'Driver accepted offer while already having an active ride',
+                        driver_id=str(driver.id),
+                        active_ride_id=str(_existing.id),
+                        offer_id=str(offer.id),
+                    )
+                    return {
+                        'success': False,
+                        'message': 'You already have an active ride. Complete it before accepting a new one.',
+                        'status': 'driver_busy',
+                    }
+
         # Check if offer is already non-pending (e.g. marked REMOVED because another driver won)
         if offer.status != RideOfferStatus.PENDING:
             status_val = "superseded" if offer.status in (RideOfferStatus.REMOVED, RideOfferStatus.SUPERSEDED) else offer.status.value.lower()
@@ -1062,9 +1090,9 @@ class RideDispatchService:
                         RideRequestStatus.IN_PROGRESS
                     ])
                 )
-            )
+            ).order_by(RideRequest.created_at.desc())
         )
-        active_ride = ride_res.scalar_one_or_none()
+        active_ride = ride_res.scalars().first()
         if active_ride:
             return {
                 "ride_id": str(active_ride.id),
@@ -1095,7 +1123,7 @@ class RideDispatchService:
                 )
             ).order_by(RideOffer.created_at.desc())
         )
-        pending_offer = offer_res.scalar_one_or_none()
+        pending_offer = offer_res.scalars().first()
         if pending_offer:
             req_res = await self.db.execute(
                 select(RideRequest).where(RideRequest.id == pending_offer.ride_request_id)
@@ -1125,6 +1153,26 @@ class RideDispatchService:
                 }
 
         return None
+
+    async def _get_driver_active_ride_by_id(self, driver_db_id) -> Optional["RideRequest"]:
+        """
+        Returns the most recent active RideRequest for a driver (by DB driver.id, not user_id).
+        Used by respond_to_offer() to guard against double-assignment.
+        Active statuses: ASSIGNED, PICKUP, IN_PROGRESS.
+        """
+        res = await self.db.execute(
+            select(RideRequest).where(
+                and_(
+                    RideRequest.assigned_driver_id == driver_db_id,
+                    RideRequest.status.in_([
+                        RideRequestStatus.ASSIGNED,
+                        RideRequestStatus.PICKUP,
+                        RideRequestStatus.IN_PROGRESS,
+                    ])
+                )
+            ).order_by(RideRequest.created_at.desc())
+        )
+        return res.scalars().first()
 
     async def get_categories(self) -> List[dict]:
         """Returns all active ride categories."""
