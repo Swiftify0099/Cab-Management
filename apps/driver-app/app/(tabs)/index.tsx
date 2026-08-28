@@ -260,8 +260,9 @@ export default function DriverHomeScreen() {
     }
   }
 
-  const activeTrips = trips.filter(t => ['published', 'in_progress'].includes(t.status))
-  const pastTrips = trips.filter(t => ['completed', 'cancelled'].includes(t.status)).slice(0, 3)
+  const safeTrips = Array.isArray(trips) ? trips.filter(Boolean) : []
+  const activeTrips = safeTrips.filter(t => t?.status && ['published', 'in_progress'].includes(t.status))
+  const pastTrips = safeTrips.filter(t => t?.status && ['completed', 'cancelled'].includes(t.status)).slice(0, 3)
 
   const isOnline = availabilityData.state === 'ONLINE' || availabilityData.state === 'GOING_ONLINE'
 
@@ -424,7 +425,7 @@ export default function DriverHomeScreen() {
                   Today's Earnings
                 </Text>
                 <Text style={[styles.earningsValue, { color: theme.colors.text }]}>
-                  ₹{stats.earningsToday || activeTrips.reduce((s, t) => s + (t.base_fare || 0), 0) || 0}
+                  ₹{Number(stats.earningsToday) || activeTrips.reduce((s, t) => s + (Number(t?.base_fare) || 0), 0) || 0}
                 </Text>
               </View>
               <View style={styles.trendBadge}>
@@ -456,9 +457,10 @@ export default function DriverHomeScreen() {
           {/* Active / Published Trip Banner */}
           {activeTrips.length > 0 && (() => {
             const currentTrip = activeTrips[0]
+            if (!currentTrip) return null
             const isPub = currentTrip.status === 'published'
-            const totalSeats = currentTrip.total_seats || 7
-            const bookedSeats = currentTrip.booked_seats || currentTrip.accepted_members || 0
+            const totalSeats = Number(currentTrip.total_seats) || 7
+            const bookedSeats = Number(currentTrip.booked_seats ?? currentTrip.accepted_members) || 0
             const isFull = bookedSeats >= totalSeats
 
             return (
@@ -623,9 +625,9 @@ export default function DriverHomeScreen() {
                 </Text>
               </View>
             ) : (
-              pastTrips.map(trip => (
+              pastTrips.map((trip, idx) => (
                 <TouchableOpacity
-                  key={trip.id}
+                  key={trip?.id || `past-trip-${idx}`}
                   style={[
                     styles.pastTripCard,
                     {
@@ -634,6 +636,7 @@ export default function DriverHomeScreen() {
                     },
                   ]}
                   onPress={() => {
+                    if (!trip) return
                     if (trip.status === 'published') {
                       router.push({
                         pathname: '/trip-live',
@@ -652,23 +655,25 @@ export default function DriverHomeScreen() {
                   }}
                   activeOpacity={0.8}
                 >
-                  <View style={[styles.pastTripDot, { backgroundColor: STATUS_COLORS[trip.status] || '#10B981' }]} />
+                  <View style={[styles.pastTripDot, { backgroundColor: STATUS_COLORS[trip?.status] || '#10B981' }]} />
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.pastTripRoute, { color: theme.colors.text }]}>
-                      {trip.pickup_city || 'Origin'} → {trip.destination_city || 'Destination'}
+                      {trip?.pickup_city || 'Origin'} → {trip?.destination_city || 'Destination'}
                     </Text>
                     <Text style={[styles.pastTripMeta, { color: theme.colors.textSecondary }]}>
                       {(() => {
                         try {
-                          return trip.departure_time ? new Date(trip.departure_time).toLocaleDateString('en-IN') : 'Today'
+                          if (!trip?.departure_time) return 'Today'
+                          const d = new Date(trip.departure_time)
+                          return isNaN(d.getTime()) ? 'Today' : d.toLocaleDateString('en-IN')
                         } catch {
                           return 'Today'
                         }
-                      })()} · ₹{trip.base_fare ?? 0}/seat
+                      })()} · ₹{trip?.base_fare ?? 0}/seat
                     </Text>
                   </View>
-                  <Text style={[styles.pastTripStatus, { color: STATUS_COLORS[trip.status] || '#10B981' }]}>
-                    {STATUS_LABELS[trip.status] || trip.status}
+                  <Text style={[styles.pastTripStatus, { color: STATUS_COLORS[trip?.status] || '#10B981' }]}>
+                    {STATUS_LABELS[trip?.status] || trip?.status || 'Done'}
                   </Text>
                   <Feather name="chevron-right" size={16} color={theme.colors.textSecondary} style={{ marginLeft: 6 }} />
                 </TouchableOpacity>

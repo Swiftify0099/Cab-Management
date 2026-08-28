@@ -44,15 +44,15 @@ export default function IncomingRequestScreen({ request, onDismiss }: Props) {
     service_type: request?.service_type || (request?.trip?.has_parcel ? 'parcel' : 'cab'),
     pickup: {
       address: request?.pickup?.address || request?.pickup_address || request?.trip?.from || 'Pickup Location',
-      lat: Number(request?.pickup?.lat ?? request?.pickup_lat) || 18.5204,
-      lng: Number(request?.pickup?.lng ?? request?.pickup_lng) || 73.8567,
+      lat: Number.isFinite(Number(request?.pickup?.lat ?? request?.pickup_lat)) ? Number(request?.pickup?.lat ?? request?.pickup_lat) : 18.5204,
+      lng: Number.isFinite(Number(request?.pickup?.lng ?? request?.pickup_lng)) ? Number(request?.pickup?.lng ?? request?.pickup_lng) : 73.8567,
       distance_km: Number(request?.pickup?.distance_km ?? request?.distance_km) || 2.4,
       eta_min: Number(request?.pickup?.eta_min ?? request?.eta_min) || 7,
     },
     destination: {
       address: request?.destination?.address || request?.destination_address || request?.trip?.to || 'Destination',
-      lat: Number(request?.destination?.lat ?? request?.destination_lat) || 18.5913,
-      lng: Number(request?.destination?.lng ?? request?.destination_lng) || 73.7389,
+      lat: Number.isFinite(Number(request?.destination?.lat ?? request?.destination_lat)) ? Number(request?.destination?.lat ?? request?.destination_lat) : 18.5913,
+      lng: Number.isFinite(Number(request?.destination?.lng ?? request?.destination_lng)) ? Number(request?.destination?.lng ?? request?.destination_lng) : 73.7389,
     },
     trip: {
       from: request?.trip?.from || request?.pickup_address || 'Pickup',
@@ -293,7 +293,6 @@ export default function IncomingRequestScreen({ request, onDismiss }: Props) {
               ]}
               strokeColor="#0284C7"
               strokeWidth={4}
-              lineDashPattern={[0]}
             />
           </MapView>
         )}
