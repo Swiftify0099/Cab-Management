@@ -179,7 +179,7 @@ async def get_customer_home_summary(
             if driver:
                 driver_info = ActiveRideDriver(
                     id=str(driver.id),
-                    name=driver.first_name + " " + (driver.last_name or ""),
+                    name=driver.full_name or "",
                     phone=driver.phone or "",
                     rating=float(driver.rating or 4.9),
                     vehicle_model=getattr(driver, "vehicle_model", "Sedan"),
