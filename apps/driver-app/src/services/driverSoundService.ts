@@ -388,13 +388,12 @@ class DriverSoundServiceImpl {
    */
   private async loadExpoAudio(): Promise<any> {
     try {
-      // Dynamic import to prevent crash if native module is hot-reloaded
       const mod = await import('expo-audio')
       return mod
     } catch {
       try {
-        const globalMod = Function('return import("expo-audio")')()
-        return await globalMod
+        const req = require('expo-audio')
+        return req
       } catch {
         return null
       }

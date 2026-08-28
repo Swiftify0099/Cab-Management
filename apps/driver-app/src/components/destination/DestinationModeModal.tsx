@@ -94,16 +94,16 @@ export const DestinationModeModal: React.FC<Props> = ({ visible, onClose, onMode
     try {
       const data = await DestinationModeService.getStatus()
       setStatus(data)
-      if (data.is_active && data.destination_address) {
+      if (data?.is_active && data?.destination_address) {
         setSelectedTarget({
-          name: data.destination_address.split(',')[0],
+          name: (data.destination_address || 'Destination').split(',')[0],
           address: data.destination_address,
           lat: data.destination_lat || 16.8524,
           lng: data.destination_lng || 74.5815,
           category: 'Active Target',
         })
-        setSelectedMode(data.mode_preference)
-        setMaxRides(data.max_rides)
+        setSelectedMode(data.mode_preference || 'balanced')
+        setMaxRides(data.max_rides || 2)
       }
     } finally {
       setLoading(false)

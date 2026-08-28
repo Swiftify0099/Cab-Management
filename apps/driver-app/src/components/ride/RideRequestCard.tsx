@@ -271,7 +271,7 @@ export const RideRequestCard: React.FC<Props> = ({
             🪑 {seatInfo?.requested_seats ?? trip?.seats ?? 1} Seat Requested • {seatInfo?.available_seats ?? 4} Seats in Vehicle
           </Text>
           <Text style={[styles.seatInfoSub, { color: isDark ? '#CBD5E1' : '#3B82F6' }]} numberOfLines={1}>
-            Available: {seatInfo?.available_labels?.join(', ') || 'Front Window, Rear Left, Rear Right'}
+            Available: {Array.isArray(seatInfo?.available_labels) ? seatInfo.available_labels.join(', ') : 'Front Window, Rear Left, Rear Right'}
           </Text>
         </View>
         <View style={{ backgroundColor: offer?.paid ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
@@ -282,14 +282,20 @@ export const RideRequestCard: React.FC<Props> = ({
       </View>
 
       {/* ─── Operational Note Banner (Gate No, etc.) ──────────── */}
-      {(offer?.pickup_notes || (offer as any)?.notes) && (
-        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: isDark ? 'rgba(245, 158, 11, 0.12)' : '#FEF3C7', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, marginBottom: 10, gap: 6 }}>
-          <Feather name="message-square" size={14} color="#D97706" />
-          <Text style={{ flex: 1, fontSize: 12, fontWeight: '600', color: isDark ? '#FCD34D' : '#92400E' }} numberOfLines={2}>
-            Rider Note: "{(offer?.pickup_notes || (offer as any)?.notes)}"
-          </Text>
-        </View>
-      )}
+      {(() => {
+        const rawNote = offer?.pickup_notes || (offer as any)?.notes
+        if (!rawNote) return null
+        const noteStr = typeof rawNote === 'string' ? rawNote : (rawNote?.text || rawNote?.note || rawNote?.comment || '')
+        if (!noteStr) return null
+        return (
+          <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: isDark ? 'rgba(245, 158, 11, 0.12)' : '#FEF3C7', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, marginBottom: 10, gap: 6 }}>
+            <Feather name="message-square" size={14} color="#D97706" />
+            <Text style={{ flex: 1, fontSize: 12, fontWeight: '600', color: isDark ? '#FCD34D' : '#92400E' }} numberOfLines={2}>
+              Rider Note: "{noteStr}"
+            </Text>
+          </View>
+        )
+      })()}
 
       {/* ─── Fare & Driver Earning Cards ──────────────────────────────── */}
       <View style={styles.pricingRow}>

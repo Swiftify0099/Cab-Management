@@ -42,16 +42,16 @@ export const DestinationActiveBanner: React.FC<Props> = ({ status, onOpenEdit, o
         <View style={{ flex: 1 }}>
           <View style={styles.topLine}>
             <Text style={[styles.title, { color: textPrimary }]} numberOfLines={1}>
-              Towards {status.destination_address.split(',')[0]}
+              Towards {(status?.destination_address || 'Destination').split(',')[0]}
             </Text>
             <View style={styles.modeBadge}>
               <Text style={styles.modeBadgeText}>
-                {status.mode_preference.toUpperCase()}
+                {String(status?.mode_preference || 'balanced').toUpperCase()}
               </Text>
             </View>
           </View>
           <Text style={[styles.subtitle, { color: textSecondary }]}>
-            {formatRemainingTime(status.remaining_seconds)} • {status.rides_completed}/{status.max_rides} trips
+            {formatRemainingTime(status?.remaining_seconds || 0)} • {status?.rides_completed || 0}/{status?.max_rides || 2} trips
           </Text>
         </View>
       </View>

@@ -276,10 +276,10 @@ export default function RequestCoverageScreen() {
                 </View>
 
                 {/* Sub-zones indicator */}
-                {zonesByCity[city.city_id]?.length > 0 && (
+                {(zonesByCity[city.city_id] || []).length > 0 && (
                   <View style={styles.zonesPreview}>
                     <Text style={[styles.zonesPreviewText, { color: textSecondary }]} numberOfLines={1}>
-                      Zones: {zonesByCity[city.city_id].map(z => z.name).join(' • ')}
+                      Zones: {(zonesByCity[city.city_id] || []).map(z => z.name).join(' • ')}
                     </Text>
                   </View>
                 )}

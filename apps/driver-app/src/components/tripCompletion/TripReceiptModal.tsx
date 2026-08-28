@@ -89,21 +89,21 @@ export function TripReceiptModal({
             {/* Primary Net Earning Banner */}
             <View style={[styles.netEarningBox, { backgroundColor: isDark ? '#1E293B' : '#F0FDF4' }]}>
               <Text style={styles.netEarningLabel}>YOUR NET EARNING</Text>
-              <Text style={styles.netEarningAmount}>₹{receipt.driver_net_earning.toFixed(0)}</Text>
+              <Text style={styles.netEarningAmount}>₹{Number(receipt.driver_net_earning || 0).toFixed(0)}</Text>
 
               <View style={styles.paymentNoticeRow}>
                 {isCash ? (
                   <View style={styles.cashNoticeBadge}>
                     <MaterialCommunityIcons name="cash-multiple" size={18} color="#D97706" />
                     <Text style={styles.cashNoticeText}>
-                      COLLECT CASH: ₹{receipt.customer_final_fare.toFixed(0)}
+                      COLLECT CASH: ₹{Number(receipt.customer_final_fare || 0).toFixed(0)}
                     </Text>
                   </View>
                 ) : (
                   <View style={styles.onlineNoticeBadge}>
                     <Feather name="check-circle" size={16} color="#16A34A" />
                     <Text style={styles.onlineNoticeText}>
-                      PAID ONLINE (₹{receipt.customer_final_fare.toFixed(0)})
+                      PAID ONLINE (₹{Number(receipt.customer_final_fare || 0).toFixed(0)})
                     </Text>
                   </View>
                 )}
@@ -114,17 +114,17 @@ export function TripReceiptModal({
             <View style={[styles.metricsRow, { backgroundColor: isDark ? '#1E293B' : '#F8FAFC' }]}>
               <View style={styles.metricCol}>
                 <Text style={[styles.metricLabel, { color: textSecondary }]}>DISTANCE</Text>
-                <Text style={[styles.metricVal, { color: textPrimary }]}>{receipt.distance_km} km</Text>
+                <Text style={[styles.metricVal, { color: textPrimary }]}>{receipt.distance_km ?? 0} km</Text>
               </View>
               <View style={styles.divider} />
               <View style={styles.metricCol}>
                 <Text style={[styles.metricLabel, { color: textSecondary }]}>DURATION</Text>
-                <Text style={[styles.metricVal, { color: textPrimary }]}>{receipt.duration_min} min</Text>
+                <Text style={[styles.metricVal, { color: textPrimary }]}>{receipt.duration_min ?? 0} min</Text>
               </View>
               <View style={styles.divider} />
               <View style={styles.metricCol}>
                 <Text style={[styles.metricLabel, { color: textSecondary }]}>COMMISSION</Text>
-                <Text style={[styles.metricVal, { color: '#EF4444' }]}>-₹{receipt.platform_commission.toFixed(0)}</Text>
+                <Text style={[styles.metricVal, { color: '#EF4444' }]}>-₹{Number(receipt.platform_commission || 0).toFixed(0)}</Text>
               </View>
             </View>
 
@@ -148,61 +148,61 @@ export function TripReceiptModal({
               <View style={[styles.breakdownBox, { backgroundColor: isDark ? '#1E293B' : '#F8FAFC' }]}>
                 <View style={styles.lineItem}>
                   <Text style={[styles.lineLabel, { color: textSecondary }]}>Base Fare</Text>
-                  <Text style={[styles.lineVal, { color: textPrimary }]}>₹{receipt.base_fare.toFixed(2)}</Text>
+                  <Text style={[styles.lineVal, { color: textPrimary }]}>₹{Number(receipt.base_fare || 0).toFixed(2)}</Text>
                 </View>
                 <View style={styles.lineItem}>
-                  <Text style={[styles.lineLabel, { color: textSecondary }]}>Distance Charge ({receipt.distance_km} km)</Text>
-                  <Text style={[styles.lineVal, { color: textPrimary }]}>₹{receipt.distance_charge.toFixed(2)}</Text>
+                  <Text style={[styles.lineLabel, { color: textSecondary }]}>Distance Charge ({receipt.distance_km ?? 0} km)</Text>
+                  <Text style={[styles.lineVal, { color: textPrimary }]}>₹{Number(receipt.distance_charge || 0).toFixed(2)}</Text>
                 </View>
                 <View style={styles.lineItem}>
-                  <Text style={[styles.lineLabel, { color: textSecondary }]}>Time Charge ({receipt.duration_min} min)</Text>
-                  <Text style={[styles.lineVal, { color: textPrimary }]}>₹{receipt.time_charge.toFixed(2)}</Text>
+                  <Text style={[styles.lineLabel, { color: textSecondary }]}>Time Charge ({receipt.duration_min ?? 0} min)</Text>
+                  <Text style={[styles.lineVal, { color: textPrimary }]}>₹{Number(receipt.time_charge || 0).toFixed(2)}</Text>
                 </View>
-                {receipt.waiting_charge > 0 && (
+                {Number(receipt.waiting_charge || 0) > 0 && (
                   <View style={styles.lineItem}>
                     <Text style={[styles.lineLabel, { color: textSecondary }]}>Waiting Charge</Text>
-                    <Text style={[styles.lineVal, { color: textPrimary }]}>+₹{receipt.waiting_charge.toFixed(2)}</Text>
+                    <Text style={[styles.lineVal, { color: textPrimary }]}>+₹{Number(receipt.waiting_charge || 0).toFixed(2)}</Text>
                   </View>
                 )}
-                {receipt.stops_fee > 0 && (
+                {Number(receipt.stops_fee || 0) > 0 && (
                   <View style={styles.lineItem}>
                     <Text style={[styles.lineLabel, { color: textSecondary }]}>Intermediate Stops Fee</Text>
-                    <Text style={[styles.lineVal, { color: textPrimary }]}>+₹{receipt.stops_fee.toFixed(2)}</Text>
+                    <Text style={[styles.lineVal, { color: textPrimary }]}>+₹{Number(receipt.stops_fee || 0).toFixed(2)}</Text>
                   </View>
                 )}
-                {receipt.tolls_charge > 0 && (
+                {Number(receipt.tolls_charge || 0) > 0 && (
                   <View style={styles.lineItem}>
                     <Text style={[styles.lineLabel, { color: textSecondary }]}>Tolls Surcharge</Text>
-                    <Text style={[styles.lineVal, { color: textPrimary }]}>+₹{receipt.tolls_charge.toFixed(2)}</Text>
+                    <Text style={[styles.lineVal, { color: textPrimary }]}>+₹{Number(receipt.tolls_charge || 0).toFixed(2)}</Text>
                   </View>
                 )}
-                {receipt.parking_charge > 0 && (
+                {Number(receipt.parking_charge || 0) > 0 && (
                   <View style={styles.lineItem}>
                     <Text style={[styles.lineLabel, { color: textSecondary }]}>Parking Fee</Text>
-                    <Text style={[styles.lineVal, { color: textPrimary }]}>+₹{receipt.parking_charge.toFixed(2)}</Text>
+                    <Text style={[styles.lineVal, { color: textPrimary }]}>+₹{Number(receipt.parking_charge || 0).toFixed(2)}</Text>
                   </View>
                 )}
                 <View style={styles.lineItem}>
                   <Text style={[styles.lineLabel, { color: textSecondary }]}>Taxes & GST (5%)</Text>
-                  <Text style={[styles.lineVal, { color: textPrimary }]}>₹{receipt.taxes_and_fees.toFixed(2)}</Text>
+                  <Text style={[styles.lineVal, { color: textPrimary }]}>₹{Number(receipt.taxes_and_fees || 0).toFixed(2)}</Text>
                 </View>
 
                 <View style={styles.innerDivider} />
 
                 <View style={styles.lineItem}>
                   <Text style={[styles.lineLabelBold, { color: textPrimary }]}>Customer Final Fare</Text>
-                  <Text style={[styles.lineValBold, { color: textPrimary }]}>₹{receipt.customer_final_fare.toFixed(2)}</Text>
+                  <Text style={[styles.lineValBold, { color: textPrimary }]}>₹{Number(receipt.customer_final_fare || 0).toFixed(2)}</Text>
                 </View>
 
                 <View style={styles.lineItem}>
                   <Text style={[styles.lineLabel, { color: '#EF4444' }]}>Platform Commission (20%)</Text>
-                  <Text style={[styles.lineVal, { color: '#EF4444' }]}>-₹{receipt.platform_commission.toFixed(2)}</Text>
+                  <Text style={[styles.lineVal, { color: '#EF4444' }]}>-₹{Number(receipt.platform_commission || 0).toFixed(2)}</Text>
                 </View>
 
-                {receipt.tip_amount > 0 && (
+                {Number(receipt.tip_amount || 0) > 0 && (
                   <View style={styles.lineItem}>
                     <Text style={[styles.lineLabel, { color: '#16A34A' }]}>Passenger Tip</Text>
-                    <Text style={[styles.lineVal, { color: '#16A34A' }]}>+₹{receipt.tip_amount.toFixed(2)}</Text>
+                    <Text style={[styles.lineVal, { color: '#16A34A' }]}>+₹{Number(receipt.tip_amount || 0).toFixed(2)}</Text>
                   </View>
                 )}
 
@@ -210,7 +210,7 @@ export function TripReceiptModal({
 
                 <View style={styles.lineItem}>
                   <Text style={[styles.lineLabelBold, { color: '#16A34A' }]}>Driver Net Payout</Text>
-                  <Text style={[styles.lineValBold, { color: '#16A34A' }]}>₹{receipt.driver_net_earning.toFixed(2)}</Text>
+                  <Text style={[styles.lineValBold, { color: '#16A34A' }]}>₹{Number(receipt.driver_net_earning || 0).toFixed(2)}</Text>
                 </View>
               </View>
             )}

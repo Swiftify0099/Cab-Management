@@ -6,18 +6,20 @@
  */
 import React from 'react'
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 
 interface State {
   hasError: boolean
   error: Error | null
   errorInfo: React.ErrorInfo | null
+  showDetails: boolean
 }
 
 export class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
   State
 > {
-  state: State = { hasError: false, error: null, errorInfo: null }
+  state: State = { hasError: false, error: null, errorInfo: null, showDetails: false }
 
   static getDerivedStateFromError(error: Error): Partial<State> {
     return { hasError: true, error }
@@ -30,7 +32,18 @@ export class ErrorBoundary extends React.Component<
   }
 
   handleReset = () => {
-    this.setState({ hasError: false, error: null, errorInfo: null })
+    this.setState({ hasError: false, error: null, errorInfo: null, showDetails: false })
+  }
+
+  handleClearCacheAndReset = async () => {
+    try {
+      await AsyncStorage.multiRemove([
+        '@driver_availability_state_v1',
+        '@driver_bg_tracking_active',
+        '@driver_battery_opt_configured_v2',
+      ])
+    } catch {}
+    this.handleReset()
   }
 
   render() {
@@ -45,20 +58,42 @@ export class ErrorBoundary extends React.Component<
             The app encountered an unexpected error. Please try again.
           </Text>
 
-          {__DEV__ && this.state.error && (
-            <ScrollView style={styles.errorBox} showsVerticalScrollIndicator={false}>
-              <Text style={styles.errorText}>{this.state.error.message}</Text>
-              {this.state.errorInfo?.componentStack && (
-                <Text style={styles.stackText}>
-                  {this.state.errorInfo.componentStack}
+          {/* Collapsible Error Inspector */}
+          {this.state.error && (
+            <View style={{ width: '100%', marginBottom: 20 }}>
+              <TouchableOpacity
+                style={styles.toggleDetailsBtn}
+                onPress={() => this.setState(prev => ({ showDetails: !prev.showDetails }))}
+              >
+                <Text style={styles.toggleDetailsText}>
+                  {this.state.showDetails ? '▲ Hide Error Details' : '▼ View Error Diagnostics'}
                 </Text>
+              </TouchableOpacity>
+
+              {this.state.showDetails && (
+                <ScrollView style={styles.errorBox} showsVerticalScrollIndicator={false}>
+                  <Text style={styles.errorText}>
+                    {this.state.error.name}: {this.state.error.message}
+                  </Text>
+                  {this.state.errorInfo?.componentStack && (
+                    <Text style={styles.stackText}>
+                      {this.state.errorInfo.componentStack}
+                    </Text>
+                  )}
+                </ScrollView>
               )}
-            </ScrollView>
+            </View>
           )}
 
-          <TouchableOpacity style={styles.btn} onPress={this.handleReset}>
-            <Text style={styles.btnText}>↺ Try Again</Text>
-          </TouchableOpacity>
+          <View style={styles.btnRow}>
+            <TouchableOpacity style={styles.btn} onPress={this.handleReset}>
+              <Text style={styles.btnText}>↺ Try Again</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.btnSecondary} onPress={this.handleClearCacheAndReset}>
+              <Text style={styles.btnSecondaryText}>🧹 Clear Cache & Restart</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )
     }
@@ -94,11 +129,24 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   subtitle: {
-    color: '#64748B',
+    color: '#94A3B8',
     fontSize: 14,
     textAlign: 'center',
     lineHeight: 22,
-    marginBottom: 24,
+    marginBottom: 20,
+  },
+  toggleDetailsBtn: {
+    alignSelf: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  toggleDetailsText: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '600',
   },
   errorBox: {
     backgroundColor: 'rgba(239,68,68,0.08)',
@@ -106,7 +154,6 @@ const styles = StyleSheet.create({
     padding: 12,
     maxHeight: 200,
     width: '100%',
-    marginBottom: 24,
     borderWidth: 1,
     borderColor: 'rgba(239,68,68,0.2)',
   },
@@ -121,11 +168,18 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontFamily: 'monospace',
   },
+  btnRow: {
+    flexDirection: 'column',
+    width: '100%',
+    gap: 10,
+  },
   btn: {
     backgroundColor: '#3B82F6',
-    paddingHorizontal: 32,
+    paddingHorizontal: 24,
     paddingVertical: 14,
-    borderRadius: 50,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
     shadowColor: '#3B82F6',
     shadowOpacity: 0.4,
     shadowRadius: 12,
@@ -135,5 +189,20 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '800',
+  },
+  btnSecondary: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+  },
+  btnSecondaryText: {
+    color: '#CBD5E1',
+    fontSize: 14,
+    fontWeight: '700',
   },
 })

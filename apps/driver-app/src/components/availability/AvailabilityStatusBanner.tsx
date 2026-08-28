@@ -65,7 +65,7 @@ export function AvailabilityStatusBanner({
             style={[styles.chipText, { color: theme.colors.text }]}
             numberOfLines={1}
           >
-            {data.currentZone.split('•')[0].trim()}
+            {(data?.currentZone || 'Pune Central • Zone 1').split('•')[0]?.trim() || 'Central Zone'}
           </Text>
         </TouchableOpacity>
 
@@ -86,7 +86,7 @@ export function AvailabilityStatusBanner({
             ]}
           />
           <Text style={[styles.chipTextSub, { color: theme.colors.textSecondary }]}>
-            GPS: {data.gpsStatus === 'EXCELLENT' ? 'HD' : data.gpsStatus}
+            GPS: {data?.gpsStatus === 'EXCELLENT' ? 'HD' : (data?.gpsStatus || 'GOOD')}
           </Text>
         </TouchableOpacity>
 
@@ -103,8 +103,10 @@ export function AvailabilityStatusBanner({
             style={[styles.chipText, { color: theme.colors.text }]}
             numberOfLines={1}
           >
-            {data.activeVehicle
+            {data?.activeVehicle?.model
               ? `${data.activeVehicle.model}`
+              : data?.activeVehicle?.registration_number
+              ? `${data.activeVehicle.registration_number}`
               : 'Select Car'}
           </Text>
         </TouchableOpacity>
