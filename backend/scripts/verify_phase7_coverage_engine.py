@@ -108,6 +108,9 @@ async def run_phase7_coverage_engine_verification():
     # ──────────────────────────────────────────────────────────────────────────
     print("\n--- SECTION 1: Spatial Hierarchy Resolution (City, Zone, H3 Hex) ---")
     async with async_session_maker() as session:
+        # Reset any older test drivers to OFFLINE for test isolation
+        await session.execute(update(Driver).values(status=DriverStatus.OFFLINE))
+        await session.commit()
         try:
             # 1. Ensure Pune City exists
             pune_city_res = await session.execute(select(ServiceCity).where(ServiceCity.name == "Pune"))
@@ -261,6 +264,7 @@ async def run_phase7_coverage_engine_verification():
                     pickup_lng=pune_lng,
                     service_type="CAB_LOCAL",
                     search_radius_km=5.0,
+                    limit=20,
                 )
             )
 
@@ -401,6 +405,7 @@ async def run_phase7_coverage_engine_verification():
                     pickup_lng=pune_lng,
                     service_type="CAB_LOCAL",
                     search_radius_km=5.0,
+                    limit=20,
                 )
             )
 
@@ -560,6 +565,7 @@ async def run_phase7_coverage_engine_verification():
                     pickup_lng=pune_lng,
                     service_type="CAB_LOCAL",
                     search_radius_km=5.0,
+                    limit=20,
                 )
             )
 
@@ -597,6 +603,7 @@ async def run_phase7_coverage_engine_verification():
                     pickup_lng=pune_lng,
                     service_type="CAB_LOCAL",
                     search_radius_km=5.0,
+                    limit=20,
                 )
             )
 
