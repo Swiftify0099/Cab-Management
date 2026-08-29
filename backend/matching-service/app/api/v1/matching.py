@@ -5382,3 +5382,129 @@ async def get_ride_request_by_id(
             "assigned_at": ride.assigned_at.isoformat() if hasattr(ride, "assigned_at") and ride.assigned_at else None,
         },
     )
+
+
+@router.get(
+    "/customer/rides/active",
+    response_model=SuccessResponse,
+    summary="Customer: Get active assigned, in-progress, or matching ride",
+)
+@router.get(
+    "/matching/customer/rides/active",
+    response_model=SuccessResponse,
+    summary="Customer: Get active assigned, in-progress, or matching ride (alias)",
+)
+async def get_customer_active_ride(
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Returns the customer's current active ride (MATCHING, ASSIGNED, PICKUP, ARRIVED, IN_PROGRESS).
+    Used on Customer App launch, resume, or socket reconnect to restore UI state without manual refresh.
+    """
+    from common.models.all_models import RideRequest, Driver, Vehicle, RideRequestStatus
+
+    active_statuses = [
+        RideRequestStatus.CREATED,
+        RideRequestStatus.MATCHING,
+        RideRequestStatus.DISPATCHING,
+        RideRequestStatus.OFFERED,
+        RideRequestStatus.ASSIGNED,
+        RideRequestStatus.PICKUP,
+        RideRequestStatus.ARRIVED,
+        RideRequestStatus.IN_PROGRESS,
+    ]
+
+    res = await db.execute(
+        select(RideRequest)
+        .where(
+            and_(
+                RideRequest.customer_id == current_user.id,
+                RideRequest.status.in_(active_statuses),
+            )
+        )
+        .order_by(RideRequest.created_at.desc())
+    )
+    ride = res.scalars().first()
+    if not ride:
+        return SuccessResponse(
+            success=True,
+            message="No active ride found",
+            data=None,
+        )
+
+    driver_info = None
+    vehicle_info = None
+    if ride.assigned_driver_id:
+        d_res = await db.execute(select(Driver).where(Driver.id == ride.assigned_driver_id))
+        drv = d_res.scalar_one_or_none()
+        if drv:
+            v_res = await db.execute(
+                select(Vehicle).where(and_(Vehicle.driver_id == drv.id, Vehicle.is_active == True))
+            )
+            veh = v_res.scalar_one_or_none()
+            if not veh:
+                v_res_any = await db.execute(select(Vehicle).where(Vehicle.driver_id == drv.id))
+                veh = v_res_any.scalar_one_or_none()
+
+            masked_phone = f"+91 •••• ••{drv.phone[-4:]}" if drv.phone and len(drv.phone) >= 4 else "+91 ••••• ••••"
+            driver_info = {
+                "id": str(drv.id),
+                "driver_id": str(drv.id),
+                "full_name": drv.full_name,
+                "name": drv.full_name,
+                "phone": masked_phone,
+                "phone_masked": masked_phone,
+                "rating": float(drv.rating or 4.85),
+                "total_trips": getattr(drv, "total_trips", 0) or 0,
+                "profile_photo": drv.profile_photo,
+                "photo": drv.profile_photo,
+                "current_latitude": drv.current_latitude,
+                "current_longitude": drv.current_longitude,
+            }
+            if veh:
+                vehicle_info = {
+                    "make": veh.make or "Standard",
+                    "model": veh.model or "Cab",
+                    "variant": f"{veh.make} {veh.model}" if veh.make and veh.model else (veh.model or "Standard Cab"),
+                    "color": veh.color or "White",
+                    "registration_number": veh.registration_number or "MH-12-CAB",
+                    "plate": veh.registration_number or "MH-12-CAB",
+                    "vehicle_type": str(veh.vehicle_type.value) if hasattr(veh.vehicle_type, 'value') else str(veh.vehicle_type or 'SEDAN'),
+                    "seat_capacity": getattr(veh, "seat_capacity", 4) or 4,
+                }
+
+    is_assigned = ride.status in [
+        RideRequestStatus.ASSIGNED,
+        RideRequestStatus.PICKUP,
+        RideRequestStatus.ARRIVED,
+        RideRequestStatus.IN_PROGRESS,
+    ]
+
+    return SuccessResponse(
+        success=True,
+        message="Active customer ride found",
+        data={
+            "type": "assigned_ride" if is_assigned else "matching_ride",
+            "id": str(ride.id),
+            "ride_id": str(ride.id),
+            "booking_id": str(ride.id),
+            "trip_id": str(ride.id),
+            "status": ride.status.value if hasattr(ride.status, "value") else str(ride.status),
+            "pickup_address": ride.pickup_address,
+            "pickup_lat": float(ride.pickup_lat),
+            "pickup_lng": float(ride.pickup_lng),
+            "destination_address": ride.destination_address,
+            "destination_lat": float(ride.destination_lat),
+            "destination_lng": float(ride.destination_lng),
+            "estimated_fare": float(ride.estimated_fare or 0.0),
+            "fare": float(ride.estimated_fare or 0.0),
+            "start_pin": getattr(ride, "start_pin", None),
+            "start_pin_plain": getattr(ride, "start_pin_plain", None),
+            "otp": getattr(ride, "start_pin", None),
+            "driver": driver_info,
+            "vehicle": vehicle_info,
+            "created_at": ride.created_at.isoformat() if hasattr(ride, "created_at") and ride.created_at else None,
+            "assigned_at": ride.assigned_at.isoformat() if hasattr(ride, "assigned_at") and ride.assigned_at else None,
+        },
+    )

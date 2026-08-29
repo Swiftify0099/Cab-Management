@@ -357,20 +357,88 @@ class FanoutDispatchEngine:
                 except Exception:
                     pass
 
-        # 9. Emit RIDE_ASSIGNED to customer
+        # 9. Fetch vehicle details for customer payload
+        veh_res = await self.db.execute(
+            select(Vehicle).where(and_(Vehicle.driver_id == driver.id, Vehicle.is_active == True))
+        )
+        active_veh = veh_res.scalar_one_or_none()
+        if not active_veh:
+            veh_res_any = await self.db.execute(
+                select(Vehicle).where(Vehicle.driver_id == driver.id)
+            )
+            active_veh = veh_res_any.scalar_one_or_none()
+
+        masked_phone = f"+91 •••• ••{driver.phone[-4:]}" if driver.phone and len(driver.phone) >= 4 else "+91 ••••• ••••"
+        driver_payload = {
+            "id": str(driver.id),
+            "driver_id": str(driver.id),
+            "full_name": driver.full_name,
+            "name": driver.full_name,
+            "rating": float(driver.rating or 4.85),
+            "total_trips": getattr(driver, "total_trips", 0) or 0,
+            "profile_photo": driver.profile_photo,
+            "photo": driver.profile_photo,
+            "phone": masked_phone,
+            "phone_masked": masked_phone,
+            "eta_min": offer.pickup_eta_min or 5,
+            "distance_km": offer.pickup_distance_km or 2.0,
+        }
+
+        vehicle_payload = {
+            "make": active_veh.make if active_veh else "Standard",
+            "model": active_veh.model if active_veh else "Cab",
+            "variant": f"{active_veh.make} {active_veh.model}" if active_veh else "Standard Cab",
+            "color": active_veh.color if active_veh else "White",
+            "registration_number": active_veh.registration_number if active_veh else "MH-12-CAB",
+            "plate": active_veh.registration_number if active_veh else "MH-12-CAB",
+            "vehicle_type": str(active_veh.vehicle_type.value) if active_veh and hasattr(active_veh.vehicle_type, "value") else str(active_veh.vehicle_type if active_veh else "SEDAN"),
+            "seat_capacity": active_veh.seat_capacity if active_veh else 4,
+        }
+
+        # 10. Emit RIDE_ASSIGNED & TRIP_ACCEPTED to customer
         cust_payload = {
             "event": "RIDE_ASSIGNED",
             "ride_request_id": str(ride_req.id),
+            "booking_id": str(ride_req.id),
+            "trip_id": str(ride_req.id),
             "status": "ASSIGNED",
+            "driver": driver_payload,
+            "vehicle": vehicle_payload,
             "driver_id": str(driver.id),
             "driver_name": driver.full_name,
             "start_pin": start_pin,
-            "pickup_eta_min": offer.pickup_eta_min,
+            "start_pin_plain": start_pin,
+            "otp": start_pin,
+            "pickup_eta_minutes": offer.pickup_eta_min or 5,
+            "pickup_eta_min": offer.pickup_eta_min or 5,
+            "pickup_address": ride_req.pickup_address,
+            "pickup_lat": float(ride_req.pickup_lat),
+            "pickup_lng": float(ride_req.pickup_lng),
+            "destination_address": ride_req.destination_address,
+            "destination_lat": float(ride_req.destination_lat),
+            "destination_lng": float(ride_req.destination_lng),
+            "fare": float(ride_req.estimated_fare or 0.0),
         }
-        try:
-            await publish_event(f"customer:{str(ride_req.customer_id)}:events", cust_payload)
-        except Exception:
-            pass
+        trip_accepted_payload = {
+            **cust_payload,
+            "event": "TRIP_ACCEPTED",
+        }
+
+        cust_id_str = str(ride_req.customer_id)
+        req_id_str = str(ride_req.id)
+        for ch in [
+            f"customer:{cust_id_str}:events",
+            f"user:{cust_id_str}:events",
+            f"trip:{req_id_str}",
+            f"ride:{req_id_str}",
+            f"trip:{req_id_str}:events",
+            f"ride:{req_id_str}:events",
+        ]:
+            try:
+                await publish_event(ch, cust_payload)
+                await publish_event(ch, trip_accepted_payload)
+            except Exception:
+                pass
 
         return {
             "success": True,
