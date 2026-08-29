@@ -343,7 +343,7 @@ async def run_phase6_nearby_matching_verification():
             await session.execute(
                 update(Driver)
                 .where(Driver.id == d1.id)
-                .values(last_location_updated_at=now_utc - timedelta(seconds=90))
+                .values(last_location_updated_at=datetime.now(timezone.utc) - timedelta(seconds=90))
             )
             await session.commit()
 
