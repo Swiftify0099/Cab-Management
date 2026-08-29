@@ -84,8 +84,12 @@ class NegotiationService:
         amount_dec = Decimal(str(round(suggested_amount, 2)))
 
         ride.pricing_mode = "NEGOTIATED"
-        ride.customer_offer_amount = float(amount_dec)
         ride.estimated_fare = amount_dec
+        if hasattr(ride, "customer_offer_amount"):
+            try:
+                setattr(ride, "customer_offer_amount", float(amount_dec))
+            except Exception:
+                pass
 
         created_offers: List[NegotiationOffer] = []
         driver_uids = candidate_driver_user_ids or []
@@ -763,11 +767,12 @@ class NegotiationService:
                 "responded_at": o.responded_at.isoformat() if o.responded_at else None,
             })
 
+        suggested_amt = float(getattr(ride, "customer_offer_amount", None) or ride.estimated_fare or 0.0)
         return {
             "ride_id": str(ride.id),
             "status": ride.status.value if hasattr(ride.status, "value") else str(ride.status),
             "pricing_mode": ride.pricing_mode,
-            "suggested_amount": float(ride.customer_offer_amount or 0.0),
+            "suggested_amount": suggested_amt,
             "assigned_driver_id": str(ride.assigned_driver_id) if ride.assigned_driver_id else None,
             "final_fare": float(ride.final_fare) if ride.final_fare else None,
             "offers_count": len(offers_data),
