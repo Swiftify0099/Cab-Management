@@ -91,8 +91,15 @@ async def run_phase6_nearby_matching_verification():
     print("=" * 85)
 
     today = date.today()
-    now_utc = datetime.now(timezone.utc)
     base_lat, base_lng = 18.5204, 73.8567  # Pune Central (Shivajinagar)
+
+    # Clean test slate: set existing drivers offline
+    async with async_session_maker() as session:
+        await session.execute(
+            update(Driver)
+            .values(status=DriverStatus.OFFLINE, _is_online=False)
+        )
+        await session.commit()
 
     # ──────────────────────────────────────────────────────────────────────────
     # SECTION 1: 0 Partners Case (Empty / Remote Coordinates)
@@ -139,7 +146,7 @@ async def run_phase6_nearby_matching_verification():
                 current_latitude=base_lat + 0.005,
                 current_longitude=base_lng + 0.005,
                 current_accuracy_m=5.0,
-                last_location_updated_at=now_utc,
+                last_location_updated_at=datetime.now(timezone.utc),
             )
             d1._is_verified = True
             d1._is_online = True
@@ -213,7 +220,7 @@ async def run_phase6_nearby_matching_verification():
                 current_latitude=base_lat + 0.02,
                 current_longitude=base_lng + 0.02,
                 current_accuracy_m=8.0,
-                last_location_updated_at=now_utc,
+                last_location_updated_at=datetime.now(timezone.utc),
             )
             d2._is_verified = True
             d2._is_online = True
@@ -256,7 +263,7 @@ async def run_phase6_nearby_matching_verification():
                 current_latitude=base_lat + 0.06,
                 current_longitude=base_lng + 0.06,
                 current_accuracy_m=10.0,
-                last_location_updated_at=now_utc,
+                last_location_updated_at=datetime.now(timezone.utc),
             )
             d3._is_verified = True
             d3._is_online = True
@@ -280,6 +287,14 @@ async def run_phase6_nearby_matching_verification():
             )
             await session.commit()
             await activate_driver_vehicle(session, d3.id, v3.id)
+            await session.commit()
+
+            # Refresh timestamps for d1, d2, d3 before search
+            await session.execute(
+                update(Driver)
+                .where(Driver.id.in_([d1.id, d2.id, d3.id]))
+                .values(last_location_updated_at=datetime.now(timezone.utc))
+            )
             await session.commit()
 
             # Execute nearby search across 10 km
