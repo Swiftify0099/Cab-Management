@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.database import async_session_maker
+from common.middleware.auth import get_current_user, AuthenticatedUser
 from app.schemas.orchestration import (
     JourneyListResponse,
     JourneyDetailResponse,
@@ -25,17 +26,9 @@ async def get_db():
         yield session
 
 
-class _FakeUser:
-    id = uuid.UUID("475d2f54-8a10-4e18-ab48-e877447bc9b6")
-
-
-async def get_current_user() -> _FakeUser:
-    return _FakeUser()
-
-
 @router.get("/journeys", response_model=JourneyListResponse, summary="Get active customer journeys")
 async def get_journeys(
-    current_user: _FakeUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -50,7 +43,7 @@ async def get_journeys(
 @router.get("/journeys/{journey_id}", response_model=JourneyDetailResponse, summary="Get single journey detail")
 async def get_journey_detail(
     journey_id: str,
-    current_user: _FakeUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -75,7 +68,7 @@ async def get_journey_detail(
 @router.post("/linked-action", response_model=LinkedActionResult, summary="Execute user-confirmed linked service action")
 async def execute_linked_action(
     req: LinkedActionRequest,
-    current_user: _FakeUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -108,7 +101,7 @@ async def publish_domain_event(
 @router.post("/dev/simulate", summary="Developer Mode: Simulate cross-service sagas and compensations")
 async def simulate_orchestration(
     req: DevOrchestrationSimRequest,
-    current_user: _FakeUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Feature 2 Customer Address & Location Management — Smoke Test Suite
 Validates database models, services, and API endpoints for:
 1. Saved Addresses (Home, Work, Custom with PostGIS Geography)
@@ -102,11 +102,11 @@ async def run_feature2_tests():
             pickup_label="Home",
             pickup_address="Baner, Pune",
             pickup_lat=18.5590,
-            pickup_lon=73.7868,
+            pickup_lng=73.7868,
             drop_label="Work",
             drop_address="Magarpatta, Pune",
             drop_lat=18.5158,
-            drop_lon=73.9317,
+            drop_lng=73.9317,
         )
         db.add(daily_route)
         await db.commit()

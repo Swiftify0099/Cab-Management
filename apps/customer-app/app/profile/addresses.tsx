@@ -44,11 +44,11 @@ interface SavedRoute {
   pickup_label: string
   pickup_address: string
   pickup_lat: number
-  pickup_lon: number
+  pickup_lng: number
   drop_label: string
   drop_address: string
   drop_lat: number
-  drop_lon: number
+  drop_lng: number
 }
 
 const PRESET_META: Record<string, { icon: string; colorKey: string }> = {

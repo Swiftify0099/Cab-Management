@@ -16,6 +16,7 @@ from sqlalchemy import select, desc, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.database import async_session_maker
+from common.middleware.auth import get_current_user, AuthenticatedUser
 from common.models.all_models import (
     SupportTicket, SupportTicketMessage, FAQArticle, TicketStatus, User,
 )
@@ -26,14 +27,6 @@ router = APIRouter()
 async def get_db():
     async with async_session_maker() as session:
         yield session
-
-
-class _FakeUser:
-    id = uuid.UUID("475d2f54-8a10-4e18-ab48-e877447bc9b6")
-
-
-async def get_current_user() -> _FakeUser:
-    return _FakeUser()
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -167,7 +160,7 @@ async def vote_faq(
 @router.get("/tickets", summary="List customer's support tickets")
 async def get_my_tickets(
     status_filter: Optional[str] = Query(None, description="OPEN, IN_PROGRESS, RESOLVED, CLOSED"),
-    current_user: _FakeUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """List customer support tickets with latest status and unread counters."""
@@ -209,7 +202,7 @@ async def get_my_tickets(
 @router.post("/tickets", status_code=status.HTTP_201_CREATED, summary="Create service-linked support ticket")
 async def create_support_ticket(
     req: TicketCreateRequest,
-    current_user: _FakeUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new support ticket linked to a specific booking/service reference."""
@@ -262,7 +255,7 @@ async def create_support_ticket(
 @router.get("/tickets/{ticket_id}", summary="Get ticket detail & message thread")
 async def get_ticket_detail(
     ticket_id: str,
-    current_user: _FakeUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get full ticket details and chat conversation history."""
@@ -307,7 +300,7 @@ async def get_ticket_detail(
 async def send_ticket_message(
     ticket_id: str,
     req: MessageSendRequest,
-    current_user: _FakeUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Send reply message in an active support ticket thread."""
@@ -350,7 +343,7 @@ async def send_ticket_message(
 @router.post("/tickets/{ticket_id}/escalate", summary="Escalate support ticket")
 async def escalate_ticket(
     ticket_id: str,
-    current_user: _FakeUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Escalate support ticket to supervisor level."""
@@ -383,7 +376,7 @@ async def escalate_ticket(
 @router.post("/ai/chat", summary="Context-bounded AI Support Assistant")
 async def ai_support_chat(
     req: AIChatRequest,
-    current_user: _FakeUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """

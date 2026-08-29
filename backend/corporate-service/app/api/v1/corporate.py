@@ -6,6 +6,7 @@ from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.database import async_session_maker
+from common.middleware.auth import get_current_user, AuthenticatedUser
 
 router = APIRouter()
 
@@ -13,14 +14,6 @@ router = APIRouter()
 async def get_db():
     async with async_session_maker() as session:
         yield session
-
-
-class _FakeUser:
-    id = uuid.UUID("475d2f54-8a10-4e18-ab48-e877447bc9b6")
-
-
-async def get_current_user() -> _FakeUser:
-    return _FakeUser()
 
 
 def _corporate_service(db: AsyncSession = Depends(get_db)):
@@ -99,7 +92,7 @@ class ExpenseReportRequest(BaseModel):
 @router.post("/companies")
 async def create_company(
     req: CreateCompanyRequest,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_corporate_service),
 ):
     """Create a corporate account. Creator becomes Company Admin."""
@@ -112,7 +105,7 @@ async def create_company(
 
 @router.get("/companies/my")
 async def get_my_company(
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_corporate_service),
 ):
     """Get the authenticated customer's active corporate account."""
@@ -128,7 +121,7 @@ async def get_my_company(
 async def invite_employee(
     company_id: str,
     req: InviteEmployeeRequest,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_corporate_service),
 ):
     """Invite employee to the company. Requester must be Company Admin or Travel Admin."""
@@ -145,7 +138,7 @@ async def invite_employee(
 @router.post("/memberships/{membership_id}/accept")
 async def accept_invitation(
     membership_id: str,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_corporate_service),
 ):
     """Accept a company invitation."""
@@ -158,7 +151,7 @@ async def accept_invitation(
 
 @router.get("/memberships/my")
 async def get_my_memberships(
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_corporate_service),
 ):
     """Get all corporate memberships for the authenticated customer."""
@@ -169,7 +162,7 @@ async def get_my_memberships(
 async def list_company_members(
     company_id: str,
     membership_id: str,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_corporate_service),
 ):
     """List company members. Company Admin / Travel Admin only."""
@@ -184,7 +177,7 @@ async def list_company_members(
 @router.post("/policy-check")
 async def check_policy(
     req: PolicyCheckRequest,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_corporate_service),
 ):
     """
@@ -209,7 +202,7 @@ async def check_policy(
 @router.post("/approval-requests")
 async def create_approval_request(
     req: CreateApprovalRequest,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_corporate_service),
 ):
     """Create approval request for above-threshold booking."""
@@ -228,7 +221,7 @@ async def respond_to_approval(
     approval_id: str,
     approver_membership_id: str,
     req: ApprovalResponseRequest,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_corporate_service),
 ):
     """
@@ -248,7 +241,7 @@ async def respond_to_approval(
 @router.get("/approval-requests/pending")
 async def get_pending_approvals(
     approver_membership_id: str,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_corporate_service),
 ):
     """Get approval requests pending the authenticated approver's action."""
@@ -258,7 +251,7 @@ async def get_pending_approvals(
 @router.get("/approval-requests/my")
 async def get_my_approval_requests(
     membership_id: str,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_corporate_service),
 ):
     """Get approval requests submitted by the authenticated employee."""
@@ -271,7 +264,7 @@ async def get_my_approval_requests(
 async def get_corporate_wallet(
     company_id: str,
     membership_id: str,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_corporate_service),
 ):
     """
@@ -290,7 +283,7 @@ async def topup_corporate_wallet(
     company_id: str,
     membership_id: str,
     req: TopupRequest,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_corporate_service),
 ):
     """Top up corporate wallet. COMPANY_ADMIN / FINANCE only."""
@@ -307,7 +300,7 @@ async def topup_corporate_wallet(
 async def generate_invoice(
     req: GenerateInvoiceRequest,
     membership_id: str,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_corporate_service),
 ):
     """Generate monthly consolidated invoice."""
@@ -322,7 +315,7 @@ async def generate_invoice(
 async def get_invoices(
     company_id: str,
     membership_id: str,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_corporate_service),
 ):
     """List all corporate invoices. FINANCE / COMPANY_ADMIN / TRAVEL_ADMIN."""
@@ -336,7 +329,7 @@ async def get_invoices(
 async def get_invoice_detail(
     invoice_id: str,
     membership_id: str,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_corporate_service),
 ):
     """Get invoice with full line items breakdown."""
@@ -351,7 +344,7 @@ async def get_invoice_detail(
 @router.post("/expense-report")
 async def get_expense_report(
     req: ExpenseReportRequest,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_corporate_service),
 ):
     """Expense report aggregated by service type and department."""

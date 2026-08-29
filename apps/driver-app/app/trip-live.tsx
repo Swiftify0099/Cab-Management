@@ -29,7 +29,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 import { api } from '../src/api/client'
 import { useDriverSocket } from '../src/hooks/useDriverSocket'
 import type { PendingCustomer, CorridorCustomerPayload } from '../src/hooks/useDriverSocket'
-import IncomingRequestScreen from './incoming-request'
 
 const { width, height } = Dimensions.get('window')
 const API = process.env.EXPO_PUBLIC_API_URL || 'https://cab-management-1.onrender.com/api/v1'
@@ -346,14 +345,6 @@ export default function TripLiveScreen() {
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor="#060B18" />
-
-      {/* Incoming Request Overlay — shown when a customer books a seat */}
-      {incomingRequest && (
-        <IncomingRequestScreen
-          request={incomingRequest}
-          onDismiss={clearRequest}
-        />
-      )}
 
       {/* Futuristic Deep Gradient Background */}
       <LinearGradient

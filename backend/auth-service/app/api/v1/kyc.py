@@ -21,6 +21,7 @@ from app.schemas.kyc import (
 )
 from app.services.kyc_service import (
     DOCUMENT_METADATA_CONFIG,
+    delete_driver_document,
     get_driver_kyc_dashboard,
     save_driver_bank_account,
     save_or_update_kyc_document,
@@ -402,6 +403,40 @@ async def get_document_access_url(
             "access_url": signed_url,
             "expires_in_seconds": 1800,
         },
+    )
+
+
+@router.delete(
+    "/documents/{doc_type}",
+    response_model=APIResponse[dict],
+    summary="Delete a KYC document from database and destroy asset in Cloudinary",
+)
+async def delete_kyc_document(
+    doc_type: str,
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+    db: AsyncSession = Depends(get_db),
+):
+    """Deletes document record and cleans up Cloudinary storage asset."""
+    result = await db.execute(
+        select(Driver).where(Driver.user_id == current_user.id)
+    )
+    driver = result.scalar_one_or_none()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver profile not found")
+
+    try:
+        dt_enum = DocumentType(doc_type)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid document type: {doc_type}")
+
+    deleted = await delete_driver_document(db=db, driver_id=driver.id, doc_type=dt_enum)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Document not found to delete")
+
+    await db.commit()
+    return APIResponse(
+        message=f"{doc_type} deleted successfully",
+        data={"doc_type": doc_type, "deleted": True},
     )
 
 

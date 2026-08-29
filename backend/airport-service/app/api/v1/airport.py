@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.database import async_session_maker
 from common.models.all_models import User, UserRole
-from common.middleware.auth import get_current_user_optional, get_current_user, AuthenticatedUser
+from common.middleware.auth import get_current_user, AuthenticatedUser
 from app.services.flight_information_service import FlightInformationService
 from app.services.airport_service import AirportService
 
@@ -22,11 +22,6 @@ flight_router = APIRouter(prefix="/flight", tags=["Flight Information Service"])
 async def get_db():
     async with async_session_maker() as session:
         yield session
-
-def resolve_user_id(user: Optional[Any]) -> uuid.UUID:
-    if user and hasattr(user, 'id'):
-        return user.id if isinstance(user.id, uuid.UUID) else uuid.UUID(str(user.id))
-    return uuid.UUID("475d2f54-8a10-4e18-ab48-e877447bc9b6")
 
 
 # Schemas
@@ -136,21 +131,19 @@ async def calculate_fare_estimate(payload: EstimateRequest, db: AsyncSession = D
 async def create_airport_booking(
     payload: CreateBookingRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[Any] = Depends(get_current_user_optional),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """Create a confirmed airport booking with driver reservation."""
-    uid = resolve_user_id(current_user)
-    data = await AirportService.create_booking(db, uid, payload.dict())
+    data = await AirportService.create_booking(db, current_user.id, payload.dict())
     return {"status": "success", "data": data}
 
 @router.get("/my-bookings")
 async def get_my_airport_bookings(
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[Any] = Depends(get_current_user_optional),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """List customer active and historical airport bookings."""
-    uid = resolve_user_id(current_user)
-    data = await AirportService.get_customer_bookings(db, uid)
+    data = await AirportService.get_customer_bookings(db, current_user.id)
     return {"status": "success", "data": data}
 
 @router.get("/booking/{booking_id}")
@@ -176,11 +169,10 @@ async def cancel_airport_booking(
     booking_id: str,
     payload: CancelBookingPayload,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[Any] = Depends(get_current_user_optional),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """Cancel airport booking with 100% wallet refund."""
-    uid = resolve_user_id(current_user)
-    data = await AirportService.cancel_booking(db, uid, uuid.UUID(booking_id), payload.reason)
+    data = await AirportService.cancel_booking(db, current_user.id, uuid.UUID(booking_id), payload.reason)
     return {"status": "success", "data": data}
 
 @router.post("/webhook/flight-update")

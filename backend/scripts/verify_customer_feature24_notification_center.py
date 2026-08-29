@@ -22,7 +22,8 @@ notif_service_path = os.path.join(backend_root, "notification-service")
 sys.path.insert(0, notif_service_path)
 
 from common.database import async_session_maker, engine
-from common.models.all_models import Notification, NotificationType
+from common.models.all_models import Notification, NotificationType, User, UserRole
+from common.middleware.auth import AuthenticatedUser
 from sqlalchemy import select, delete
 
 
@@ -34,6 +35,22 @@ async def run_feature24_tests():
     test_user_id = uuid.UUID("475d2f54-8a10-4e18-ab48-e877447bc9b6")
 
     async with async_session_maker() as session:
+        # Ensure user exists
+        test_user = await session.get(User, test_user_id)
+        if not test_user:
+            test_user = User(
+                id=test_user_id,
+                phone="+919999988888",
+                role=UserRole.CUSTOMER,
+                is_active=True,
+                is_verified=True,
+            )
+            session.add(test_user)
+            await session.commit()
+            await session.refresh(test_user)
+
+        auth_user = AuthenticatedUser(user=test_user, payload={"sub": str(test_user.id)})
+
         # Step 1: Clean prior notifications
         await session.execute(delete(Notification).where(Notification.user_id == test_user_id))
         await session.commit()
@@ -78,31 +95,28 @@ async def run_feature24_tests():
             mark_notification_read,
             mark_all_notifications_read,
             delete_notification,
-            _FakeUser,
         )
-        fake_user = _FakeUser()
-        fake_user.id = test_user_id
 
         # Check Unread count
-        unread = await get_unread_count(current_user=fake_user, db=session)
+        unread = await get_unread_count(current_user=auth_user, db=session)
         assert unread["unread_count"] == 3, f"Expected 3 unread, got {unread['unread_count']}"
         print(f"✓ Step 3: Unread counter verified (Count: {unread['unread_count']})")
 
         # Step 4: Mark single notification read
-        read_res = await mark_notification_read(notification_id=str(n1.id), current_user=fake_user, db=session)
-        unread_after = await get_unread_count(current_user=fake_user, db=session)
+        read_res = await mark_notification_read(notification_id=str(n1.id), current_user=auth_user, db=session)
+        unread_after = await get_unread_count(current_user=auth_user, db=session)
         assert unread_after["unread_count"] == 2, f"Expected 2 unread, got {unread_after['unread_count']}"
         print(f"✓ Step 4: Single mark-as-read verified (Remaining unread: {unread_after['unread_count']})")
 
         # Step 5: Mark all read
-        await mark_all_notifications_read(current_user=fake_user, db=session)
-        unread_final = await get_unread_count(current_user=fake_user, db=session)
+        await mark_all_notifications_read(current_user=auth_user, db=session)
+        unread_final = await get_unread_count(current_user=auth_user, db=session)
         assert unread_final["unread_count"] == 0, f"Expected 0 unread, got {unread_final['unread_count']}"
         print("✓ Step 5: Mark all as read verified (Unread count: 0)")
 
         # Step 6: Dismiss / Delete notification
-        await delete_notification(notification_id=str(n3.id), current_user=fake_user, db=session)
-        feed = await get_notifications(category=None, unread_only=False, limit=10, offset=0, current_user=fake_user, db=session)
+        await delete_notification(notification_id=str(n3.id), current_user=auth_user, db=session)
+        feed = await get_notifications(category=None, unread_only=False, limit=10, offset=0, current_user=auth_user, db=session)
         assert feed["total"] == 2, f"Expected 2 notifications remaining, got {feed['total']}"
         print(f"✓ Step 6: Dismiss notification verified (Remaining in feed: {feed['total']})")
 

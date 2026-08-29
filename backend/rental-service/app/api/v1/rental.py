@@ -6,6 +6,7 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.database import async_session_maker
+from common.middleware.auth import get_current_user, AuthenticatedUser
 
 router = APIRouter()
 
@@ -14,13 +15,6 @@ async def get_db():
     async with async_session_maker() as session:
         yield session
 
-
-class _FakeUser:
-    id = uuid.UUID("475d2f54-8a10-4e18-ab48-e877447bc9b6")
-
-
-async def get_current_user() -> _FakeUser:
-    return _FakeUser()
 
 def _rental_service(db: AsyncSession = Depends(get_db)):
     from app.services.rental_service import RentalService
@@ -95,7 +89,7 @@ async def list_rental_plans(
 @router.post("/estimate")
 async def estimate_rental(
     req: EstimateRequest,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_rental_service),
 ):
     """Calculate rental fare estimate with itemized breakdown."""
@@ -111,7 +105,7 @@ async def estimate_rental(
 @router.post("/book")
 async def create_rental_booking(
     req: BookingRequest,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_rental_service),
 ):
     """Create confirmed rental booking with driver assignment and wallet hold."""
@@ -140,7 +134,7 @@ async def create_rental_booking(
 @router.get("/booking/{booking_id}")
 async def get_rental_booking(
     booking_id: str,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_rental_service),
 ):
     """Get full rental booking with live timer state."""
@@ -152,7 +146,7 @@ async def get_rental_booking(
 
 @router.get("/active")
 async def get_active_rental(
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_rental_service),
 ):
     """Get currently active rental for the authenticated customer."""
@@ -164,7 +158,7 @@ async def get_active_rental(
 async def start_rental(
     booking_id: str,
     req: StartRequest,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_rental_service),
 ):
     """
@@ -193,7 +187,7 @@ async def update_km(
 async def add_stop(
     booking_id: str,
     req: AddStopRequest,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_rental_service),
 ):
     """Customer adds a stop during active rental. Driver notified via Socket.IO."""
@@ -228,7 +222,7 @@ async def complete_rental(
 async def cancel_rental(
     booking_id: str,
     req: CancelRequest,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_rental_service),
 ):
     """Cancel rental booking with full wallet refund (if pre-start)."""

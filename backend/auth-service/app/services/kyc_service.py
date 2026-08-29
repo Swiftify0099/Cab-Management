@@ -95,6 +95,13 @@ DOCUMENT_METADATA_CONFIG = {
         "is_mandatory": True,
         "expiry_trackable": True,
     },
+    DocumentType.FITNESS: {
+        "key": "fitness",
+        "name": "Fitness Certificate",
+        "category": "vehicle",
+        "is_mandatory": True,
+        "expiry_trackable": True,
+    },
     DocumentType.PUC: {
         "key": "puc",
         "name": "PUC Certificate",
@@ -439,3 +446,164 @@ async def save_driver_bank_account(
     await db.flush()
     await db.refresh(bank)
     return bank
+
+
+async def delete_driver_document(
+    db: AsyncSession,
+    driver_id: uuid.UUID,
+    doc_type: DocumentType,
+) -> bool:
+    """
+    Deletes driver document record and invokes Cloudinary asset destruction if applicable.
+    """
+    from common.utils.cloudinary_service import CloudinaryService
+
+    result = await db.execute(
+        select(DriverDocument).where(
+            DriverDocument.driver_id == driver_id,
+            DriverDocument.doc_type == doc_type,
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        return False
+
+    public_id = doc.cloudinary_public_id
+    if public_id:
+        try:
+            await CloudinaryService.delete_asset(public_id)
+        except Exception as e:
+            logger.warning("failed_deleting_cloudinary_asset", public_id=public_id, error=str(e))
+
+    # Also delete associated media asset
+    if doc.media_asset_id:
+        ma_result = await db.execute(
+            select(MediaAsset).where(MediaAsset.id == doc.media_asset_id)
+        )
+        ma = ma_result.scalar_one_or_none()
+        if ma:
+            await db.delete(ma)
+
+    await db.delete(doc)
+    await db.flush()
+    return True
+
+
+async def admin_approve_document(
+    db: AsyncSession,
+    driver_id: uuid.UUID,
+    doc_type: DocumentType,
+    admin_user_id: Optional[uuid.UUID] = None,
+) -> DriverDocument:
+    """
+    Admin approves a specific driver document.
+    """
+    result = await db.execute(
+        select(DriverDocument).where(
+            DriverDocument.driver_id == driver_id,
+            DriverDocument.doc_type == doc_type,
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise ValueError(f"Document {doc_type.value} not found for driver {driver_id}")
+
+    doc.is_verified = True
+    doc.status = "approved"
+    doc.rejection_reason = None
+    doc.verified_at = datetime.now(timezone.utc)
+    doc.verified_by = admin_user_id
+    await db.flush()
+    await db.refresh(doc)
+    return doc
+
+
+async def admin_reject_document(
+    db: AsyncSession,
+    driver_id: uuid.UUID,
+    doc_type: DocumentType,
+    rejection_reason: str,
+    admin_user_id: Optional[uuid.UUID] = None,
+) -> DriverDocument:
+    """
+    Admin rejects a specific driver document with mandatory rejection reason.
+    """
+    result = await db.execute(
+        select(DriverDocument).where(
+            DriverDocument.driver_id == driver_id,
+            DriverDocument.doc_type == doc_type,
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise ValueError(f"Document {doc_type.value} not found for driver {driver_id}")
+
+    doc.is_verified = False
+    doc.status = "rejected"
+    doc.rejection_reason = rejection_reason
+    doc.verified_by = admin_user_id
+    await db.flush()
+    await db.refresh(doc)
+    return doc
+
+
+async def admin_approve_driver_kyc(
+    db: AsyncSession,
+    driver_id: uuid.UUID,
+    admin_user_id: Optional[uuid.UUID] = None,
+) -> Driver:
+    """
+    Admin approves driver full KYC, transitioning status to APPROVED and enabling active driver capabilities.
+    """
+    result = await db.execute(
+        select(Driver).where(Driver.id == driver_id)
+    )
+    driver = result.scalar_one_or_none()
+    if not driver:
+        raise ValueError(f"Driver {driver_id} not found")
+
+    driver.kyc_status = KYCStatus.APPROVED
+    driver.is_verified = True
+    driver._is_verified = True
+    driver.is_active = True
+
+    # Mark all existing documents as approved
+    docs_result = await db.execute(
+        select(DriverDocument).where(DriverDocument.driver_id == driver_id)
+    )
+    for doc in docs_result.scalars().all():
+        if not doc.rejection_reason:
+            doc.is_verified = True
+            doc.status = "approved"
+            doc.verified_at = datetime.now(timezone.utc)
+            doc.verified_by = admin_user_id
+
+    await db.flush()
+    await db.refresh(driver)
+    return driver
+
+
+async def admin_reject_driver_kyc(
+    db: AsyncSession,
+    driver_id: uuid.UUID,
+    rejection_reason: str,
+    admin_user_id: Optional[uuid.UUID] = None,
+) -> Driver:
+    """
+    Admin rejects driver full KYC.
+    """
+    result = await db.execute(
+        select(Driver).where(Driver.id == driver_id)
+    )
+    driver = result.scalar_one_or_none()
+    if not driver:
+        raise ValueError(f"Driver {driver_id} not found")
+
+    driver.kyc_status = KYCStatus.REJECTED
+    driver.is_verified = False
+    driver._is_verified = False
+
+    await db.flush()
+    await db.refresh(driver)
+    return driver
+

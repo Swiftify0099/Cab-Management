@@ -16,6 +16,7 @@ import asyncio
 
 from app.api.v1.matching import router as matching_router
 from app.api.v1.tracking import router as tracking_router
+from app.api.v1.nearby_matching import router as nearby_matching_router
 from app.core.config import matching_settings
 from common.database import engine, async_session_maker
 from common.utils.redis_client import close_redis
@@ -78,6 +79,7 @@ async def global_exc(request: Request, exc: Exception):
 # Mount routers
 app.include_router(matching_router, prefix="/api/v1/matching", tags=["Matching"])
 app.include_router(matching_router, prefix="/api/v1", tags=["Matching Direct"])
+app.include_router(nearby_matching_router, prefix="/api/v1/matching/nearby", tags=["Uber-Style Nearby Matching"])
 app.include_router(tracking_router, prefix="/api/v1/tracking", tags=["Tracking"])
 app.include_router(tracking_router, prefix="/api/v1", tags=["Tracking Direct"])
 

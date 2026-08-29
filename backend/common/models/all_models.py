@@ -48,6 +48,17 @@ class UserRole(str, PyEnum):
     SUPER_ADMIN = "super_admin"
 
 
+class ParcelCategory(str, PyEnum):
+    DOCUMENTS = "DOCUMENTS"
+    ELECTRONICS = "ELECTRONICS"
+    FOOD = "FOOD"
+    CLOTHING = "CLOTHING"
+    FRAGILE = "FRAGILE"
+    MEDICINES = "MEDICINES"
+    GENERAL_BOX = "GENERAL_BOX"
+
+
+
 class KYCStatus(str, PyEnum):
     PENDING = "pending"
     UNDER_REVIEW = "under_review"
@@ -58,7 +69,9 @@ class KYCStatus(str, PyEnum):
 class DriverStatus(str, PyEnum):
     OFFLINE = "offline"
     ONLINE = "online"
+    BUSY = "busy"
     ON_TRIP = "on_trip"
+    PAUSED = "paused"
     SUSPENDED = "suspended"
     INACTIVE = "inactive"
 
@@ -181,6 +194,7 @@ class DocumentType(str, PyEnum):
     RC_BOOK = "rc_book"
     INSURANCE = "insurance"
     PERMIT = "permit"
+    FITNESS = "fitness"
     PUC = "puc"
     VEHICLE_PHOTO = "vehicle_photo"
     BANK_ACCOUNT = "bank_account"
@@ -247,6 +261,8 @@ class VehicleType(str, PyEnum):
     TEMPO_TRAVELLER = "tempo_traveller"
     MINI_BUS = "mini_bus"
     BIKE = "bike"
+    TRUCK = "truck"
+    AUTO_RICKSHAW = "auto_rickshaw"
 
 
 class NotificationType(str, PyEnum):
@@ -483,14 +499,15 @@ class SavedRoute(Base, UUIDMixin, TimestampMixin):
     pickup_label: Mapped[str] = mapped_column(String(100), nullable=False)
     pickup_address: Mapped[str] = mapped_column(Text, nullable=False)
     pickup_lat: Mapped[float] = mapped_column(Float, nullable=False)
-    pickup_lon: Mapped[float] = mapped_column(Float, nullable=False)
+    pickup_lng: Mapped[float] = mapped_column(Float, nullable=False)
     # Drop
     drop_label: Mapped[str] = mapped_column(String(100), nullable=False)
     drop_address: Mapped[str] = mapped_column(Text, nullable=False)
     drop_lat: Mapped[float] = mapped_column(Float, nullable=False)
-    drop_lon: Mapped[float] = mapped_column(Float, nullable=False)
+    drop_lng: Mapped[float] = mapped_column(Float, nullable=False)
 
     user: Mapped["User"] = relationship(back_populates="saved_routes")
+
 
 
 # ============================================================
@@ -639,6 +656,18 @@ class Driver(Base, UUIDMixin, TimestampMixin):
     fatigue_score: Mapped[float] = mapped_column(Float, default=0.0)
     suspension_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     current_location: Mapped[Optional[object]] = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=True)
+    current_latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    current_longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    current_accuracy_m: Mapped[Optional[float]] = mapped_column(Float, default=10.0, nullable=True)
+    current_heading: Mapped[Optional[float]] = mapped_column(Float, default=0.0, nullable=True)
+    current_speed_kmh: Mapped[Optional[float]] = mapped_column(Float, default=0.0, nullable=True)
+    last_location_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_online_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_offline_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    offline_reason: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    telematics_battery_pct: Mapped[Optional[int]] = mapped_column(Integer, default=100, nullable=True)
+    telematics_is_charging: Mapped[Optional[bool]] = mapped_column(Boolean, default=False, nullable=True)
+    telematics_app_state: Mapped[Optional[str]] = mapped_column(String(30), default="foreground", nullable=True)
     home_city: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     referral_code: Mapped[Optional[str]] = mapped_column(String(20), unique=True, nullable=True)
     experience_years: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -677,24 +706,63 @@ class Driver(Base, UUIDMixin, TimestampMixin):
 
     # Relationships
     user: Mapped["User"] = relationship(back_populates="driver_profile")
-    vehicle: Mapped[Optional["Vehicle"]] = relationship(back_populates="driver", uselist=False)
+    vehicles: Mapped[List["Vehicle"]] = relationship(back_populates="driver", foreign_keys="[Vehicle.driver_id]")
     documents: Mapped[List["DriverDocument"]] = relationship(back_populates="driver")
     trips: Mapped[List["Trip"]] = relationship(back_populates="driver", foreign_keys="[Trip.driver_id]")
     penalties: Mapped[List["DriverPenalty"]] = relationship(back_populates="driver")
     bank_account: Mapped[Optional["DriverBankAccount"]] = relationship(back_populates="driver", uselist=False)
 
+    @property
+    def active_vehicle(self) -> Optional["Vehicle"]:
+        for v in (self.vehicles or []):
+            if v.is_active:
+                return v
+        return self.vehicles[0] if self.vehicles else None
+
+    @property
+    def vehicle(self) -> Optional["Vehicle"]:
+        return self.active_vehicle
+
+
+class DriverTelematicsHistory(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "driver_telematics_history"
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"), nullable=False, index=True)
+    location: Mapped[Optional[object]] = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=True)
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    accuracy_m: Mapped[float] = mapped_column(Float, default=10.0, nullable=False)
+    heading: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    speed_kmh: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    battery_pct: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    is_charging: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    app_state: Mapped[str] = mapped_column(String(30), default="foreground", nullable=False)
+    network_status: Mapped[str] = mapped_column(String(30), default="online", nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now, nullable=False)
+
 
 class Vehicle(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "vehicles"
 
-    driver_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"), unique=True, nullable=False)
+    driver_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"), nullable=False, index=True)
     vehicle_type: Mapped[VehicleType] = mapped_column(Enum(VehicleType), nullable=False)
     make: Mapped[str] = mapped_column(String(100), nullable=False)
     model: Mapped[str] = mapped_column(String(100), nullable=False)
+    variant: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     year: Mapped[int] = mapped_column(Integer, nullable=False)
     color: Mapped[str] = mapped_column(String(50), nullable=False)
     registration_number: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
     seat_capacity: Mapped[int] = mapped_column(Integer, nullable=False)
+    fuel_type: Mapped[str] = mapped_column(String(30), default="petrol", nullable=False)
+    comfort_level: Mapped[str] = mapped_column(String(30), default="economy", nullable=False)
+    ownership_type: Mapped[str] = mapped_column(String(30), default="self", nullable=False)
+    registered_owner_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    service_capabilities: Mapped[List[str]] = mapped_column(ARRAY(String), default=["cab"])
+    status: Mapped[str] = mapped_column(String(30), default="APPROVED", nullable=False)
+    rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+
+    # Logistics & Freight specifications
     parcel_capable: Mapped[bool] = mapped_column(Boolean, default=False)
     parcel_capacity_kg: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     transport_capable: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -703,11 +771,15 @@ class Vehicle(Base, UUIDMixin, TimestampMixin):
     loading_dimensions: Mapped[Optional[dict]] = mapped_column(JSONB, default={})
     commercial_permit: Mapped[bool] = mapped_column(Boolean, default=False)
     has_ac: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Compliance dates
     insurance_expiry: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     pollution_expiry: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    permit_expiry: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    fitness_expiry: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     photos: Mapped[List[str]] = mapped_column(ARRAY(String), default=[])
 
-    driver: Mapped["Driver"] = relationship(back_populates="vehicle")
+    driver: Mapped["Driver"] = relationship(back_populates="vehicles")
 
 
 class MediaAsset(Base, UUIDMixin, TimestampMixin, SoftDeleteMixin):

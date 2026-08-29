@@ -160,11 +160,11 @@ export const routeApi = {
     pickup_label: string
     pickup_address: string
     pickup_lat: number
-    pickup_lon: number
+    pickup_lng: number
     drop_label: string
     drop_address: string
     drop_lat: number
-    drop_lon: number
+    drop_lng: number
   }) => api.post('/profile/me/routes', data),
   deleteRoute: (id: string) => api.delete(`/profile/me/routes/${id}`),
 }

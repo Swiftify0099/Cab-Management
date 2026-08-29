@@ -77,12 +77,9 @@ export default function DriverParcelsScreen() {
     try {
       const res = await api.get('/parcels/driver/my-parcels')
       setParcels(res.data?.data || [])
-    } catch {
-      // Fallback demo data so screen never breaks
-      setParcels([
-        { id: 'p1', tracking_number: 'CB260501ABC123', status: 'pending', sender_name: 'Rahul S.', receiver_name: 'Priya P.', receiver_address: '123 MG Road, Mumbai', weight_kg: 2.5, fare: 120, is_fragile: true, is_urgent: false },
-        { id: 'p2', tracking_number: 'CB260501DEF456', status: 'in_transit', sender_name: 'Anita K.', receiver_name: 'Vijay S.', receiver_address: '45 Station Rd, Nashik', weight_kg: 0.8, fare: 85, is_fragile: false, is_urgent: true },
-      ])
+    } catch (err) {
+      console.warn('[DriverParcels] loadParcels error:', err)
+      setParcels([])
     } finally { setLoading(false); setRefreshing(false) }
   }
 

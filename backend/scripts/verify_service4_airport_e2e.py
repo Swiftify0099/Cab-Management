@@ -85,9 +85,10 @@ async def run_airport_service_verification():
 
         # 2. Flight Snapshot (AI-123)
         today = date.today()
+        f_num = f"AI{uuid.uuid4().hex[:4].upper()}"
         flight = FlightSnapshot(
             id=uuid.uuid4(),
-            flight_number="AI123",
+            flight_number=f_num,
             flight_date=today,
             airline_code="AI",
             airline_name="Air India",
@@ -180,12 +181,12 @@ async def run_airport_service_verification():
         print("TEST 2: AUTHORITATIVE FLIGHT INFORMATION SERVICE LOOKUP")
         print("=" * 70)
 
-        flight_data = await FlightInformationService.lookup_flight(session, "AI123", today)
-        assert flight_data["flight_number"] == "AI123"
+        flight_data = await FlightInformationService.lookup_flight(session, f_num, today)
+        assert flight_data["flight_number"] == f_num
         assert flight_data["airline_name"] == "Air India"
         assert flight_data["delay_minutes"] == 0
         assert flight_data["terminal"] == "T2"
-        print(f"  [OK] Verified Flight: AI123 ({flight_data['airline_name']}) -> Status: {flight_data['status']}, Gate: {flight_data['gate']}, Belt: {flight_data['baggage_belt']}.")
+        print(f"  [OK] Verified Flight: {f_num} ({flight_data['airline_name']}) -> Status: {flight_data['status']}, Gate: {flight_data['gate']}, Belt: {flight_data['baggage_belt']}.")
 
         # =========================================================================
         # TEST 3: FLIGHT-AWARE AIRPORT FARE ESTIMATE
@@ -200,7 +201,7 @@ async def run_airport_service_verification():
             transfer_type="PICKUP",
             vehicle_category="SUV",
             distance_km=22.0,
-            flight_number="AI123",
+            flight_number=f_num,
             flight_date=today,
             passenger_count=3,
             large_luggage_count=3,
@@ -229,7 +230,7 @@ async def run_airport_service_verification():
             "transfer_type": "PICKUP",
             "vehicle_category": "SUV",
             "distance_km": 22.0,
-            "flight_number": "AI123",
+            "flight_number": f_num,
             "flight_date": today.isoformat(),
             "passenger_count": 3,
             "large_luggage_count": 3,
@@ -266,7 +267,7 @@ async def run_airport_service_verification():
         # Ingest flight delay webhook (+35 minutes)
         await FlightInformationService.process_flight_update(
             db=session,
-            flight_number="AI123",
+            flight_number=f_num,
             flight_date=today,
             new_status="DELAYED",
             delay_minutes=35,
@@ -276,7 +277,7 @@ async def run_airport_service_verification():
 
         affected_refs = await AirportService.handle_flight_delay_recalculation(
             db=session,
-            flight_number="AI123",
+            flight_number=f_num,
             flight_date=today,
             delay_minutes=35,
             new_status="DELAYED",

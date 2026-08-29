@@ -204,25 +204,39 @@ class SpatialResolverService:
         elif mode_upper == "HEX":
             mode_condition = f"AND (dp.visibility_mode = 'specific_hex' AND dhc.hex_id = CAST('{hex_id_str}' AS uuid))" if hex_id_str else "AND FALSE"
 
-        # Service permission filter condition
+        # Service permission & capability filter condition
         st = (service_type or "cab").lower()
+        if st in ("hotel", "hospitality"):
+            # HOTEL ISOLATION INVARIANT: Hotel stays never enter driver spatial dispatch
+            return []
+
         service_clause = ""
+        veh_cap_clause = ""
+
         if st in ("cab", "local"):
             service_clause = "AND (dp.allow_local IS NULL OR dp.allow_local = TRUE)"
+            veh_cap_clause = "AND v.vehicle_type::text IN ('SEDAN', 'SUV', 'HATCHBACK', 'TEMPO_TRAVELLER', 'MINI_BUS', 'sedan', 'suv', 'hatchback', 'tempo_traveller', 'mini_bus') AND (v.service_capabilities IS NULL OR 'cab' = ANY(v.service_capabilities) OR 'local' = ANY(v.service_capabilities))"
         elif st == "airport":
             service_clause = "AND (dp.allow_airport IS NULL OR dp.allow_airport = TRUE)"
+            veh_cap_clause = "AND v.vehicle_type::text IN ('SEDAN', 'SUV', 'HATCHBACK', 'sedan', 'suv', 'hatchback') AND (v.service_capabilities IS NULL OR 'airport' = ANY(v.service_capabilities) OR 'cab' = ANY(v.service_capabilities))"
         elif st == "outstation":
             service_clause = "AND (dp.allow_outstation IS NULL OR dp.allow_outstation = TRUE)"
+            veh_cap_clause = "AND v.vehicle_type::text IN ('SEDAN', 'SUV', 'TEMPO_TRAVELLER', 'sedan', 'suv', 'tempo_traveller') AND (v.service_capabilities IS NULL OR 'outstation' = ANY(v.service_capabilities) OR 'cab' = ANY(v.service_capabilities))"
         elif st == "rental":
             service_clause = "AND (dp.allow_rental IS NULL OR dp.allow_rental = TRUE)"
+            veh_cap_clause = "AND v.vehicle_type::text IN ('SEDAN', 'SUV', 'HATCHBACK', 'sedan', 'suv', 'hatchback') AND (v.service_capabilities IS NULL OR 'rental' = ANY(v.service_capabilities) OR 'cab' = ANY(v.service_capabilities))"
         elif st == "parcel":
             service_clause = "AND (dp.allow_parcel IS NULL OR dp.allow_parcel = TRUE)"
+            veh_cap_clause = "AND (v.parcel_capable = TRUE OR v.service_capabilities IS NULL OR 'parcel' = ANY(v.service_capabilities))"
         elif st in ("transport", "goods"):
             service_clause = "AND (dp.allow_transport IS NULL OR dp.allow_transport = TRUE)"
+            veh_cap_clause = "AND v.vehicle_type::text IN ('TRUCK', 'TEMPO_TRAVELLER', 'truck', 'tempo_traveller') AND (v.service_capabilities IS NULL OR 'transport' = ANY(v.service_capabilities))"
         elif st in ("packers", "movers"):
             service_clause = "AND (dp.allow_packers IS NULL OR dp.allow_packers = TRUE)"
+            veh_cap_clause = "AND v.vehicle_type::text IN ('TRUCK', 'truck') AND (v.service_capabilities IS NULL OR 'packers' = ANY(v.service_capabilities) OR 'transport' = ANY(v.service_capabilities))"
         elif st == "carpool":
             service_clause = "AND (dp.allow_carpool IS NULL OR dp.allow_carpool = TRUE)"
+            veh_cap_clause = "AND v.vehicle_type::text IN ('SEDAN', 'SUV', 'HATCHBACK', 'sedan', 'suv', 'hatchback') AND (v.service_capabilities IS NULL OR 'carpool' = ANY(v.service_capabilities) OR 'cab' = ANY(v.service_capabilities))"
 
         sql = text(f"""
             SELECT DISTINCT
@@ -252,17 +266,23 @@ class SpatialResolverService:
             FROM drivers d
             JOIN users u ON u.id = d.user_id
             LEFT JOIN driver_preferences dp ON dp.driver_id = d.id
-            LEFT JOIN vehicles v ON v.driver_id = d.id
+            LEFT JOIN vehicles v ON v.driver_id = d.id AND v.is_active = TRUE
             LEFT JOIN driver_city_coverage dcc ON dcc.driver_id = d.id AND dcc.is_active = TRUE
             LEFT JOIN driver_hex_coverage dhc ON dhc.driver_id = d.id AND dhc.is_active = TRUE
             WHERE
                 (d.status::text IN ('ONLINE', 'online') OR d.is_online = TRUE)
                 AND (
-                    d.kyc_status::text IN ('APPROVED', 'approved', 'VERIFIED', 'verified', 'pending', 'PENDING')
+                    d.kyc_status::text IN ('APPROVED', 'approved', 'VERIFIED', 'verified')
                     OR d.is_verified = TRUE
-                    OR d.is_active = TRUE
                 )
+                AND d.is_active = TRUE
+                {veh_cap_clause}
                 AND d.current_location IS NOT NULL
+                -- Stale Location Protection Invariant (telemetry must be fresh, within 60 seconds)
+                AND (
+                    d.last_location_updated_at IS NOT NULL
+                    AND d.last_location_updated_at >= NOW() - INTERVAL '60 seconds'
+                )
                 -- Physical proximity filter (authoritative PostGIS ST_DWithin)
                 AND ST_DWithin(
                     d.current_location,

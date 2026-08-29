@@ -217,13 +217,23 @@ class SmartRadarService:
 
         scored_list: List[ScoredRide] = []
 
+        # Fetch driver's active vehicle for capability validation
+        active_veh_res = await self.db.execute(
+            select(Vehicle).where(and_(Vehicle.driver_id == driver.id, Vehicle.is_active == True))
+        )
+        active_veh = active_veh_res.scalar_one_or_none()
+
         for req in candidate_requests:
             # Exclude already rejected / removed by this driver
             if req.id in excluded_req_ids:
                 continue
 
-            # ── SERVICE TYPE PERMISSION FILTER ──
+            # ── SERVICE TYPE PERMISSION & HOTEL ISOLATION FILTER ──
             st = (getattr(req, 'service_type', 'cab') or 'cab').lower()
+            if st in ('hotel', 'hospitality'):
+                # HOTEL ISOLATION INVARIANT: Hotel stays never enter driver radar
+                continue
+
             if st in ('cab', 'local') and not pref.allow_local:
                 continue
             elif st == 'airport' and not pref.allow_airport:
@@ -240,6 +250,31 @@ class SmartRadarService:
                 continue
             elif st == 'carpool' and not pref.allow_carpool:
                 continue
+
+            # ── ACTIVE VEHICLE CAPABILITY VALIDATION ──
+            if active_veh:
+                v_type = active_veh.vehicle_type.value if hasattr(active_veh.vehicle_type, "value") else str(active_veh.vehicle_type).lower()
+                v_caps = [c.lower() for c in (active_veh.service_capabilities or [])]
+
+                # Freight vs Passenger Isolation
+                if st in ('cab', 'local', 'airport', 'rental', 'outstation', 'carpool'):
+                    if v_type in ('truck', 'bike'):
+                        continue  # Freight truck or bike cannot receive cab passenger requests
+                    if 'cab' not in v_caps and st not in v_caps:
+                        continue
+                elif st in ('transport', 'goods'):
+                    if v_type not in ('truck', 'tempo_traveller'):
+                        continue  # Passenger car/sedan cannot receive heavy freight requests
+                    if 'transport' not in v_caps:
+                        continue
+                elif st in ('packers', 'movers'):
+                    if v_type != 'truck':
+                        continue  # Two-wheelers and sedans cannot receive packers & movers requests
+                    if 'packers' not in v_caps and 'transport' not in v_caps:
+                        continue
+                elif st == 'parcel':
+                    if not active_veh.parcel_capable and 'parcel' not in v_caps:
+                        continue
 
             # Scheduled & Women-only checks
             if getattr(req, 'is_scheduled', False) and not pref.allow_scheduled:

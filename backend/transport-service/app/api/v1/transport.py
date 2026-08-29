@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.database import get_db
-from common.middleware.auth import get_current_user_optional, get_current_user, AuthenticatedUser
+from common.middleware.auth import get_current_user, AuthenticatedUser
 from app.services.transport_service import TransportService
 
 router = APIRouter(prefix="", tags=["Transport & Commercial Logistics"])
@@ -114,18 +114,6 @@ class VerifyPODRequest(BaseModel):
     longitude: float = 73.8567
 
 
-def get_user_id_str(user: Optional[Any], default: str = "00000000-0000-0000-0000-000000000001") -> str:
-    if not user:
-        return default
-    if hasattr(user, "id"):
-        return str(user.id)
-    if hasattr(user, "user_id"):
-        return str(user.user_id)
-    if isinstance(user, dict):
-        return str(user.get("id") or user.get("user_id") or user.get("sub") or default)
-    return str(user)
-
-
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/estimate", summary="Calculate authoritative transport estimate")
@@ -159,12 +147,11 @@ async def calculate_estimate(
 async def create_transport_order(
     req: CreateTransportOrderRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[Any] = Depends(get_current_user_optional),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-    user_id = get_user_id_str(current_user, "00000000-0000-0000-0000-000000000001")
     service = TransportService(db)
     return await service.create_transport_order(
-        customer_user_id=str(user_id),
+        customer_user_id=current_user.user_id_str,
         pickup_address=req.pickup_address,
         pickup_lat=req.pickup_lat,
         pickup_lng=req.pickup_lng,
@@ -211,11 +198,10 @@ async def get_transport_order(
 @router.get("/my-orders", summary="Get customer transport order history")
 async def get_my_transport_orders(
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[Any] = Depends(get_current_user_optional),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-    user_id = get_user_id_str(current_user, "00000000-0000-0000-0000-000000000001")
     service = TransportService(db)
-    return await service.get_customer_orders(str(user_id))
+    return await service.get_customer_orders(current_user.user_id_str)
 
 
 @router.post("/orders/{order_id}/quote", summary="Transporter submits commercial quote")
@@ -223,13 +209,12 @@ async def submit_quote(
     order_id: str,
     req: SubmitQuoteRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[Any] = Depends(get_current_user_optional),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-    user_id = get_user_id_str(current_user, "00000000-0000-0000-0000-000000000002")
     service = TransportService(db)
     return await service.submit_transporter_quote(
         order_id=order_id,
-        transporter_user_id=str(user_id),
+        transporter_user_id=current_user.user_id_str,
         driver_id=req.driver_id,
         vehicle_id=req.vehicle_id,
         amount=req.amount,
@@ -253,13 +238,12 @@ async def send_counter_offer(
     quote_id: str,
     req: CounterOfferRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[Any] = Depends(get_current_user_optional),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-    user_id = get_user_id_str(current_user, "00000000-0000-0000-0000-000000000001")
     service = TransportService(db)
     return await service.send_counter_offer(
         quote_id=quote_id,
-        actor_user_id=str(user_id),
+        actor_user_id=current_user.user_id_str,
         actor_type=req.actor_type,
         counter_amount=req.counter_amount,
         note=req.note,
@@ -271,14 +255,13 @@ async def select_quote(
     order_id: str,
     req: SelectQuoteRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[Any] = Depends(get_current_user_optional),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-    user_id = get_user_id_str(current_user, "00000000-0000-0000-0000-000000000001")
     service = TransportService(db)
     return await service.select_quote(
         order_id=order_id,
         quote_id=req.quote_id,
-        customer_user_id=str(user_id),
+        customer_user_id=current_user.user_id_str,
         payment_method=req.payment_method,
     )
 
@@ -288,13 +271,12 @@ async def update_transport_status(
     order_id: str,
     req: UpdateTransportStatusRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[Any] = Depends(get_current_user_optional),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-    user_id = get_user_id_str(current_user, req.driver_user_id or "00000000-0000-0000-0000-000000000002")
     service = TransportService(db)
     return await service.update_transport_status(
         order_id=order_id,
-        driver_user_id=str(user_id),
+        driver_user_id=current_user.user_id_str,
         next_status=req.next_status,
         notes=req.notes,
         latitude=req.latitude,

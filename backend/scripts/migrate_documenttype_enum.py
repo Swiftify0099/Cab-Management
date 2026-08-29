@@ -5,7 +5,7 @@ from sqlalchemy import text
 
 async def migrate_enum():
     async with async_session_maker() as session:
-        values_to_add = ["POLICE_VERIFICATION", "PERMIT", "PUC", "BANK_ACCOUNT"]
+        values_to_add = ["POLICE_VERIFICATION", "PERMIT", "PUC", "BANK_ACCOUNT", "FITNESS", "fitness"]
         for v in values_to_add:
             try:
                 # PostgreSQL requires commit per ALTER TYPE ADD VALUE or running outside a multi-statement transaction block

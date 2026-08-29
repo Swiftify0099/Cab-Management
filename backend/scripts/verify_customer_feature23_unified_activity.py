@@ -21,7 +21,8 @@ booking_service_path = os.path.join(backend_root, "booking-service")
 sys.path.insert(0, booking_service_path)
 
 from common.database import async_session_maker, engine
-from common.models.all_models import RideRequest, RideRequestStatus, Parcel, ParcelStatus
+from common.models.all_models import RideRequest, RideRequestStatus, Parcel, ParcelStatus, User, UserRole
+from common.middleware.auth import AuthenticatedUser
 from sqlalchemy import select, delete
 
 
@@ -33,6 +34,22 @@ async def run_feature23_tests():
     test_user_id = uuid.UUID("475d2f54-8a10-4e18-ab48-e877447bc9b6")
 
     async with async_session_maker() as session:
+        # Ensure test user exists
+        test_user = await session.get(User, test_user_id)
+        if not test_user:
+            test_user = User(
+                id=test_user_id,
+                phone="+919999988888",
+                role=UserRole.CUSTOMER,
+                is_active=True,
+                is_verified=True,
+            )
+            session.add(test_user)
+            await session.commit()
+            await session.refresh(test_user)
+
+        auth_user = AuthenticatedUser(user=test_user, payload={"sub": str(test_user.id)})
+
         # Step 1: Create test records across multiple services
         r1 = RideRequest(
             id=uuid.uuid4(),
@@ -54,8 +71,8 @@ async def run_feature23_tests():
             id=uuid.uuid4(),
             booking_owner_id=test_user_id,
             customer_id=test_user_id,
-            tracking_number=f"TRK-{str(uuid.uuid4())[:8].upper()}",
-            sender_name="Aditya Patil",
+            tracking_number="PXACTIVITY01",
+            sender_name="Activity Sender",
             sender_phone="+919876543210",
             sender_address="Sangli Market",
             receiver_name="Amit Patil",
@@ -71,9 +88,7 @@ async def run_feature23_tests():
         print("✓ Step 1: Seeded multi-service activity records (Ride + Parcel)")
 
         # Step 2: Query unified aggregation logic
-        from app.api.v1.activity import get_unified_activity, _FakeUser
-        fake_user = _FakeUser()
-        fake_user.id = test_user_id
+        from app.api.v1.activity import get_unified_activity
 
         # Query all
         feed = await get_unified_activity(
@@ -81,7 +96,7 @@ async def run_feature23_tests():
             status_filter="ALL",
             limit=20,
             offset=0,
-            current_user=fake_user,
+            current_user=auth_user,
             db=session,
         )
         assert feed["total"] >= 1, f"Expected at least 1 item, got {feed['total']}"
@@ -93,7 +108,7 @@ async def run_feature23_tests():
             status_filter="ALL",
             limit=20,
             offset=0,
-            current_user=fake_user,
+            current_user=auth_user,
             db=session,
         )
         for item in ride_feed["data"]:
@@ -106,7 +121,7 @@ async def run_feature23_tests():
             status_filter="ALL",
             limit=20,
             offset=0,
-            current_user=fake_user,
+            current_user=auth_user,
             db=session,
         )
         for item in parcel_feed["data"]:
@@ -119,7 +134,7 @@ async def run_feature23_tests():
             status_filter="COMPLETED",
             limit=20,
             offset=0,
-            current_user=fake_user,
+            current_user=auth_user,
             db=session,
         )
         for item in completed_feed["data"]:

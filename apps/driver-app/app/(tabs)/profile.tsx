@@ -29,6 +29,21 @@ import { RatingAndFeedbackService } from '../../src/services/ratingAndFeedbackSe
 
 const MENU_SECTIONS = [
   {
+    title: 'Service Workspaces & Logistics',
+    items: [
+      { icon: 'sliders', label: 'Service Authorization & Toggles', route: '/services-management', color: '#0284C7' },
+      { icon: 'award', label: 'Hotel Concierge & Luxury Chauffeur', route: '/hospitality', color: '#D97706' },
+      { icon: 'users', label: 'Carpooling & Shared Commuter Rides', route: '/carpool', color: '#10B981' },
+      { icon: 'briefcase', label: 'Corporate Commute & Tech Park Rosters', route: '/corporate', color: '#2563EB' },
+      { icon: 'navigation', label: 'Airport Transfers & Flight Radar', route: '/airport', color: '#0284C7' },
+      { icon: 'clock', label: 'Hourly Rentals & Outstation', route: '/rental-outstation', color: '#8B5CF6' },
+      { icon: 'truck', label: 'Commercial Freight & Logistics', route: '/transport', color: '#0284C7' },
+      { icon: 'box', label: 'Packers & Movers Relocation', route: '/packers', color: '#F97316' },
+      { icon: 'package', label: 'Parcel Delivery Orders', route: '/parcels', color: '#10B981' },
+      { icon: 'map', label: 'My Published Intercity Trips', route: '/my-trips', color: '#3B82F6' },
+    ],
+  },
+  {
     title: 'Vehicle & Documents',
     items: [
       { icon: 'truck', label: 'My Vehicles & Active Switch', route: '/vehicle', color: '#0EA5E9' },
@@ -63,11 +78,12 @@ const MENU_SECTIONS = [
     ],
   },
   {
-    title: 'Settings',
+    title: 'Settings & Security',
     items: [
+      { icon: 'shield', label: 'Safety & Emergency SOS Hub', route: '/safety', color: '#EF4444' },
       { icon: 'settings', label: 'App Settings', route: '/settings', color: '#475569' },
       { icon: 'bell', label: 'Notification Center & Alerts', route: '/notifications', color: '#F59E0B' },
-      { icon: 'shield', label: 'Privacy & Security', route: '/settings/privacy', color: '#10B981' },
+      { icon: 'lock', label: 'Privacy & Data Controls', route: '/settings/privacy', color: '#10B981' },
     ],
   },
 ]

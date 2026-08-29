@@ -34,7 +34,7 @@ interface BookingDetails {
     destination_city: string
     departure_time: string
     distance_km: number
-    pickup_lon: number
+    pickup_lng: number
     pickup_lat: number
   }
   driver?: {
@@ -72,7 +72,7 @@ export function LiveTrackPage() {
         status: 'started',
         seat_count: 2,
         total_fare: 980,
-        trip: { pickup_city: 'Pune', destination_city: 'Mumbai', departure_time: new Date().toISOString(), distance_km: 149, pickup_lon: 73.8567, pickup_lat: 18.5204 },
+        trip: { pickup_city: 'Pune', destination_city: 'Mumbai', departure_time: new Date().toISOString(), distance_km: 149, pickup_lng: 73.8567, pickup_lat: 18.5204 },
         driver: { full_name: 'Ramesh Patil', rating: 4.8, phone: '+919876543210', vehicle: 'Swift Dzire (White)', registration_number: 'MH12AB1234' },
       })
       tripIdRef.current = 'demo-trip'
@@ -152,7 +152,7 @@ export function LiveTrackPage() {
         <Map
           mapLib={maplibregl}
           initialViewState={{
-            longitude: location?.longitude || booking?.trip?.pickup_lon || 73.8567,
+            longitude: location?.longitude || booking?.trip?.pickup_lng || 73.8567,
             latitude: location?.latitude || booking?.trip?.pickup_lat || 18.5204,
             zoom: 14
           }}

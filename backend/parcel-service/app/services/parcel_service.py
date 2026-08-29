@@ -26,7 +26,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from common.models.all_models import (
     Parcel, ParcelStatus, ParcelProofOfDelivery, ParcelStatusHistory,
     Driver, DriverStatus, Vehicle, VehicleType,
-    User, CustomerProfile, WalletTransaction, LedgerType
+    User, CustomerProfile, WalletTransaction, LedgerType,
+    ParcelCategory,
 )
 from common.utils.redis_client import publish_event, cache_set, get_redis
 
@@ -307,7 +308,7 @@ class ParcelService:
             receiver_lng=receiver_lng,
             receiver_location=f"SRID=4326;POINT({receiver_lng} {receiver_lat})",
             delivery_instructions=delivery_instructions,
-            parcel_category=parcel_category.upper(),
+            parcel_category=parcel_category.value if hasattr(parcel_category, "value") else str(parcel_category).upper(),
             description=description,
             package_count=package_count,
             weight_kg=weight_kg,

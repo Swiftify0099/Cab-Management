@@ -277,8 +277,29 @@ async def delete_profile_photo(
 
     old_photo = profile.profile_photo
     if old_photo:
+        # Check if there is an active MediaAsset
+        ma_result = await db.execute(
+            select(MediaAsset).where(
+                MediaAsset.owner_id == current_user.id,
+                MediaAsset.media_type == MediaType.PROFILE_PHOTO,
+            )
+        )
+        ma_list = ma_result.scalars().all()
+        for ma in ma_list:
+            if ma.cloudinary_public_id:
+                try:
+                    await CloudinaryService.delete_asset(ma.cloudinary_public_id)
+                except Exception:
+                    pass
+            await db.delete(ma)
+
         await delete_upload(old_photo)
         profile.profile_photo = None
+        if hasattr(current_user, "_user") and current_user._user:
+            if hasattr(current_user._user, "avatar_url"):
+                current_user._user.avatar_url = None
+            if hasattr(current_user._user, "profile_photo"):
+                current_user._user.profile_photo = None
         await db.commit()
 
     return APIResponse(
@@ -416,11 +437,11 @@ async def add_route(
         pickup_label=data.pickup_label,
         pickup_address=data.pickup_address,
         pickup_lat=data.pickup_lat,
-        pickup_lon=data.pickup_lon,
+        pickup_lng=data.pickup_lng,
         drop_label=data.drop_label,
         drop_address=data.drop_address,
         drop_lat=data.drop_lat,
-        drop_lon=data.drop_lon,
+        drop_lng=data.drop_lng,
     )
     db.add(route)
     await db.commit()

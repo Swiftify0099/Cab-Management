@@ -6,6 +6,7 @@ from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.database import async_session_maker
+from common.middleware.auth import get_current_user, AuthenticatedUser
 
 router = APIRouter()
 
@@ -13,14 +14,6 @@ router = APIRouter()
 async def get_db():
     async with async_session_maker() as session:
         yield session
-
-
-class _FakeUser:
-    id = uuid.UUID("475d2f54-8a10-4e18-ab48-e877447bc9b6")
-
-
-async def get_current_user() -> _FakeUser:
-    return _FakeUser()
 
 
 def _outstation_service(db: AsyncSession = Depends(get_db)):
@@ -105,7 +98,7 @@ class CancelRequest(BaseModel):
 @router.post("/estimate")
 async def estimate_outstation(
     req: EstimateRequest,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_outstation_service),
 ):
     """
@@ -128,7 +121,7 @@ async def estimate_outstation(
 @router.post("/book")
 async def create_outstation_booking(
     req: BookingRequest,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_outstation_service),
 ):
     """Create confirmed outstation booking. Driver commits to full journey (all legs)."""
@@ -166,7 +159,7 @@ async def create_outstation_booking(
 @router.get("/booking/{booking_id}")
 async def get_outstation_booking(
     booking_id: str,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_outstation_service),
 ):
     """Get full outstation booking with legs, charges, driver info."""
@@ -234,7 +227,7 @@ async def complete_outstation(
 async def cancel_outstation(
     booking_id: str,
     req: CancelRequest,
-    current_user=Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     svc=Depends(_outstation_service),
 ):
     """Cancel outstation booking with wallet refund (if not yet in-progress)."""

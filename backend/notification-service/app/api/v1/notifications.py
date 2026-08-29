@@ -11,6 +11,7 @@ from sqlalchemy import select, update, delete, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.database import async_session_maker
+from common.middleware.auth import get_current_user, AuthenticatedUser
 from common.models.all_models import Notification, NotificationType
 
 router = APIRouter()
@@ -19,14 +20,6 @@ router = APIRouter()
 async def get_db():
     async with async_session_maker() as session:
         yield session
-
-
-class _FakeUser:
-    id = uuid.UUID("475d2f54-8a10-4e18-ab48-e877447bc9b6")
-
-
-async def get_current_user() -> _FakeUser:
-    return _FakeUser()
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -49,7 +42,7 @@ async def get_notifications(
     unread_only: bool = Query(False, description="Filter unread only"),
     limit: int = Query(30, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    current_user: _FakeUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Retrieve customer's notification feed with unread count."""
@@ -104,7 +97,7 @@ async def get_notifications(
 
 @router.get("/unread-count", summary="Get unread notification count for header badge")
 async def get_unread_count(
-    current_user: _FakeUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Returns badge count for the app header notification bell."""
@@ -120,7 +113,7 @@ async def get_unread_count(
 @router.post("/{notification_id}/read", summary="Mark single notification as read")
 async def mark_notification_read(
     notification_id: str,
-    current_user: _FakeUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Mark single notification read."""
@@ -137,7 +130,7 @@ async def mark_notification_read(
 
 @router.post("/mark-all-read", summary="Mark all notifications as read")
 async def mark_all_notifications_read(
-    current_user: _FakeUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Mark all unread notifications read for the customer."""
@@ -155,7 +148,7 @@ async def mark_all_notifications_read(
 @router.delete("/{notification_id}", summary="Delete/Dismiss notification")
 async def delete_notification(
     notification_id: str,
-    current_user: _FakeUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Dismiss/delete a notification from the feed."""
@@ -172,7 +165,7 @@ async def delete_notification(
 @router.post("/simulate", status_code=status.HTTP_201_CREATED, summary="Simulate an in-app & push notification (Dev Mode)")
 async def simulate_notification(
     req: NotificationSimulateRequest,
-    current_user: _FakeUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Simulate push notification creation for testing."""

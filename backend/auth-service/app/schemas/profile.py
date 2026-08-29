@@ -134,11 +134,11 @@ class SavedRouteCreate(BaseModel):
     pickup_label: str = Field(..., min_length=1, max_length=100)
     pickup_address: str = Field(..., min_length=5, max_length=500)
     pickup_lat: float = Field(..., ge=-90, le=90)
-    pickup_lon: float = Field(..., ge=-180, le=180)
+    pickup_lng: float = Field(..., ge=-180, le=180)
     drop_label: str = Field(..., min_length=1, max_length=100)
     drop_address: str = Field(..., min_length=5, max_length=500)
     drop_lat: float = Field(..., ge=-90, le=90)
-    drop_lon: float = Field(..., ge=-180, le=180)
+    drop_lng: float = Field(..., ge=-180, le=180)
 
 
 class SavedRouteResponse(BaseModel):
@@ -150,11 +150,12 @@ class SavedRouteResponse(BaseModel):
     pickup_label: str
     pickup_address: str
     pickup_lat: float
-    pickup_lon: float
+    pickup_lng: float
     drop_label: str
     drop_address: str
     drop_lat: float
-    drop_lon: float
+    drop_lng: float
+
 
 
 # ============================================================

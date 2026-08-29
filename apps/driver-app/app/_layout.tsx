@@ -26,6 +26,22 @@ import { DriverLifecycleService } from '../src/services/driverLifecycleService'
 SplashScreen.preventAutoHideAsync()
 
 // ── Inner component: runs after permissions are confirmed ──────────────────────
+import { useDriverSocket } from '../src/hooks/useDriverSocket'
+import IncomingRequestScreen from './incoming-request'
+
+function GlobalIncomingRequestOverlay() {
+  const { incomingRequest, clearRequest } = useDriverSocket()
+
+  if (!incomingRequest) return null
+
+  return (
+    <IncomingRequestScreen
+      request={incomingRequest}
+      onDismiss={clearRequest}
+    />
+  )
+}
+
 function AppReady() {
   // Register for push notifications ONLY after app is fully initialised
   useDriverNotifications()
@@ -40,7 +56,12 @@ function AppReady() {
     SplashScreen.hideAsync()
   }, [])
 
-  return <Stack screenOptions={{ headerShown: false }} />
+  return (
+    <>
+      <Stack screenOptions={{ headerShown: false }} />
+      <GlobalIncomingRequestOverlay />
+    </>
+  )
 }
 
 // ── Outer component: handles permission gate ───────────────────────────────────

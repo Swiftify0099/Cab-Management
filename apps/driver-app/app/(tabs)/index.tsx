@@ -19,8 +19,8 @@ import { LinearGradient } from 'expo-linear-gradient'
 import { router } from 'expo-router'
 import { api } from '../../src/api/client'
 import { useTheme } from '../../src/theme'
-import IncomingRequestScreen from '../incoming-request'
 import { useDriverSocket } from '../../src/hooks/useDriverSocket'
+import { DriverSocketService } from '../../src/services/driverSocketService'
 import { RideRequestService } from '../../src/services/rideRequestService'
 import {
   AvailabilityService,
@@ -111,7 +111,7 @@ export default function DriverHomeScreen() {
   const [radarCount, setRadarCount] = useState<number>(0)
   const [coverageLabel, setCoverageLabel] = useState<string>('All City Mode')
 
-  const { connected, incomingRequest, setIncomingRequest, clearRequest } = useDriverSocket()
+  const { connected } = useDriverSocket()
 
   // Subscribe to reactive availability store
   useEffect(() => {
@@ -136,7 +136,8 @@ export default function DriverHomeScreen() {
       ])
 
       if (pendingOffers.status === 'fulfilled' && Array.isArray(pendingOffers.value) && pendingOffers.value.length > 0) {
-        setIncomingRequest(pendingOffers.value[0])
+        const { RideQueueService } = require('../../src/services/rideQueueService')
+        RideQueueService.reconcileWithBackend(pendingOffers.value)
       }
 
       if (tripsRes.status === 'fulfilled') {
@@ -283,11 +284,6 @@ export default function DriverHomeScreen() {
           </Text>
           <ActivityIndicator size="small" color="#FEF3C7" />
         </View>
-      )}
-
-      {/* Incoming Request Overlay */}
-      {incomingRequest && (
-        <IncomingRequestScreen request={incomingRequest} onDismiss={clearRequest} />
       )}
 
       <ScrollView
@@ -737,13 +733,16 @@ export default function DriverHomeScreen() {
         visible={showRideDevSheet}
         onClose={() => setShowRideDevSheet(false)}
         onSimulateOffer={simOffer => {
-          setIncomingRequest(simOffer as any)
+          DriverSocketService.setIncomingRequest(simOffer as any)
         }}
         onSimulateStateChange={simState => {
           if (simState === 'DISMISSED') {
-            clearRequest()
-          } else if (incomingRequest) {
-            setIncomingRequest({ ...incomingRequest, simState } as any)
+            DriverSocketService.clearIncomingRequest()
+          } else {
+            const current = DriverSocketService.getState().incomingRequest
+            if (current) {
+              DriverSocketService.setIncomingRequest({ ...current, simState } as any)
+            }
           }
         }}
         onSimulateSocketToggle={isConnected => {

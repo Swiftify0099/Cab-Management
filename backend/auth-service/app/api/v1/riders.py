@@ -10,6 +10,7 @@ from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.database import async_session_maker
+from common.middleware.auth import get_current_user, AuthenticatedUser
 from common.models.all_models import SavedRider, FamilyMember, CompanyMembership, Company, User
 
 router = APIRouter()
@@ -18,14 +19,6 @@ router = APIRouter()
 async def get_db():
     async with async_session_maker() as session:
         yield session
-
-
-class _FakeUser:
-    id = uuid.UUID("475d2f54-8a10-4e18-ab48-e877447bc9b6")
-
-
-async def get_current_user() -> _FakeUser:
-    return _FakeUser()
 
 
 # ── Request / Response Schemas ────────────────────────────────────────────────
@@ -59,7 +52,7 @@ class ParticipantOption(BaseModel):
 
 @router.get("", summary="List all available booking participants (Self, Family, Saved Guests, Corporate)")
 async def list_participants(
-    current_user: _FakeUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -151,7 +144,7 @@ async def list_participants(
 @router.post("/saved", status_code=status.HTTP_201_CREATED, summary="Save a new contact/guest rider")
 async def create_saved_rider(
     data: SavedRiderCreate,
-    current_user: _FakeUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Save a guest rider/contact for quick reuse in booking."""
@@ -182,7 +175,7 @@ async def create_saved_rider(
 @router.delete("/saved/{rider_id}", summary="Delete a saved rider")
 async def delete_saved_rider(
     rider_id: str,
-    current_user: _FakeUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Remove a saved rider contact."""

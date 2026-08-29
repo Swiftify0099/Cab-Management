@@ -26,48 +26,10 @@ class RideStartServiceClass {
       if (res.data?.data) {
         return res.data.data
       }
+      throw new Error('No verification status returned from server.')
     } catch (err: any) {
-      console.warn('[RideStartService] getVerificationStatus error:', err.message)
-    }
-
-    // Default simulation state for offline demo testing
-    return {
-      ride_id: rideId,
-      status: 'pickup',
-      customer: {
-        name: 'Rahul S.',
-        rating: 4.9,
-        seats: 2,
-      },
-      vehicle: {
-        registration: 'MH 12 AB 1234',
-        model: 'Hyundai Verna',
-        verified: true,
-      },
-      pickup: {
-        address: 'Koregaon Park North Main Rd, Pune',
-        distance_meters: 24.5,
-        proximity_ok: true,
-        accuracy_meters: accuracy,
-        accuracy_ok: accuracy <= 40.0,
-      },
-      destination: {
-        address: 'Pune Airport Terminal 2 Departure Gate',
-        lat: 18.5822,
-        lng: 73.9197,
-      },
-      waiting_timer: {
-        arrived_at: new Date().toISOString(),
-        elapsed_seconds: 184,
-        no_show_eligible: false,
-        contact_attempts: 1,
-      },
-      pin: {
-        attempts_remaining: 5,
-        is_locked: false,
-        dev_pin: '4821',
-      },
-      fare: 544.0,
+      const detail = err.response?.data?.detail || err.message
+      throw new Error(detail || 'Could not fetch verification status.')
     }
   }
 
@@ -91,24 +53,10 @@ class RideStartServiceClass {
       if (res.data?.data) {
         return res.data.data
       }
+      return res.data
     } catch (err: any) {
       const detail = err.response?.data?.detail || err.message
       throw new Error(detail || 'Failed to verify PIN & start ride.')
-    }
-
-    // Fallback response
-    return {
-      success: true,
-      message: 'PIN verified! Trip started successfully.',
-      ride_id: rideId,
-      status: 'in_progress',
-      started_at: new Date().toISOString(),
-      destination: {
-        address: 'Pune Airport Terminal 2 Departure Gate',
-        lat: 18.5822,
-        lng: 73.9197,
-      },
-      fare: 544.0,
     }
   }
 }

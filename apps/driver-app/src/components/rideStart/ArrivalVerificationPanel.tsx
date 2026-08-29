@@ -136,8 +136,12 @@ export function ArrivalVerificationPanel({
       triggerShake()
       setErrorMessage(err.message || 'Incorrect PIN or verification failed.')
       // Refresh status attempts remaining
-      const updated = await RideStartService.getVerificationStatus(rideId, driverLat, driverLng, accuracy)
-      setStatusData(updated)
+      try {
+        const updated = await RideStartService.getVerificationStatus(rideId, driverLat, driverLng, accuracy)
+        if (updated) {
+          setStatusData(updated)
+        }
+      } catch {}
     } finally {
       setSubmitting(false)
     }

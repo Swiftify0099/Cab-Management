@@ -19,6 +19,7 @@ from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.database import async_session_maker
+from common.middleware.auth import get_current_user, AuthenticatedUser
 from common.models.all_models import (
     CustomerProfile, RideRequest, Booking, Parcel, PropertyBooking,
     TransportOrder, RentalBooking, OutstationBooking, AirportBooking,
@@ -32,14 +33,6 @@ async def get_db():
         yield session
 
 
-class _FakeUser:
-    id = uuid.UUID("475d2f54-8a10-4e18-ab48-e877447bc9b6")
-
-
-async def get_current_user() -> _FakeUser:
-    return _FakeUser()
-
-
 # ── Activity Query Handler ───────────────────────────────────────────────────
 
 @router.get("", summary="Get unified customer activity feed across all services")
@@ -48,7 +41,7 @@ async def get_unified_activity(
     status_filter: Optional[str] = Query("ALL", description="ALL, UPCOMING, ACTIVE, COMPLETED, CANCELLED"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    current_user: _FakeUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -289,7 +282,7 @@ async def get_unified_activity(
 async def get_activity_detail(
     reference_type: str,
     reference_id: str,
-    current_user: _FakeUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Retrieve detailed service record, receipt, and support link for any activity item."""

@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.database import get_db
 from common.middleware.auth import get_current_user, get_current_active_driver, AuthenticatedUser
+from common.models.all_models import ParcelCategory
 from common.schemas.base import SuccessResponse
 from app.services.parcel_service import ParcelService
 
@@ -59,7 +60,8 @@ class CreateParcelOrderRequest(BaseModel):
     receiver_lng: float
     delivery_instructions: Optional[str] = None
 
-    parcel_category: str = "GENERAL_BOX"
+    parcel_category: ParcelCategory = ParcelCategory.GENERAL_BOX
+
     description: Optional[str] = None
     package_count: int = Field(default=1, ge=1, le=50)
     weight_kg: float = Field(..., gt=0, le=3000)

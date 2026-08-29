@@ -223,11 +223,11 @@ export default function RoutePickerScreen() {
         pickup_label: pickup.label,
         pickup_address: pickup.address,
         pickup_lat: pickup.lat,
-        pickup_lon: pickup.lon,
+        pickup_lng: pickup.lon,
         drop_label: drop.label,
         drop_address: drop.address,
         drop_lat: drop.lat,
-        drop_lon: drop.lon,
+        drop_lng: drop.lon,
       })
       Alert.alert(t('common.success', 'Success'), `"${routeName.trim()}" has been saved!`, [
         { text: 'OK', onPress: () => router.back() },
