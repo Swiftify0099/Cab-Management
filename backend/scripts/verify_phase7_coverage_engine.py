@@ -220,7 +220,7 @@ async def run_phase7_coverage_engine_verification():
                 current_location=f"SRID=4326;POINT({pune_lng + 0.005} {pune_lat + 0.005})",
                 current_latitude=pune_lat + 0.005,
                 current_longitude=pune_lng + 0.005,
-                last_location_updated_at=now_utc,
+                last_location_updated_at=datetime.now(timezone.utc),
             )
             d_all._is_verified = True
             d_all._is_online = True
@@ -297,7 +297,7 @@ async def run_phase7_coverage_engine_verification():
                 current_location=f"SRID=4326;POINT({pune_lng + 0.008} {pune_lat + 0.008})",
                 current_latitude=pune_lat + 0.008,
                 current_longitude=pune_lng + 0.008,
-                last_location_updated_at=now_utc,
+                last_location_updated_at=datetime.now(timezone.utc),
             )
             d_pune._is_verified = True
             d_pune._is_online = True
@@ -352,7 +352,7 @@ async def run_phase7_coverage_engine_verification():
                 current_location=f"SRID=4326;POINT({pune_lng + 0.006} {pune_lat + 0.006})",
                 current_latitude=pune_lat + 0.006,
                 current_longitude=pune_lng + 0.006,
-                last_location_updated_at=now_utc,
+                last_location_updated_at=datetime.now(timezone.utc),
             )
             d_sangli._is_verified = True
             d_sangli._is_online = True
@@ -458,7 +458,7 @@ async def run_phase7_coverage_engine_verification():
                 current_location=f"SRID=4326;POINT({pune_lng + 0.004} {pune_lat + 0.004})",
                 current_latitude=pune_lat + 0.004,
                 current_longitude=pune_lng + 0.004,
-                last_location_updated_at=now_utc,
+                last_location_updated_at=datetime.now(timezone.utc),
             )
             d_hex_pune._is_verified = True
             d_hex_pune._is_online = True
@@ -512,7 +512,7 @@ async def run_phase7_coverage_engine_verification():
                 current_location=f"SRID=4326;POINT({pune_lng + 0.003} {pune_lat + 0.003})",
                 current_latitude=pune_lat + 0.003,
                 current_longitude=pune_lng + 0.003,
-                last_location_updated_at=now_utc,
+                last_location_updated_at=datetime.now(timezone.utc),
             )
             d_hex_remote._is_verified = True
             d_hex_remote._is_online = True
@@ -582,6 +582,14 @@ async def run_phase7_coverage_engine_verification():
     print("\n--- SECTION 5: Overlapping Multi-Mode Coverage Coexistence ---")
     async with async_session_maker() as session:
         try:
+            # Refresh timestamps for all 3 drivers
+            await session.execute(
+                update(Driver)
+                .where(Driver.id.in_([d_all.id, d_pune.id, d_hex_pune.id]))
+                .values(last_location_updated_at=datetime.now(timezone.utc))
+            )
+            await session.commit()
+
             engine = NearbyMatchingEngine(session)
             overlap_search = await engine.find_and_rank_nearby_drivers(
                 NearbySearchRequest(
