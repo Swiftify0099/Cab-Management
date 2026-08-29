@@ -71,6 +71,7 @@ from common.models.all_models import (
     RideOfferStatus,
     RideRequest,
     RideRequestStatus,
+    Trip,
     User,
     UserRole,
     Vehicle,
@@ -202,7 +203,25 @@ async def run_phase11_telematics_verification():
             estimated_fare=Decimal("560.00"),
             start_pin_plain="1234",
         )
-        session.add_all([ride_a, ride_b])
+        trip_a = Trip(
+            id=ride_a.id,
+            driver_id=d_driver_1.id,
+            vehicle_id=v_driver_1.id,
+            pickup_location="SRID=4326;POINT(73.8567 18.5204)",
+            pickup_latitude=18.5204,
+            pickup_longitude=73.8567,
+            pickup_address="Shivajinagar, Pune",
+            destination_location="SRID=4326;POINT(73.9197 18.5822)",
+            destination_latitude=18.5822,
+            destination_longitude=73.9197,
+            destination_address="Pune International Airport",
+            departure_time=datetime.now(timezone.utc),
+            total_seats=4,
+            available_seats=3,
+            base_fare=Decimal("420.00"),
+            per_km_rate=Decimal("15.00"),
+        )
+        session.add_all([ride_a, ride_b, trip_a])
         await session.commit()
 
     # ──────────────────────────────────────────────────────────────────────────

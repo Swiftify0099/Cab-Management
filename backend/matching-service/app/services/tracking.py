@@ -112,7 +112,7 @@ class TrackingService:
                 speed_kmh,
             )
 
-        # Persist to DB
+        # Persist to DB if trip exists in trips table
         point_wkt = f"SRID=4326;POINT({longitude} {latitude})"
         try:
             t_uuid = UUID(str(trip_id)) if trip_id and len(str(trip_id)) >= 32 else None
@@ -120,23 +120,26 @@ class TrackingService:
             b_uuid = UUID(str(booking_id)) if booking_id and len(str(booking_id)) >= 32 else None
 
             if t_uuid:
-                tracking = LiveTracking(
-                    trip_id=t_uuid,
-                    driver_id=d_uuid,
-                    booking_id=b_uuid,
-                    driver_location=point_wkt,
-                    latitude=latitude,
-                    longitude=longitude,
-                    speed_kmh=speed_kmh,
-                    heading=heading,
-                    accuracy_m=accuracy_m,
-                    altitude_m=altitude_m,
-                    eta_minutes=eta_minutes,
-                    distance_remaining_km=distance_remaining_km,
-                    recorded_at=datetime.utcnow(),
-                )
-                self.db.add(tracking)
-                await self.db.commit()
+                t_res = await self.db.execute(select(Trip).where(Trip.id == t_uuid))
+                trip_exists = t_res.scalar_one_or_none()
+                if trip_exists:
+                    tracking = LiveTracking(
+                        trip_id=t_uuid,
+                        driver_id=d_uuid,
+                        booking_id=b_uuid,
+                        driver_location=point_wkt,
+                        latitude=latitude,
+                        longitude=longitude,
+                        speed_kmh=speed_kmh,
+                        heading=heading,
+                        accuracy_m=accuracy_m,
+                        altitude_m=altitude_m,
+                        eta_minutes=eta_minutes,
+                        distance_remaining_km=distance_remaining_km,
+                        recorded_at=datetime.utcnow(),
+                    )
+                    self.db.add(tracking)
+                    await self.db.commit()
         except Exception as db_err:
             logger.debug("LiveTracking insert notice", exc_info=db_err)
 
