@@ -10,7 +10,7 @@ Endpoints for:
 - Cancellation
 """
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from pydantic import BaseModel, Field
 from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -98,6 +98,12 @@ class DeliveryVerifyRequest(BaseModel):
 class ArriveLocationRequest(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
+
+
+class RateParcelRequest(BaseModel):
+    score: int = Field(..., ge=1, le=5)
+    feedback: Optional[str] = None
+    tags: Optional[List[str]] = None
 
 
 class CancelParcelRequest(BaseModel):
@@ -327,6 +333,80 @@ async def verify_delivery(
         delivered_lng=body.delivered_lng,
     )
     return SuccessResponse(success=True, message="Delivery verified & completed", data=result)
+
+
+@router.post(
+    "/{parcel_id}/rate",
+    response_model=SuccessResponse,
+    summary="Customer: Rate a completed parcel delivery",
+)
+async def rate_parcel(
+    parcel_id: str,
+    body: RateParcelRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    service = ParcelService(db)
+    result = await service.rate_parcel(
+        parcel_id=parcel_id,
+        customer_user_id=current_user.user_id_str,
+        score=body.score,
+        feedback=body.feedback,
+        tags=body.tags,
+    )
+    return SuccessResponse(success=True, message="Parcel rated successfully", data=result)
+
+
+@router.post(
+    "/{parcel_id}/upload-pod",
+    response_model=SuccessResponse,
+    summary="Driver: Upload Proof of Delivery photo or digital signature to Cloudinary",
+)
+async def upload_pod_proof(
+    parcel_id: str,
+    file: UploadFile = File(...),
+    proof_type: str = Query("delivery_photo", pattern="^(delivery_photo|signature)$"),
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    service = ParcelService(db)
+    result = await service.upload_pod_proof(
+        parcel_id=parcel_id,
+        driver_user_id=current_user.user_id_str,
+        file=file,
+        proof_type=proof_type,
+    )
+    return SuccessResponse(success=True, message="Proof uploaded successfully", data=result)
+
+
+@router.get(
+    "/{parcel_id}/candidates",
+    response_model=SuccessResponse,
+    summary="Find eligible driver candidates for parcel dispatch",
+)
+async def get_parcel_candidates(
+    parcel_id: str,
+    radius_km: float = Query(15.0, ge=1.0, le=50.0),
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    service = ParcelService(db)
+    candidates = await service.find_eligible_drivers_for_parcel(parcel_id, radius_km=radius_km)
+    return SuccessResponse(success=True, message="Candidates found", data=candidates)
+
+
+@router.get(
+    "/track/{tracking_number}",
+    response_model=SuccessResponse,
+    summary="Track parcel shipment by tracking number",
+)
+async def track_parcel_by_number(
+    tracking_number: str,
+    db: AsyncSession = Depends(get_db),
+):
+    service = ParcelService(db)
+    data = await service.get_parcel_details(tracking_number)
+    return SuccessResponse(success=True, message="Tracking details retrieved", data=data)
 
 
 @router.post(

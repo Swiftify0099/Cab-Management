@@ -176,9 +176,87 @@ async def driver_arrived_at_terminal(
     payload: DriverArrivalPayload,
     db: AsyncSession = Depends(get_db),
 ):
-    """Driver registers arrival at terminal; starts 45-min free waiting grace period."""
+    """Driver registers arrival at terminal; verifies geofence and starts 45-min free waiting grace period."""
     data = await AirportService.driver_arrived_at_airport(
-        db, uuid.UUID(booking_id), uuid.UUID(payload.driver_id)
+        db=db,
+        booking_id=uuid.UUID(booking_id),
+        driver_id=uuid.UUID(payload.driver_id),
+        driver_lat=payload.driver_lat,
+        driver_lng=payload.driver_lng,
+    )
+    return {"status": "success", "data": data}
+
+@router.post("/booking/{booking_id}/extend-waiting")
+async def extend_waiting_window(
+    booking_id: str,
+    payload: ExtendWaitingPayload,
+    db: AsyncSession = Depends(get_db),
+):
+    """Extend airport waiting window with custom duration."""
+    data = await AirportService.extend_waiting(
+        db=db,
+        booking_id=uuid.UUID(booking_id),
+        additional_minutes=payload.additional_minutes,
+        reason=payload.reason,
+    )
+    return {"status": "success", "data": data}
+
+@router.post("/booking/{booking_id}/log-parking")
+async def log_terminal_parking(
+    booking_id: str,
+    payload: LogParkingPayload,
+    db: AsyncSession = Depends(get_db),
+):
+    """Log terminal parking fee and bay details."""
+    data = await AirportService.log_parking_fee(
+        db=db,
+        booking_id=uuid.UUID(booking_id),
+        driver_id=uuid.UUID(payload.driver_id),
+        amount=payload.amount,
+        bay_info=payload.bay_info,
+    )
+    return {"status": "success", "data": data}
+
+@router.post("/booking/{booking_id}/meet-passenger")
+async def meet_passenger_at_terminal(
+    booking_id: str,
+    payload: DriverActionPayload,
+    db: AsyncSession = Depends(get_db),
+):
+    """Passenger meet & greet handshake with chauffeur."""
+    data = await AirportService.meet_passenger(
+        db=db,
+        booking_id=uuid.UUID(booking_id),
+        driver_id=uuid.UUID(payload.driver_id),
+    )
+    return {"status": "success", "data": data}
+
+@router.post("/booking/{booking_id}/start")
+async def start_airport_trip(
+    booking_id: str,
+    payload: StartTripPayload,
+    db: AsyncSession = Depends(get_db),
+):
+    """Start airport transfer ride; computes overstay waiting fees."""
+    data = await AirportService.start_trip(
+        db=db,
+        booking_id=uuid.UUID(booking_id),
+        driver_id=uuid.UUID(payload.driver_id),
+        simulated_waiting_mins=payload.simulated_waiting_mins,
+    )
+    return {"status": "success", "data": data}
+
+@router.post("/booking/{booking_id}/complete")
+async def complete_airport_trip(
+    booking_id: str,
+    payload: DriverActionPayload,
+    db: AsyncSession = Depends(get_db),
+):
+    """Complete airport transfer ride and settle driver earnings (80/20 split)."""
+    data = await AirportService.complete_trip(
+        db=db,
+        booking_id=uuid.UUID(booking_id),
+        driver_id=uuid.UUID(payload.driver_id),
     )
     return {"status": "success", "data": data}
 

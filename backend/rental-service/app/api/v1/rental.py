@@ -46,9 +46,18 @@ class BookingRequest(BaseModel):
     business_purpose: Optional[str] = None
 
 
+class DriverArrivedRequest(BaseModel):
+    driver_id: str
+
+
 class StartRequest(BaseModel):
     driver_id: str
     otp: Optional[str] = None
+
+
+class ExtendRentalRequest(BaseModel):
+    additional_minutes: int
+    additional_km: Optional[float] = None
 
 
 class KMUpdateRequest(BaseModel):
@@ -154,6 +163,20 @@ async def get_active_rental(
     return {"data": result, "has_active": result is not None}
 
 
+@router.post("/booking/{booking_id}/driver-arrived")
+async def driver_arrived_at_pickup(
+    booking_id: str,
+    req: DriverArrivedRequest,
+    svc=Depends(_rental_service),
+):
+    """Driver marks arrival at customer pickup point."""
+    try:
+        result = await svc.driver_arrive_at_pickup(booking_id, req.driver_id)
+        return {"data": result, "message": "Driver arrived at pickup point"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.post("/booking/{booking_id}/start")
 async def start_rental(
     booking_id: str,
@@ -168,6 +191,21 @@ async def start_rental(
     try:
         result = await svc.start_rental(booking_id, req.driver_id, req.otp)
         return {"data": result, "message": "Rental started — timer running"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/booking/{booking_id}/extend")
+async def extend_rental_package(
+    booking_id: str,
+    req: ExtendRentalRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    svc=Depends(_rental_service),
+):
+    """Extend active rental duration and included KM."""
+    try:
+        result = await svc.extend_rental(booking_id, req.additional_minutes, req.additional_km)
+        return {"data": result, "message": f"Rental extended by {req.additional_minutes} minutes"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

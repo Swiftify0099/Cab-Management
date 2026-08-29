@@ -1216,6 +1216,12 @@ class Parcel(Base, UUIDMixin, TimestampMixin):
     image_path: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     parcel_photo: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
 
+    # Rating & Feedback
+    customer_rating: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # 1 to 5 stars
+    customer_feedback: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    customer_rating_tags: Mapped[Optional[List[str]]] = mapped_column(ARRAY(String), nullable=True)
+    rated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # Cancellation & Failure
     cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     cancellation_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

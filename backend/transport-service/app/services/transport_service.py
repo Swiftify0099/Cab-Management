@@ -1252,7 +1252,7 @@ class TransportService:
         return {
             "success": True,
             "order_id": str(order.id),
-            "status": "LOADED",
+            "status": order.status.value,
             "pickup_otp_verified_at": now_utc.isoformat(),
         }
 
@@ -1436,7 +1436,7 @@ class TransportService:
             "success": True,
             "order_id": str(order.id),
             "order_reference": order.order_reference,
-            "status": "DELIVERED",
+            "status": order.status.value,
             "delivered_at": now_utc.isoformat(),
             "pod_id": str(pod.id),
             "receiver_name": receiver_name,

@@ -1,7 +1,8 @@
 
 import sys, os, asyncio
-sys.path.insert(0, 'backend/common')
-sys.path.insert(0, 'backend')
+_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(_dir, 'common'))
+sys.path.insert(0, _dir)
 from sqlalchemy import text
 from common.database import engine, Base
 import common.models.all_models

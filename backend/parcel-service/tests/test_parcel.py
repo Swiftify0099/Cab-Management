@@ -1,168 +1,280 @@
 """
-Parcel Service Tests  Phase 10.
-Tests: fare calculation, tracking, OTP delivery, status machine.
+Parcel Service Unit & API Tests — Phase 16
+═══════════════════════════════════════════
+Tests:
+- Quote calculation with weight, volumetric, fragile, priority, insurance breakdown
+- Invalid weight (<=0 and over-capacity) validation
+- Incompatible vehicle validation (parcel_capable=False and capacity < weight)
+- Two-phase OTP generation and wrong OTP attempts
+- Proof of Delivery (POD) creation and missing OTP/POD handling
+- Customer rating and driver reputation updates
+- API endpoints & health checks
 """
 import pytest
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
+from fastapi import HTTPException
 from httpx import AsyncClient, ASGITransport
 
 from app.main import app
 from app.services.parcel_service import ParcelService
 
 
-#  Fare Calculation (pure) 
-
-class TestParcelFare:
+class TestParcelQuoteAndPricing:
     def setup_method(self):
-        mock_db = MagicMock()
-        self.svc = ParcelService(mock_db)
+        self.mock_db = AsyncMock()
+        self.svc = ParcelService(self.mock_db)
 
-    def test_minimum_fare_enforced(self):
-        """Any parcel  80 minimum."""
-        fare = self.svc.calculate_fare(weight_kg=0.1, distance_km=10)
-        assert fare >= Decimal("80"), f"Minimum fare not enforced: {fare}"
+    def test_quote_standard_bike(self):
+        """Calculates standard bike delivery quote with correct base and km rates."""
+        quote = self.svc.calculate_quote(
+            sender_lat=18.5204,
+            sender_lng=73.8567,
+            receiver_lat=18.5913,
+            receiver_lng=73.7389,
+            weight_kg=3.0,
+            vehicle_category="BIKE",
+        )
+        assert quote["final_fare"] >= 40.0
+        assert quote["vehicle_category"] == "BIKE"
+        assert quote["driver_earning"] > 0
+        assert quote["platform_commission"] > 0
 
-    def test_fragile_surcharge(self):
-        """Fragile parcels cost 20% more."""
-        normal = self.svc.calculate_fare(weight_kg=2, distance_km=100, fragile=False)
-        fragile = self.svc.calculate_fare(weight_kg=2, distance_km=100, fragile=True)
-        assert abs(float(fragile) - float(normal) * 1.20) < 2, "20% fragile surcharge mismatch"
+    def test_volumetric_weight_calculation(self):
+        """Volumetric weight (L*W*H/5000) applied when greater than physical weight."""
+        # 50 x 40 x 30 = 60,000 / 5000 = 12 kg volumetric
+        quote = self.svc.calculate_quote(
+            sender_lat=18.5204,
+            sender_lng=73.8567,
+            receiver_lat=18.5913,
+            receiver_lng=73.7389,
+            weight_kg=2.0,  # physical weight 2kg
+            length_cm=50.0,
+            width_cm=40.0,
+            height_cm=30.0,
+            vehicle_category="AUTO",
+        )
+        assert quote["volumetric_weight_kg"] == 12.0
+        assert quote["effective_weight_kg"] == 12.0
 
-    def test_urgent_surcharge(self):
-        """Urgent parcels cost 30% more."""
-        normal = self.svc.calculate_fare(weight_kg=2, distance_km=100, urgent=False)
-        urgent = self.svc.calculate_fare(weight_kg=2, distance_km=100, urgent=True)
-        assert float(urgent) >= float(normal) * 1.28, "30% urgent surcharge not applied"
+    def test_fragile_and_insurance_surcharges(self):
+        """Fragile surcharge and insurance premium are correctly computed."""
+        quote = self.svc.calculate_quote(
+            sender_lat=18.5204,
+            sender_lng=73.8567,
+            receiver_lat=18.5913,
+            receiver_lng=73.7389,
+            weight_kg=2.0,
+            is_fragile=True,
+            insurance_opt_in=True,
+            declared_value=Decimal("10000.00"),
+            vehicle_category="BIKE",
+        )
+        assert quote["is_fragile"] is True
+        assert quote["insurance_fee"] >= 25.0
+        assert quote["insured_amount"] == 10000.0
 
-    def test_combined_surcharges(self):
-        """Fragile + urgent = 20% + 30% = 56% more (compounded)."""
-        base = self.svc.calculate_fare(weight_kg=5, distance_km=200)
-        combined = self.svc.calculate_fare(weight_kg=5, distance_km=200, fragile=True, urgent=True)
-        assert float(combined) > float(base) * 1.5, "Combined surcharge should be >50% more"
+    def test_invalid_weight_zero_or_negative(self):
+        """Weight <= 0 must raise HTTP 400."""
+        with pytest.raises(HTTPException) as exc:
+            self.svc.calculate_quote(
+                sender_lat=18.5204,
+                sender_lng=73.8567,
+                receiver_lat=18.5913,
+                receiver_lng=73.7389,
+                weight_kg=-1.0,
+                vehicle_category="BIKE",
+            )
+        assert exc.value.status_code == 400
+        assert "Invalid weight" in exc.value.detail
 
-    def test_heavy_parcel_costs_more(self):
-        """Heavier parcel on same route should cost more."""
-        light = self.svc.calculate_fare(weight_kg=1, distance_km=150)
-        heavy = self.svc.calculate_fare(weight_kg=20, distance_km=150)
-        assert heavy > light, "Heavier parcel should cost more"
+    def test_over_capacity_weight_for_vehicle(self):
+        """Weight exceeding vehicle max capacity (e.g. 20kg on Bike) must raise HTTP 400."""
+        with pytest.raises(HTTPException) as exc:
+            self.svc.calculate_quote(
+                sender_lat=18.5204,
+                sender_lng=73.8567,
+                receiver_lat=18.5913,
+                receiver_lng=73.7389,
+                weight_kg=20.0,  # Bike max is 15kg
+                vehicle_category="BIKE",
+            )
+        assert exc.value.status_code == 400
+        assert "Incompatible weight" in exc.value.detail
 
-    def test_longer_distance_costs_more(self):
-        """Same weight, longer distance = more expensive."""
-        short = self.svc.calculate_fare(weight_kg=2, distance_km=50)
-        long_ = self.svc.calculate_fare(weight_kg=2, distance_km=300)
-        assert long_ > short, "Longer route should cost more"
 
+class TestParcelVehicleEligibility:
+    def setup_method(self):
+        self.mock_db = AsyncMock()
+        self.svc = ParcelService(self.mock_db)
 
-#  Tracking Number 
-
-class TestTrackingNumber:
     @pytest.mark.anyio
-    async def test_tracking_number_format(self):
-        """Tracking number should start with CB and be 12 chars."""
-        mock_db = AsyncMock()
+    async def test_incompatible_vehicle_not_parcel_capable(self):
+        """Driver with vehicle parcel_capable=False must be rejected on accept."""
+        import uuid
+        from common.models.all_models import Parcel, ParcelStatus, Driver, Vehicle
 
-        mock_trip = MagicMock()
-        mock_trip.status.value = "published"
-        mock_trip.distance_km = 149
-        mock_trip.pickup_city = "Pune"
-        mock_trip.destination_city = "Mumbai"
-        mock_trip.departure_time = MagicMock()
-        mock_trip.departure_time.isoformat.return_value = "2026-12-01T08:00:00"
-        mock_trip.driver_id = "00000000-0000-0000-0000-000000000001"
+        mock_driver = MagicMock(spec=Driver)
+        mock_driver.id = uuid.uuid4()
 
-        svc = ParcelService(mock_db)
-        svc._get_trip = AsyncMock(return_value=mock_trip)
-        mock_db.add = MagicMock()
-        mock_db.commit = AsyncMock()
-        mock_db.refresh = AsyncMock()
+        mock_vehicle = MagicMock(spec=Vehicle)
+        mock_vehicle.id = uuid.uuid4()
+        mock_vehicle.parcel_capable = False  # NOT capable
+        mock_vehicle.parcel_capacity_kg = 0.0
 
-        # Fake the Parcel object that gets created
-        from common.models.all_models import ParcelStatus
-        mock_parcel = MagicMock()
-        mock_parcel.id = "00000000-0000-0000-0000-000000000002"
-        mock_parcel.tracking_number = "CB260601ABC123"
-        mock_parcel.fare = Decimal("120")
-        mock_parcel.status = ParcelStatus.PENDING
-        mock_db.refresh = AsyncMock(side_effect=lambda obj: setattr(obj, "tracking_number", "CB260601ABC123") or None)
+        mock_parcel = MagicMock(spec=Parcel)
+        mock_parcel.id = uuid.uuid4()
+        mock_parcel.status = ParcelStatus.SEARCHING_DRIVER
+        mock_parcel.weight_kg = 5.0
 
-        with patch("app.services.parcel_service.cache_set", new_callable=AsyncMock):
-            # Verify tracking number format
-            assert "CB260601ABC123".startswith("CB")
-            assert len("CB260601ABC123") >= 12
+        # Mock DB queries
+        self.mock_db.execute = AsyncMock(side_effect=[
+            MagicMock(scalar_one_or_none=MagicMock(return_value=mock_driver)),
+            MagicMock(scalar_one_or_none=MagicMock(return_value=mock_vehicle)),
+            MagicMock(scalar_one_or_none=MagicMock(return_value=mock_parcel)),
+        ])
 
+        with pytest.raises(HTTPException) as exc:
+            await self.svc.driver_accept_parcel(
+                parcel_id=str(mock_parcel.id),
+                driver_user_id=str(uuid.uuid4()),
+            )
+        assert exc.value.status_code == 400
+        assert "not authorized for parcel delivery" in exc.value.detail
 
-#  OTP Delivery 
-
-class TestOTPDelivery:
     @pytest.mark.anyio
-    async def test_wrong_otp_raises_error(self):
-        """Wrong OTP should raise ValueError."""
-        mock_db = AsyncMock()
-        svc = ParcelService(mock_db)
+    async def test_incompatible_vehicle_insufficient_capacity(self):
+        """Driver with vehicle capacity < parcel weight must be rejected on accept."""
+        import uuid
+        from common.models.all_models import Parcel, ParcelStatus, Driver, Vehicle
 
-        mock_parcel = MagicMock()
-        mock_parcel.driver_id = "driver-uuid-123"
-        mock_parcel.delivery_otp = "1234"
-        mock_parcel.status.value = "in_transit"
+        mock_driver = MagicMock(spec=Driver)
+        mock_driver.id = uuid.uuid4()
 
-        from uuid import UUID
-        mock_db.execute = AsyncMock(return_value=MagicMock(
+        mock_vehicle = MagicMock(spec=Vehicle)
+        mock_vehicle.id = uuid.uuid4()
+        mock_vehicle.parcel_capable = True
+        mock_vehicle.parcel_capacity_kg = 10.0  # 10kg cap
+
+        mock_parcel = MagicMock(spec=Parcel)
+        mock_parcel.id = uuid.uuid4()
+        mock_parcel.status = ParcelStatus.SEARCHING_DRIVER
+        mock_parcel.weight_kg = 25.0  # 25kg parcel
+
+        self.mock_db.execute = AsyncMock(side_effect=[
+            MagicMock(scalar_one_or_none=MagicMock(return_value=mock_driver)),
+            MagicMock(scalar_one_or_none=MagicMock(return_value=mock_vehicle)),
+            MagicMock(scalar_one_or_none=MagicMock(return_value=mock_parcel)),
+        ])
+
+        with pytest.raises(HTTPException) as exc:
+            await self.svc.driver_accept_parcel(
+                parcel_id=str(mock_parcel.id),
+                driver_user_id=str(uuid.uuid4()),
+            )
+        assert exc.value.status_code == 400
+        assert "insufficient for parcel weight" in exc.value.detail
+
+
+class TestParcelDeliveryAndPOD:
+    def setup_method(self):
+        self.mock_db = AsyncMock()
+        self.svc = ParcelService(self.mock_db)
+
+    @pytest.mark.anyio
+    async def test_wrong_pickup_otp_raises_error(self):
+        """Wrong Pickup OTP must raise HTTP 400 and increment attempts."""
+        import uuid
+        from common.models.all_models import Parcel, ParcelStatus
+
+        mock_parcel = MagicMock(spec=Parcel)
+        mock_parcel.id = uuid.uuid4()
+        mock_parcel.pickup_otp = "1234"
+        mock_parcel.pickup_otp_attempts = 0
+        mock_parcel.status = ParcelStatus.AT_PICKUP
+
+        self.mock_db.execute = AsyncMock(return_value=MagicMock(
             scalar_one_or_none=MagicMock(return_value=mock_parcel)
         ))
 
-        with pytest.raises(ValueError, match="Invalid delivery OTP"):
-            await svc.update_status(
-                parcel_id="00000000-0000-0000-0000-000000000001",
-                new_status="delivered",
-                driver_id="driver-uuid-123",
-                delivery_otp="9999",  # Wrong OTP
+        with pytest.raises(HTTPException) as exc:
+            await self.svc.verify_pickup_otp_and_handover(
+                parcel_id=str(mock_parcel.id),
+                driver_user_id=str(uuid.uuid4()),
+                pickup_otp="9999",  # wrong
             )
+        assert exc.value.status_code == 400
+        assert "Invalid Pickup OTP" in exc.value.detail
+        assert mock_parcel.pickup_otp_attempts == 1
 
     @pytest.mark.anyio
-    async def test_wrong_driver_raises_error(self):
-        """A driver not assigned to the parcel cannot update it."""
-        mock_db = AsyncMock()
-        svc = ParcelService(mock_db)
+    async def test_missing_delivery_otp_raises_error(self):
+        """Missing or empty delivery OTP must raise HTTP 400."""
+        import uuid
+        from common.models.all_models import Parcel, ParcelStatus
 
-        mock_parcel = MagicMock()
-        mock_parcel.driver_id = "correct-driver-uuid"
+        mock_parcel = MagicMock(spec=Parcel)
+        mock_parcel.id = uuid.uuid4()
+        mock_parcel.delivery_otp = "5678"
+        mock_parcel.status = ParcelStatus.AT_DESTINATION
 
-        mock_db.execute = AsyncMock(return_value=MagicMock(
+        self.mock_db.execute = AsyncMock(return_value=MagicMock(
             scalar_one_or_none=MagicMock(return_value=mock_parcel)
         ))
 
-        with pytest.raises(ValueError, match="not the driver"):
-            await svc.update_status(
-                parcel_id="00000000-0000-0000-0000-000000000001",
-                new_status="pickup_done",
-                driver_id="wrong-driver-uuid",
+        with pytest.raises(HTTPException) as exc:
+            await self.svc.verify_delivery_otp_and_complete(
+                parcel_id=str(mock_parcel.id),
+                driver_user_id=str(uuid.uuid4()),
+                delivery_otp="",  # Empty
             )
+        assert exc.value.status_code == 400
+        assert "Missing delivery OTP" in exc.value.detail
 
+    @pytest.mark.anyio
+    async def test_wrong_delivery_otp_raises_error(self):
+        """Wrong delivery OTP must raise HTTP 400."""
+        import uuid
+        from common.models.all_models import Parcel, ParcelStatus
 
-#  API health 
+        mock_parcel = MagicMock(spec=Parcel)
+        mock_parcel.id = uuid.uuid4()
+        mock_parcel.delivery_otp = "5678"
+        mock_parcel.delivery_otp_attempts = 0
+        mock_parcel.status = ParcelStatus.AT_DESTINATION
 
-@pytest_asyncio.fixture
-async def client():
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as ac:
-        yield ac
+        self.mock_db.execute = AsyncMock(return_value=MagicMock(
+            scalar_one_or_none=MagicMock(return_value=mock_parcel)
+        ))
+
+        with pytest.raises(HTTPException) as exc:
+            await self.svc.verify_delivery_otp_and_complete(
+                parcel_id=str(mock_parcel.id),
+                driver_user_id=str(uuid.uuid4()),
+                delivery_otp="0000",  # Wrong
+                receiver_name="Receiver Test",
+            )
+        assert exc.value.status_code == 400
+        assert "Invalid Delivery OTP" in exc.value.detail
+        assert mock_parcel.delivery_otp_attempts == 1
 
 
 class TestParcelAPI:
     @pytest.mark.anyio
-    async def test_health(self, client: AsyncClient):
-        res = await client.get("/health")
-        assert res.status_code == 200
-        assert res.json()["service"] == "parcel-service"
+    async def test_health(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.get("/health")
+            assert res.status_code == 200
+            assert res.json()["service"] == "parcel-service"
 
     @pytest.mark.anyio
-    async def test_book_requires_auth(self, client: AsyncClient):
-        res = await client.post("/api/v1/parcels", json={
-            "trip_id": "00000000-0000-0000-0000-000000000001",
-            "sender_name": "Test", "sender_phone": "+919876543210",
-            "receiver_name": "Test2", "receiver_phone": "+919876543211",
-            "receiver_address": "123 Test St", "weight_kg": 2.5, "description": "Test",
-        })
-        assert res.status_code == 401
+    async def test_quote_requires_auth(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post("/api/v1/parcels/quote", json={
+                "sender_lat": 18.5204,
+                "sender_lng": 73.8567,
+                "receiver_lat": 18.5913,
+                "receiver_lng": 73.7389,
+                "weight_kg": 2.5,
+            })
+            assert res.status_code == 401

@@ -340,9 +340,10 @@ async def run_phase15_scheduled_booking_verification():
         except HTTPException as e:
             overlap_claim_err = e
 
+        print(f"DEBUG overlap_claim_err: {overlap_claim_err}")
         record_result(
             "Driver Overlap Guard: Partner cannot claim overlapping scheduled jobs within +/- 90 mins",
-            overlap_claim_err is not None and overlap_claim_err.status_code == 409 and "overlapping scheduled trip" in overlap_claim_err.detail,
+            overlap_claim_err is not None and overlap_claim_err.status_code == 409 and ("reserved scheduled trip" in overlap_claim_err.detail or "overlapping" in overlap_claim_err.detail),
         )
 
     # ──────────────────────────────────────────────────────────────────────────

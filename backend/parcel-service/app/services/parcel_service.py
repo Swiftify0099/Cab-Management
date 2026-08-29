@@ -27,9 +27,10 @@ from common.models.all_models import (
     Parcel, ParcelStatus, ParcelProofOfDelivery, ParcelStatusHistory,
     Driver, DriverStatus, Vehicle, VehicleType,
     User, CustomerProfile, WalletTransaction, LedgerType,
-    ParcelCategory,
+    ParcelCategory, MediaAsset, MediaOwnerType, MediaType,
 )
 from common.utils.redis_client import publish_event, cache_set, get_redis
+from common.utils.cloudinary_service import CloudinaryService
 
 logger = structlog.get_logger(__name__)
 
@@ -137,6 +138,9 @@ class ParcelService:
         """
         Calculates authoritative logistics fare breakdown.
         """
+        if weight_kg is None or weight_kg <= 0:
+            raise HTTPException(status_code=400, detail="Invalid weight: Parcel weight must be greater than 0 kg")
+
         v_cat = vehicle_category.upper()
         if v_cat not in VEHICLE_CONFIGS:
             v_cat = "BIKE"
@@ -151,6 +155,13 @@ class ParcelService:
         if length_cm and width_cm and height_cm and length_cm > 0 and width_cm > 0 and height_cm > 0:
             volumetric_kg = round((length_cm * width_cm * height_cm) / 5000.0, 2)
         effective_weight_kg = max(weight_kg, volumetric_kg)
+
+        # Enforce maximum capacity limit for vehicle category
+        if effective_weight_kg > cfg["max_weight_kg"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Incompatible weight: Effective weight {effective_weight_kg}kg exceeds maximum capacity {cfg['max_weight_kg']}kg for {v_cat} category. Please select a larger vehicle."
+            )
 
         # 1. Base Fare
         base_fare = cfg["base_fare"]
@@ -449,9 +460,20 @@ class ParcelService:
         if parcel.status not in (ParcelStatus.SEARCHING_DRIVER, ParcelStatus.CREATED, ParcelStatus.PENDING):
             raise HTTPException(status_code=409, detail=f"Parcel already assigned or completed (status: {parcel.status.value})")
 
+        # Incompatible Vehicle Verification
+        if not vehicle:
+            raise HTTPException(status_code=400, detail="Incompatible vehicle: Driver does not have a registered vehicle")
+        if not vehicle.parcel_capable:
+            raise HTTPException(status_code=400, detail="Incompatible vehicle: Vehicle is not authorized for parcel delivery")
+        if vehicle.parcel_capacity_kg is not None and vehicle.parcel_capacity_kg < parcel.weight_kg:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Incompatible vehicle: Vehicle parcel capacity ({vehicle.parcel_capacity_kg}kg) is insufficient for parcel weight ({parcel.weight_kg}kg)"
+            )
+
         old_status = parcel.status.value
         parcel.driver_id = driver.id
-        parcel.vehicle_id = vehicle.id if vehicle else None
+        parcel.vehicle_id = vehicle.id
         parcel.status = ParcelStatus.DRIVER_ASSIGNED
 
         history = ParcelStatusHistory(
@@ -689,13 +711,21 @@ class ParcelService:
         if parcel.status == ParcelStatus.DELIVERED:
             return {"success": True, "status": ParcelStatus.DELIVERED.value, "message": "Already delivered"}
 
+        # Validate delivery OTP presence
+        if not delivery_otp or not str(delivery_otp).strip():
+            raise HTTPException(status_code=400, detail="Missing delivery OTP: Delivery OTP is required to complete delivery")
+
+        final_receiver = (receiver_name or parcel.receiver_name or "").strip()
+        if not final_receiver:
+            raise HTTPException(status_code=400, detail="Missing POD information: Receiver name is required for Proof of Delivery")
+
         if parcel.delivery_otp_attempts >= 3:
             raise HTTPException(status_code=403, detail="Delivery OTP locked due to too many failed attempts. Contact support.")
 
-        if parcel.delivery_otp != delivery_otp.strip():
+        if parcel.delivery_otp != str(delivery_otp).strip():
             parcel.delivery_otp_attempts += 1
             await self.db.commit()
-            raise HTTPException(status_code=400, detail=f"Invalid Delivery OTP. {3 - parcel.delivery_otp_attempts} attempts remaining.")
+            raise HTTPException(status_code=400, detail=f"Invalid Delivery OTP. {max(0, 3 - parcel.delivery_otp_attempts)} attempts remaining.")
 
         now_utc = datetime.now(timezone.utc)
         parcel.status = ParcelStatus.DELIVERED
@@ -707,7 +737,7 @@ class ParcelService:
             id=uuid.uuid4(),
             parcel_id=parcel.id,
             driver_id=parcel.driver_id,
-            receiver_name=receiver_name or parcel.receiver_name,
+            receiver_name=final_receiver,
             otp_verified=True,
             signature_url=signature_url,
             delivery_photo_url=delivery_photo_url,
@@ -729,7 +759,7 @@ class ParcelService:
             from_status=ParcelStatus.AT_DESTINATION.value,
             to_status=ParcelStatus.DELIVERED.value,
             actor_role="DRIVER",
-            notes=f"Delivery confirmed via OTP to {receiver_name or parcel.receiver_name}",
+            notes=f"Delivery confirmed via OTP to {final_receiver}",
             latitude=delivered_lat,
             longitude=delivered_lng,
         )
@@ -781,7 +811,7 @@ class ParcelService:
                     "tracking_number": parcel.tracking_number,
                     "status": ParcelStatus.DELIVERED.value,
                     "delivered_at": now_utc.isoformat(),
-                    "receiver_name": receiver_name or parcel.receiver_name,
+                    "receiver_name": final_receiver,
                     "fare": float(parcel.fare),
                 }
             )
@@ -908,6 +938,12 @@ class ParcelService:
             "delivery_otp": parcel.delivery_otp,
             "driver": driver_data,
             "pod": pod_data,
+            "rating": {
+                "score": parcel.customer_rating,
+                "feedback": parcel.customer_feedback,
+                "tags": parcel.customer_rating_tags or [],
+                "rated_at": parcel.rated_at.isoformat() if parcel.rated_at else None,
+            } if parcel.customer_rating is not None else None,
             "timeline": history,
             "created_at": parcel.created_at.isoformat(),
         }
@@ -941,6 +977,7 @@ class ParcelService:
                 "parcel_category": p.parcel_category,
                 "fare": float(p.fare),
                 "is_fragile": p.is_fragile,
+                "customer_rating": p.customer_rating,
                 "created_at": p.created_at.isoformat(),
                 "delivered_at": p.delivered_at.isoformat() if p.delivered_at else None,
             }
@@ -951,15 +988,29 @@ class ParcelService:
         self,
         driver_user_id: str,
     ) -> List[Dict[str, Any]]:
-        """Returns pending delivery requests searching for drivers."""
+        """Returns pending delivery requests filtered by driver's vehicle capacity."""
+        d_uuid = UUID(driver_user_id)
+        d_res = await self.db.execute(select(Driver).where(Driver.user_id == d_uuid))
+        driver = d_res.scalar_one_or_none()
+
+        max_cap = 9999.0
+        if driver:
+            v_res = await self.db.execute(select(Vehicle).where(Vehicle.driver_id == driver.id))
+            vehicle = v_res.scalar_one_or_none()
+            if vehicle and vehicle.parcel_capacity_kg:
+                max_cap = vehicle.parcel_capacity_kg
+
         res = await self.db.execute(
             select(Parcel)
             .where(
-                Parcel.status.in_([
-                    ParcelStatus.SEARCHING_DRIVER,
-                    ParcelStatus.PENDING,
-                    ParcelStatus.CREATED,
-                ])
+                and_(
+                    Parcel.status.in_([
+                        ParcelStatus.SEARCHING_DRIVER,
+                        ParcelStatus.PENDING,
+                        ParcelStatus.CREATED,
+                    ]),
+                    Parcel.weight_kg <= max_cap,
+                )
             )
             .order_by(desc(Parcel.created_at))
             .limit(20)
@@ -981,6 +1032,186 @@ class ParcelService:
             }
             for p in parcels
         ]
+
+    async def find_eligible_drivers_for_parcel(
+        self,
+        parcel_id: str,
+        radius_km: float = 15.0,
+    ) -> List[Dict[str, Any]]:
+        """
+        Finds online candidate drivers within radius with parcel capability & capacity.
+        """
+        p_res = await self.db.execute(select(Parcel).where(Parcel.id == UUID(parcel_id)))
+        parcel = p_res.scalar_one_or_none()
+        if not parcel:
+            raise HTTPException(status_code=404, detail="Parcel not found")
+
+        stmt = (
+            select(Driver, Vehicle)
+            .join(Vehicle, Vehicle.driver_id == Driver.id)
+            .where(
+                and_(
+                    Driver.status == DriverStatus.ONLINE,
+                    Vehicle.parcel_capable == True,
+                    or_(
+                        Vehicle.parcel_capacity_kg == None,
+                        Vehicle.parcel_capacity_kg >= parcel.weight_kg,
+                    ),
+                )
+            )
+        )
+        res = await self.db.execute(stmt)
+        rows = res.all()
+
+        candidates = []
+        for drv, veh in rows:
+            dist_km = 2.5
+            if drv.current_latitude and drv.current_longitude and parcel.sender_lat and parcel.sender_lng:
+                dist_km = haversine_distance_km(
+                    drv.current_latitude, drv.current_longitude,
+                    parcel.sender_lat, parcel.sender_lng
+                )
+            if dist_km <= radius_km:
+                candidates.append({
+                    "driver_id": str(drv.id),
+                    "driver_name": drv.full_name,
+                    "phone_masked": f"+91 {drv.phone[-4:] if drv.phone else '****'}",
+                    "rating": float(drv.rating or 4.8),
+                    "vehicle": {
+                        "make": veh.make,
+                        "model": veh.model,
+                        "registration_number": veh.registration_number,
+                        "vehicle_type": veh.vehicle_type.value if hasattr(veh.vehicle_type, "value") else str(veh.vehicle_type),
+                        "parcel_capacity_kg": veh.parcel_capacity_kg,
+                    },
+                    "distance_km": dist_km,
+                    "eta_minutes": max(3, int(dist_km * 3)),
+                })
+
+        candidates.sort(key=lambda x: x["distance_km"])
+        return candidates
+
+    async def rate_parcel(
+        self,
+        parcel_id: str,
+        customer_user_id: str,
+        score: int,
+        feedback: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Customer rates the completed parcel delivery.
+        Updates Driver aggregate rating and logs status audit history.
+        """
+        p_res = await self.db.execute(select(Parcel).where(Parcel.id == UUID(parcel_id)).with_for_update())
+        parcel = p_res.scalar_one_or_none()
+        if not parcel:
+            raise HTTPException(status_code=404, detail="Parcel not found")
+
+        c_uuid = UUID(customer_user_id)
+        if parcel.booking_owner_id != c_uuid and parcel.customer_id != c_uuid:
+            raise HTTPException(status_code=403, detail="Not authorized to rate this parcel shipment")
+
+        if parcel.status != ParcelStatus.DELIVERED:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot rate parcel in {parcel.status.value} status. Only delivered parcels can be rated."
+            )
+
+        if not (1 <= score <= 5):
+            raise HTTPException(status_code=400, detail="Rating score must be between 1 and 5 stars")
+
+        if parcel.customer_rating is not None:
+            raise HTTPException(status_code=400, detail="Parcel has already been rated")
+
+        now_utc = datetime.now(timezone.utc)
+        parcel.customer_rating = score
+        parcel.customer_feedback = feedback
+        parcel.customer_rating_tags = tags or []
+        parcel.rated_at = now_utc
+
+        # Recalculate Driver rating
+        if parcel.driver_id:
+            d_res = await self.db.execute(select(Driver).where(Driver.id == parcel.driver_id))
+            driver = d_res.scalar_one_or_none()
+            if driver:
+                current_rating = float(driver.rating or 5.0)
+                trip_count = max(1, driver.total_trips or 1)
+                new_rating = round(((current_rating * (trip_count - 1)) + score) / trip_count, 2)
+                driver.rating = min(5.0, max(1.0, new_rating))
+
+        history = ParcelStatusHistory(
+            id=uuid.uuid4(),
+            parcel_id=parcel.id,
+            from_status=ParcelStatus.DELIVERED.value,
+            to_status=ParcelStatus.DELIVERED.value,
+            actor_role="CUSTOMER",
+            actor_id=c_uuid,
+            notes=f"Customer rated {score} stars. Feedback: {feedback or 'No comment'}",
+        )
+        self.db.add(history)
+        await self.db.commit()
+
+        return {
+            "success": True,
+            "parcel_id": str(parcel.id),
+            "tracking_number": parcel.tracking_number,
+            "rating": score,
+            "feedback": feedback,
+            "tags": tags or [],
+            "rated_at": now_utc.isoformat(),
+        }
+
+    async def upload_pod_proof(
+        self,
+        parcel_id: str,
+        driver_user_id: str,
+        file: Any,
+        proof_type: str = "delivery_photo",
+    ) -> Dict[str, Any]:
+        """
+        Uploads delivery proof photo or signature to Cloudinary and persists MediaAsset metadata.
+        """
+        p_res = await self.db.execute(select(Parcel).where(Parcel.id == UUID(parcel_id)))
+        parcel = p_res.scalar_one_or_none()
+        if not parcel:
+            raise HTTPException(status_code=404, detail="Parcel not found")
+
+        folder = f"parcels/{parcel_id}/{proof_type}"
+        upload_res = await CloudinaryService.upload_file(
+            file=file,
+            folder=folder,
+            public_id=f"{proof_type}_{uuid.uuid4().hex[:8]}",
+            resource_type="image",
+            is_private=False,
+        )
+
+        try:
+            media_asset = MediaAsset(
+                id=uuid.uuid4(),
+                owner_type=MediaOwnerType.DRIVER,
+                owner_id=UUID(driver_user_id),
+                media_type=MediaType.PARCEL_PHOTO if proof_type == "delivery_photo" else MediaType.PROFILE_PHOTO,
+                cloudinary_public_id=upload_res["public_id"],
+                resource_type=upload_res.get("resource_type", "image"),
+                format=upload_res.get("format", "jpg"),
+                file_size_bytes=upload_res.get("bytes", 0),
+                secure_url=upload_res["secure_url"],
+                thumbnail_url=upload_res.get("secure_url"),
+                status="ACTIVE",
+                metadata_json={"parcel_id": str(parcel.id), "proof_type": proof_type},
+            )
+            self.db.add(media_asset)
+            await self.db.commit()
+        except Exception as e:
+            logger.warning("MediaAsset logging note", error=str(e))
+
+        return {
+            "success": True,
+            "proof_type": proof_type,
+            "url": upload_res["secure_url"],
+            "public_id": upload_res["public_id"],
+        }
 
     async def cancel_parcel(
         self,

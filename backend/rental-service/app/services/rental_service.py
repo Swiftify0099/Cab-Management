@@ -254,6 +254,42 @@ class RentalService:
             } if assigned_driver else None,
         }
 
+    # ── 3.5. Driver Arrived ───────────────────────────────────────────────────
+
+    async def driver_arrive_at_pickup(
+        self,
+        booking_id: str,
+        driver_id: str,
+    ) -> dict:
+        """
+        Partner marks arrival at customer pickup location.
+        Transitions status to DRIVER_ARRIVED.
+        """
+        booking = await self.db.get(RentalBooking, uuid.UUID(booking_id))
+        if not booking:
+            raise ValueError("Rental booking not found")
+        if str(booking.driver_id) != driver_id:
+            raise ValueError("Driver not authorized for this booking")
+        if booking.status not in (RentalBookingStatus.DRIVER_ASSIGNED, RentalBookingStatus.DRIVER_EN_ROUTE):
+            raise ValueError(f"Cannot mark arrival in status {booking.status.value}")
+
+        booking.status = RentalBookingStatus.DRIVER_ARRIVED
+        event = RentalUsageEvent(
+            id=uuid.uuid4(),
+            booking_id=booking.id,
+            event_type="DRIVER_ARRIVED",
+            notes="Driver arrived at pickup location",
+        )
+        self.db.add(event)
+        await self.db.commit()
+
+        log.info("Rental driver arrived", booking_ref=booking.reference)
+        return {
+            "booking_id": booking_id,
+            "status": "driver_arrived",
+            "message": "Driver arrived at pickup point",
+        }
+
     # ── 4. Start Rental ───────────────────────────────────────────────────────
 
     async def start_rental(
@@ -391,6 +427,62 @@ class RentalService:
         log.info("Rental stop added", booking=booking.reference, stop_order=stop_order)
 
         return {"stop_id": str(stop.id), "stop_order": stop_order, "address": address}
+
+    # ── 6.5. Extend Rental ───────────────────────────────────────────────────
+
+    async def extend_rental(
+        self,
+        booking_id: str,
+        additional_minutes: int,
+        additional_km: Optional[float] = None,
+    ) -> dict:
+        """
+        Customer or Partner requests on-the-fly package extension during active rental.
+        Updates planned_duration_minutes, planned_end_time, included_km, and records usage event.
+        """
+        booking = await self.db.get(RentalBooking, uuid.UUID(booking_id))
+        if not booking:
+            raise ValueError("Rental booking not found")
+        if booking.status != RentalBookingStatus.ACTIVE:
+            raise ValueError(f"Can only extend active rentals (current status: {booking.status.value})")
+
+        booking.planned_duration_minutes += additional_minutes
+        if booking.planned_end_time:
+            booking.planned_end_time = booking.planned_end_time + timedelta(minutes=additional_minutes)
+
+        if additional_km is not None and additional_km > 0:
+            booking.included_km += additional_km
+
+        now = datetime.now(timezone.utc)
+        elapsed = int((now - booking.actual_start_time).total_seconds() / 60) if booking.actual_start_time else 0
+
+        event = RentalUsageEvent(
+            id=uuid.uuid4(),
+            booking_id=booking.id,
+            event_type="EXTENSION",
+            km_at_event=booking.actual_km,
+            elapsed_minutes=elapsed,
+            notes=f"Extended by {additional_minutes} mins and {additional_km or 0} km",
+        )
+        self.db.add(event)
+        await self.db.commit()
+
+        log.info(
+            "Rental extended",
+            booking_ref=booking.reference,
+            additional_minutes=additional_minutes,
+            new_planned_duration=booking.planned_duration_minutes,
+            new_planned_end=booking.planned_end_time.isoformat() if booking.planned_end_time else None,
+        )
+
+        return {
+            "booking_id": booking_id,
+            "reference": booking.reference,
+            "planned_duration_minutes": booking.planned_duration_minutes,
+            "planned_end_time": booking.planned_end_time.isoformat() if booking.planned_end_time else None,
+            "included_km": booking.included_km,
+            "message": f"Rental extended by {additional_minutes} minutes",
+        }
 
     # ── 7. Complete Rental ────────────────────────────────────────────────────
 

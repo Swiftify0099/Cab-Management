@@ -52,7 +52,7 @@ async def run_airport_service_verification():
         print("\n[SETUP] Seeding Airport Hub, Terminals, Flights, Customer & Airport Chauffeurs...", flush=True)
 
         # 1. Airport Master Data (Pune Airport PNQ)
-        apt_code = f"P{uuid.uuid4().hex[:2].upper()}"
+        apt_code = f"P{uuid.uuid4().hex[:6].upper()}"
         airport = Airport(
             id=uuid.uuid4(),
             code=apt_code,
