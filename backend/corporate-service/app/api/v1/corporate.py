@@ -49,8 +49,45 @@ class PolicyCheckRequest(BaseModel):
     membership_id: str
     service_type: str
     vehicle_category: Optional[str] = None
-    estimated_fare: float
+    estimated_fare: float = 0.0
     is_personal: bool = False
+    payment_method: Optional[str] = None
+    purpose: Optional[str] = None
+    cost_center_code: Optional[str] = None
+
+
+class CreateCorporateBookingRequest(BaseModel):
+    company_id: str
+    membership_id: str
+    service_type: str
+    vehicle_category: Optional[str] = None
+    estimated_fare: float
+    purpose: str
+    pickup_address: str
+    drop_address: str
+    payment_method: str = "CORPORATE_WALLET"
+    department_id: Optional[str] = None
+    cost_center_code: Optional[str] = None
+    booking_details: Optional[dict] = None
+
+
+class CreateDepartmentRequest(BaseModel):
+    name: str
+    cost_center_code: str
+    membership_id: str
+    manager_membership_id: Optional[str] = None
+
+
+class SettleTripRequest(BaseModel):
+    company_id: str
+    membership_id: str
+    booking_reference: str
+    service_type: str
+    fare_amount: float
+    business_purpose: str
+    cost_center_code: Optional[str] = None
+    department_id: Optional[str] = None
+    payment_method: str = "CORPORATE_WALLET"
 
 
 class CreateApprovalRequest(BaseModel):
@@ -181,20 +218,104 @@ async def check_policy(
     svc=Depends(_corporate_service),
 ):
     """
-    Backend policy engine check. Returns:
-    - allowed: bool
-    - requires_approval: bool
-    - reason: str
-    Frontend NEVER hardcodes policy logic — always calls this endpoint.
+    Backend policy engine check. Enforces:
+    - Cashless corporate billing (rejects Cash)
+    - Mandatory business purpose
+    - Whitelisted services and vehicles
+    - Booking time windows
+    - Threshold-based manager approval routing
     """
     try:
         result = await svc.check_policy(
-            req.company_id, req.membership_id, req.service_type,
-            req.vehicle_category, req.estimated_fare, req.is_personal
+            company_id=req.company_id,
+            membership_id=req.membership_id,
+            service_type=req.service_type,
+            vehicle_category=req.vehicle_category,
+            estimated_fare=req.estimated_fare,
+            is_personal=req.is_personal,
+            payment_method=req.payment_method,
+            purpose=req.purpose,
+            cost_center_code=req.cost_center_code,
         )
         return {"data": result.to_dict()}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ── Corporate Booking Orchestration ──
+
+@router.post("/bookings")
+async def create_corporate_booking(
+    req: CreateCorporateBookingRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    svc=Depends(_corporate_service),
+):
+    """
+    Employee initiates corporate booking.
+    Evaluates policy, checks purpose/cashless, and creates booking or approval request.
+    """
+    try:
+        result = await svc.create_corporate_booking(
+            company_id=req.company_id,
+            membership_id=req.membership_id,
+            service_type=req.service_type,
+            vehicle_category=req.vehicle_category,
+            estimated_fare=req.estimated_fare,
+            purpose=req.purpose,
+            pickup_address=req.pickup_address,
+            drop_address=req.drop_address,
+            payment_method=req.payment_method,
+            department_id=req.department_id,
+            cost_center_code=req.cost_center_code,
+            booking_details=req.booking_details,
+        )
+        return {"data": result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ── Partner Isolation & Privacy Shield ──
+
+@router.get("/partner/trip/{booking_reference}")
+async def get_partner_trip_operational_data(
+    booking_reference: str,
+    passenger_name: str = "Corporate Guest",
+    passenger_phone: str = "+919876543210",
+    pickup_address: str = "Corporate Office",
+    pickup_lat: float = 18.5204,
+    pickup_lng: float = 73.8567,
+    drop_address: str = "Client Site",
+    drop_lat: float = 18.5913,
+    drop_lng: float = 73.7389,
+    service_type: str = "ride",
+    vehicle_category: str = "SEDAN",
+    trip_otp: str = "4829",
+    estimated_distance_km: float = 12.5,
+    estimated_duration_min: int = 25,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    svc=Depends(_corporate_service),
+):
+    """
+    Returns strictly operational data for Delivery / Mobility Partners (Drivers).
+    Zero HR data, zero company payment secrets, and zero approval hierarchy info are exposed.
+    """
+    data = svc.sanitize_partner_operational_data(
+        booking_reference=booking_reference,
+        passenger_name=passenger_name,
+        passenger_phone=passenger_phone,
+        pickup_address=pickup_address,
+        pickup_lat=pickup_lat,
+        pickup_lng=pickup_lng,
+        drop_address=drop_address,
+        drop_lat=drop_lat,
+        drop_lng=drop_lng,
+        service_type=service_type,
+        vehicle_category=vehicle_category,
+        trip_otp=trip_otp,
+        estimated_distance_km=estimated_distance_km,
+        estimated_duration_min=estimated_duration_min,
+    )
+    return {"data": data}
 
 
 # ── Approval Workflow ──
@@ -356,3 +477,67 @@ async def get_expense_report(
         return {"data": result}
     except ValueError as e:
         raise HTTPException(status_code=403, detail=str(e))
+
+
+# ── Department & Cost Center Management ──
+
+@router.post("/companies/{company_id}/departments")
+async def create_department(
+    company_id: str,
+    req: CreateDepartmentRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    svc=Depends(_corporate_service),
+):
+    """Create a company department with cost center code. Admin only."""
+    try:
+        result = await svc.create_department(
+            company_id=company_id,
+            name=req.name,
+            cost_center_code=req.cost_center_code,
+            requester_membership_id=req.membership_id,
+            manager_membership_id=req.manager_membership_id,
+        )
+        return {"data": result, "message": "Department created"}
+    except ValueError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+
+@router.get("/companies/{company_id}/departments")
+async def list_departments(
+    company_id: str,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    svc=Depends(_corporate_service),
+):
+    """List departments and cost centers for a company."""
+    return {"data": await svc.list_departments(company_id)}
+
+
+# ── Trip Completion Settlement ──
+
+@router.post("/trips/{trip_id}/complete-settlement")
+async def complete_corporate_trip_settlement(
+    trip_id: str,
+    req: SettleTripRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    svc=Depends(_corporate_service),
+):
+    """
+    Settles a completed corporate trip:
+    - Appends line item to invoice with 5% GST breakdown.
+    - Debits corporate wallet.
+    """
+    try:
+        result = await svc.settle_corporate_trip(
+            company_id=req.company_id,
+            membership_id=req.membership_id,
+            booking_reference=req.booking_reference,
+            service_type=req.service_type,
+            fare_amount=req.fare_amount,
+            business_purpose=req.business_purpose,
+            cost_center_code=req.cost_center_code,
+            department_id=req.department_id,
+            payment_method=req.payment_method,
+        )
+        return {"data": result, "message": "Corporate trip settled successfully"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

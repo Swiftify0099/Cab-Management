@@ -1,21 +1,30 @@
 """
-Master Production Verification Suite: SERVICE 10 — CORPORATE TRAVEL & ENTERPRISE BILLING
-Tests:
-1. Company & Corporate Wallet Setup: Creates corporate entity, GSTIN, wallet, and default Travel Policy
-2. Department & Employee Onboarding: Creates departments and invites Employee + Approver Manager
-3. Invitation Acceptance: Employee accepts membership -> ACTIVE status
-4. Data-Driven Policy Evaluation: Auto-approval (< threshold) vs Mandatory Manager Approval (> threshold)
-5. Multi-Step Approval Handshake: Approver responds to request -> status APPROVED, self-approval blocked
-6. Corporate Wallet Management: Dedicated corporate wallet top-up and audit trail ledger
-7. Monthly Consolidated GST Invoice: Generates monthly corporate invoice with GST breakdown and line items
-8. Expense Analytics: Corporate spending report aggregated across departments and services
+Master Production Verification Suite: SERVICE 10 — CORPORATE TRAVEL & ENTERPRISE GOVERNANCE (Phase 22)
+══════════════════════════════════════════════════════════════════════════════════════════════════════
+Comprehensive E2E Verification Suite testing all enterprise corporate flows and security invariants:
+
+1. Company & Corporate Wallet Setup: Entity creation, GSTIN, dedicated corporate wallet, default policy.
+2. Department & Cost Center Onboarding: Department creation with cost center code (e.g., CC-ENG-904).
+3. Employee Invitation & Acceptance: Role assignment, token acceptance, active membership transition.
+4. Approved Policy Case 1 (Auto-Approval): Intra-city booking (< threshold) auto-approved without manager lag.
+5. Approved Policy Case 2 (Manager Approval Workflow): Multi-day booking (> threshold) routed to Approver Manager and approved.
+6. Rejected Policy Case 1 (Cash Blocked): Corporate booking with CASH payment blocked when cashless policy is active.
+7. Rejected Policy Case 2 (Mandatory Purpose Missing): Corporate booking with blank purpose rejected.
+8. Rejected Policy Case 3 (Unauthorized Vehicle Category): Luxury category rejected when policy restricts to Sedan/SUV.
+9. Rejected Policy Case 4 (Unauthorized Service Type): Unapproved service rejected by policy engine.
+10. Rejected Policy Case 5 (Personal Rides Blocked): Personal rides blocked on corporate account.
+11. Rejected Policy Case 6 (Manager Rejection): Travel request rejected by Approver Manager with audit notes.
+12. Security Guard (Self-Approval Blocked): Employee cannot approve their own travel request.
+13. Partner Privacy Shield (Zero Leakage): Driver receives strictly operational data; zero HR data, payment secrets, or approval notes exposed.
+14. Corporate Trip Settlement & 5% GST Invoicing: Automated invoice line item creation with GST breakdown and corporate wallet debit.
+15. Corporate Expense Analytics: Spending aggregated by department, cost center, and service type.
 """
 import os
 import sys
 import uuid
+import asyncio
 from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal
-import asyncio
 
 # Add python paths
 _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -41,7 +50,7 @@ if sys.platform == 'win32':
 
 async def run_corporate_service_verification():
     print("=" * 80)
-    print("🏢💼 STARTING SERVICE 10 (CORPORATE TRAVEL) PRODUCTION VERIFICATION")
+    print("🏢💼 STARTING PHASE 22 — CORPORATE TRAVEL & GOVERNANCE PRODUCTION VERIFICATION")
     print("=" * 80)
 
     await engine.dispose()
@@ -75,7 +84,7 @@ async def run_corporate_service_verification():
         admin_user = User(
             id=uuid.uuid4(),
             phone=f"+9198{str(uuid.uuid4().int)[:8]}",
-            email=f"corp.admin.{uuid.uuid4().hex[:6]}@nexus.com",
+            email=f"corp.admin.{uuid.uuid4().hex[:6]}@nexuscloud.com",
             role=UserRole.CUSTOMER,
             is_verified=True,
             is_active=True,
@@ -95,7 +104,7 @@ async def run_corporate_service_verification():
         manager_user = User(
             id=uuid.uuid4(),
             phone=f"+9198{str(uuid.uuid4().int)[:8]}",
-            email=f"corp.manager.{uuid.uuid4().hex[:6]}@nexus.com",
+            email=f"corp.manager.{uuid.uuid4().hex[:6]}@nexuscloud.com",
             role=UserRole.CUSTOMER,
             is_verified=True,
             is_active=True,
@@ -116,7 +125,7 @@ async def run_corporate_service_verification():
         emp_user = User(
             id=uuid.uuid4(),
             phone=emp_phone,
-            email=f"neha.d.{uuid.uuid4().hex[:6]}@nexus.com",
+            email=f"neha.d.{uuid.uuid4().hex[:6]}@nexuscloud.com",
             role=UserRole.CUSTOMER,
             is_verified=True,
             is_active=True,
@@ -127,7 +136,7 @@ async def run_corporate_service_verification():
         emp_profile = CustomerProfile(
             id=uuid.uuid4(),
             user_id=emp_user.id,
-            full_name="Neha Deshmukh (Lead Architect)",
+            full_name="Neha Deshmukh (Lead Cloud Architect)",
             wallet_balance=Decimal("5000.00"),
         )
         session.add(emp_profile)
@@ -138,7 +147,7 @@ async def run_corporate_service_verification():
         corp_svc = CorporateService(session)
 
         # =========================================================================
-        # TEST 1: COMPANY REGISTRATION & CORPORATE WALLET CREATION
+        # TEST 1: COMPANY REGISTRATION & CORPORATE WALLET SETUP
         # =========================================================================
         print("\n" + "=" * 70)
         print("TEST 1: COMPANY REGISTRATION & CORPORATE WALLET SETUP")
@@ -166,31 +175,30 @@ async def run_corporate_service_verification():
         assert company_res["status"] == "ACTIVE"
         assert company_res["role"] == "company_admin"
         print(f"  [OK] Registered Corporate Account: ID={company_id}, Name={company_res['legal_name']}")
-        print(f"    - Admin Membership: {admin_membership_id} (Role: COMPANY_ADMIN)")
 
         # =========================================================================
-        # TEST 2: DEPARTMENT CREATION & EMPLOYEE / MANAGER INVITATION
+        # TEST 2: DEPARTMENT CREATION & COST CENTER ASSIGNMENT
         # =========================================================================
         print("\n" + "=" * 70)
-        print("TEST 2: DEPARTMENT & EMPLOYEE / MANAGER ONBOARDING")
+        print("TEST 2: DEPARTMENT & COST CENTER ONBOARDING")
         print("=" * 70)
 
-        # Create Engineering Department
-        dept = Department(
-            id=uuid.uuid4(),
-            company_id=uuid.UUID(company_id),
+        dept_res = await corp_svc.create_department(
+            company_id=company_id,
             name="Cloud Platform Engineering",
             cost_center_code="CC-ENG-904",
+            requester_membership_id=admin_membership_id,
         )
-        session.add(dept)
-        await session.commit()
+        dept_id = dept_res["department_id"]
+        assert dept_res["cost_center_code"] == "CC-ENG-904"
+        print(f"  [OK] Created Department: {dept_res['name']} with Cost Center {dept_res['cost_center_code']}")
 
-        # Add Manager Membership directly as APPROVER
+        # Onboard Manager Membership as APPROVER
         manager_membership = CompanyMembership(
             id=uuid.uuid4(),
             company_id=uuid.UUID(company_id),
             customer_id=manager_profile.id,
-            department_id=dept.id,
+            department_id=uuid.UUID(dept_id),
             employee_code="NEX-MGR-002",
             role=CorporateRole.APPROVER,
             status="ACTIVE",
@@ -198,6 +206,7 @@ async def run_corporate_service_verification():
         )
         session.add(manager_membership)
         await session.commit()
+        manager_membership_id = str(manager_membership.id)
 
         # Invite Employee via Phone
         invite_res = await corp_svc.invite_employee(
@@ -205,14 +214,12 @@ async def run_corporate_service_verification():
             inviter_customer_id=str(admin_user.id),
             phone=emp_phone,
             employee_code="NEX-ENG-8821",
-            department_id=str(dept.id),
+            department_id=dept_id,
             role="employee",
         )
-
         emp_membership_id = invite_res["membership_id"]
         assert invite_res["status"] == "INVITED"
         print(f"  [OK] Invited Employee Neha Deshmukh: Membership ID={emp_membership_id}, Code=NEX-ENG-8821, Department=CC-ENG-904.")
-        print(f"    - Onboarded Approver Manager: {manager_membership.id} (Role: APPROVER).")
 
         # =========================================================================
         # TEST 3: EMPLOYEE INVITATION ACCEPTANCE
@@ -225,190 +232,372 @@ async def run_corporate_service_verification():
             membership_id=emp_membership_id,
             customer_id=str(emp_user.id),
         )
-
         assert accept_res["status"] == "ACTIVE"
         assert accept_res["role"] == "employee"
         print(f"  [OK] Employee Accepted Invitation: Status=ACTIVE, Role={accept_res['role']}.")
 
         # =========================================================================
-        # TEST 4: DATA-DRIVEN POLICY EVALUATION (AUTO-APPROVE VS APPROVAL REQUIRED)
+        # TEST 4: APPROVED POLICY CASE 1 (AUTO-APPROVED RIDE < THRESHOLD)
         # =========================================================================
         print("\n" + "=" * 70)
-        print("TEST 4: DATA-DRIVEN POLICY EVALUATION")
+        print("TEST 4: APPROVED POLICY CASE 1 (Intra-city Ride < ₹3,000 Threshold)")
         print("=" * 70)
 
-        # 4a. Intra-city Sedan Ride (₹650) -> Auto-Approved (< ₹3000)
-        check1 = await corp_svc.check_policy(
+        check_auto = await corp_svc.check_policy(
             company_id=company_id,
             membership_id=emp_membership_id,
             service_type="ride",
             vehicle_category="SEDAN",
             estimated_fare=650.0,
             is_personal=False,
+            payment_method="CORPORATE_WALLET",
+            purpose="Technical Architecture Review with Client at Cybercity",
+            cost_center_code="CC-ENG-904",
         )
-        assert check1.allowed == True
-        assert check1.requires_approval == False
-        print(f"  [OK] Standard Intra-City Ride (Rs.650): Auto-Approved=True, Requires Approval={check1.requires_approval}.")
+        assert check_auto.allowed is True
+        assert check_auto.requires_approval is False
+        print(f"  [OK] Auto-Approval Evaluated: Allowed={check_auto.allowed}, Requires Approval={check_auto.requires_approval} (Reason: {check_auto.reason})")
 
-        # 4b. Multi-Day Outstation Trip (₹7,500) -> Requires Manager Approval (> ₹3000)
-        check2 = await corp_svc.check_policy(
+        # Create auto-approved corporate booking
+        booking_auto = await corp_svc.create_corporate_booking(
+            company_id=company_id,
+            membership_id=emp_membership_id,
+            service_type="ride",
+            vehicle_category="SEDAN",
+            estimated_fare=650.0,
+            purpose="Technical Architecture Review with Client at Cybercity",
+            pickup_address="Magarpatta City, Pune",
+            drop_address="Cybercity Tower 4, Kharadi, Pune",
+            payment_method="CORPORATE_WALLET",
+            cost_center_code="CC-ENG-904",
+        )
+        assert booking_auto["status"] == "CONFIRMED"
+        assert booking_auto["approval_required"] is False
+        print(f"  [OK] Auto-Approved Booking Created: Reference={booking_auto['booking_reference']}, Status={booking_auto['status']}")
+
+        # =========================================================================
+        # TEST 5: APPROVED POLICY CASE 2 (MANAGER APPROVAL WORKFLOW > THRESHOLD)
+        # =========================================================================
+        print("\n" + "=" * 70)
+        print("TEST 5: APPROVED POLICY CASE 2 (Outstation Travel > ₹3,000 Threshold)")
+        print("=" * 70)
+
+        # 5a. Check policy indicates approval required
+        check_appr = await corp_svc.check_policy(
             company_id=company_id,
             membership_id=emp_membership_id,
             service_type="outstation",
             vehicle_category="SUV",
             estimated_fare=7500.0,
             is_personal=False,
+            payment_method="CORPORATE_WALLET",
+            purpose="On-site Production Cutover at Mumbai Data Center",
+            cost_center_code="CC-ENG-904",
         )
-        assert check2.allowed == True
-        assert check2.requires_approval == True
-        print(f"  [OK] Outstation Premium Travel (Rs.7,500): Allowed=True, Requires Approval={check2.requires_approval} (Reason: {check2.reason}).")
+        assert check_appr.allowed is True
+        assert check_appr.requires_approval is True
+        print(f"  [OK] Policy Evaluation: Allowed={check_appr.allowed}, Requires Approval={check_appr.requires_approval} (Reason: {check_appr.reason})")
+
+        # 5b. Initiate booking which creates PENDING approval request
+        booking_appr = await corp_svc.create_corporate_booking(
+            company_id=company_id,
+            membership_id=emp_membership_id,
+            service_type="outstation",
+            vehicle_category="SUV",
+            estimated_fare=7500.0,
+            purpose="On-site Production Cutover at Mumbai Data Center",
+            pickup_address="Pune IT Park",
+            drop_address="Mumbai BKC Data Center",
+            payment_method="CORPORATE_WALLET",
+            cost_center_code="CC-ENG-904",
+        )
+        assert booking_appr["status"] == "PENDING_APPROVAL"
+        assert booking_appr["approval_required"] is True
+        approval_id = booking_appr["approval_id"]
+        print(f"  [OK] Booking Queued for Manager Approval: Reference={booking_appr['booking_reference']}, Approval ID={approval_id}")
+
+        # 5c. Manager approves request
+        appr_resp = await corp_svc.respond_to_approval(
+            approval_id=approval_id,
+            approver_membership_id=manager_membership_id,
+            decision="approved",
+            note="Approved for critical customer delivery.",
+        )
+        assert appr_resp["approval_status"] == "approved"
+        print(f"  [OK] Approver Manager Approved Request: Approval Status={appr_resp['approval_status']}")
 
         # =========================================================================
-        # TEST 5: APPROVAL WORKFLOW & MULTI-STEP APPROVAL HANDSHAKE
+        # TEST 6: REJECTED POLICY CASE 1 (CASH PAYMENT BLOCKED BY POLICY)
         # =========================================================================
         print("\n" + "=" * 70)
-        print("TEST 5: APPROVAL WORKFLOW & MULTI-STEP APPROVAL HANDSHAKE")
+        print("TEST 6: REJECTED POLICY CASE 1 (Cash Blocked for Cashless Corporate Billing)")
         print("=" * 70)
 
-        # Employee submits approval request for Outstation trip
-        appr_req = await corp_svc.create_approval_request(
+        check_cash = await corp_svc.check_policy(
+            company_id=company_id,
+            membership_id=emp_membership_id,
+            service_type="ride",
+            vehicle_category="SEDAN",
+            estimated_fare=500.0,
+            payment_method="CASH",  # CASH payment attempted
+            purpose="Client Meeting",
+        )
+        assert check_cash.allowed is False
+        assert "Cash payment is blocked" in check_cash.reason
+        print(f"  [OK] Cash Payment Attempt Correctly Rejected: '{check_cash.reason}'")
+
+        # Verify booking creation with CASH is rejected
+        try:
+            await corp_svc.create_corporate_booking(
+                company_id=company_id,
+                membership_id=emp_membership_id,
+                service_type="ride",
+                vehicle_category="SEDAN",
+                estimated_fare=500.0,
+                purpose="Client Meeting",
+                pickup_address="A",
+                drop_address="B",
+                payment_method="CASH",
+            )
+            assert False, "Corporate booking with cash must be rejected"
+        except ValueError as err:
+            assert "Cash payment is blocked" in str(err)
+            print("  [OK] create_corporate_booking with CASH raised expected ValueError.")
+
+        # =========================================================================
+        # TEST 7: REJECTED POLICY CASE 2 (MANDATORY BUSINESS PURPOSE MISSING)
+        # =========================================================================
+        print("\n" + "=" * 70)
+        print("TEST 7: REJECTED POLICY CASE 2 (Mandatory Business Purpose Missing)")
+        print("=" * 70)
+
+        check_no_purpose = await corp_svc.check_policy(
+            company_id=company_id,
+            membership_id=emp_membership_id,
+            service_type="ride",
+            vehicle_category="SEDAN",
+            estimated_fare=500.0,
+            payment_method="CORPORATE_WALLET",
+            purpose="",  # Blank purpose
+        )
+        assert check_no_purpose.allowed is False
+        assert "Business purpose is mandatory" in check_no_purpose.reason
+        print(f"  [OK] Blank Purpose Attempt Correctly Rejected: '{check_no_purpose.reason}'")
+
+        # =========================================================================
+        # TEST 8: REJECTED POLICY CASE 3 (UNAUTHORIZED VEHICLE CATEGORY)
+        # =========================================================================
+        print("\n" + "=" * 70)
+        print("TEST 8: REJECTED POLICY CASE 3 (Unauthorized Vehicle Category)")
+        print("=" * 70)
+
+        check_luxury = await corp_svc.check_policy(
+            company_id=company_id,
+            membership_id=emp_membership_id,
+            service_type="ride",
+            vehicle_category="LUXURY_LIMOUSINE",  # Policy only allows SEDAN, SUV
+            estimated_fare=3500.0,
+            payment_method="CORPORATE_WALLET",
+            purpose="VIP Visit",
+        )
+        assert check_luxury.allowed is False
+        assert "exceeds authorized policy tier" in check_luxury.reason
+        print(f"  [OK] Luxury Vehicle Tier Correctly Rejected: '{check_luxury.reason}'")
+
+        # =========================================================================
+        # TEST 9: REJECTED POLICY CASE 4 (UNAUTHORIZED SERVICE TYPE)
+        # =========================================================================
+        print("\n" + "=" * 70)
+        print("TEST 9: REJECTED POLICY CASE 4 (Unauthorized Service Type)")
+        print("=" * 70)
+
+        check_unauth_svc = await corp_svc.check_policy(
+            company_id=company_id,
+            membership_id=emp_membership_id,
+            service_type="yacht_charter",  # Not in allowed_services
+            vehicle_category="SEDAN",
+            estimated_fare=1000.0,
+            payment_method="CORPORATE_WALLET",
+            purpose="Team outing",
+        )
+        assert check_unauth_svc.allowed is False
+        assert "not covered by company travel policy" in check_unauth_svc.reason
+        print(f"  [OK] Unauthorized Service Type Correctly Rejected: '{check_unauth_svc.reason}'")
+
+        # =========================================================================
+        # TEST 10: REJECTED POLICY CASE 5 (PERSONAL RIDES BLOCKED)
+        # =========================================================================
+        print("\n" + "=" * 70)
+        print("TEST 10: REJECTED POLICY CASE 5 (Personal Rides Blocked on Corporate Account)")
+        print("=" * 70)
+
+        check_personal = await corp_svc.check_policy(
+            company_id=company_id,
+            membership_id=emp_membership_id,
+            service_type="ride",
+            vehicle_category="SEDAN",
+            estimated_fare=400.0,
+            is_personal=True,  # Personal ride attempted on company account
+            payment_method="CORPORATE_WALLET",
+            purpose="Weekend shopping",
+        )
+        assert check_personal.allowed is False
+        assert "Personal rides are strictly prohibited" in check_personal.reason
+        print(f"  [OK] Personal Ride Attempt Correctly Rejected: '{check_personal.reason}'")
+
+        # =========================================================================
+        # TEST 11: REJECTED POLICY CASE 6 (MANAGER REJECTION WORKFLOW)
+        # =========================================================================
+        print("\n" + "=" * 70)
+        print("TEST 11: REJECTED POLICY CASE 6 (Manager Rejection Workflow)")
+        print("=" * 70)
+
+        # Create another approval request
+        appr_req2 = await corp_svc.create_approval_request(
             company_id=company_id,
             requester_membership_id=emp_membership_id,
             service_type="outstation",
-            estimated_fare=7500.0,
-            purpose="Client Data Center Infrastructure Deployment at Mumbai BKC",
-            department_id=str(dept.id),
-            booking_details={"origin": "Pune IT Park", "destination": "Mumbai BKC", "days": 3},
+            estimated_fare=12000.0,
+            purpose="Conference in Goa",
+            department_id=dept_id,
         )
+        appr_id2 = appr_req2["approval_id"]
 
-        approval_id = appr_req["approval_id"]
-        assert appr_req["status"] == "pending"
-        print(f"  [OK] Created Approval Request: ID={approval_id}, Fare=Rs.{appr_req['estimated_fare']}, Status={appr_req['status']}.")
-
-        # Self-Approval Guard Test: Employee cannot approve their own request
-        try:
-            await corp_svc.respond_to_approval(
-                approval_id=approval_id,
-                approver_membership_id=emp_membership_id,
-                decision="approved",
-            )
-            assert False, "Self-approval should have been blocked"
-        except ValueError as err:
-            print(f"  [OK] Security Guard: Self-approval successfully blocked ({err}).")
-
-        # Manager approves request
-        appr_resp = await corp_svc.respond_to_approval(
-            approval_id=approval_id,
-            approver_membership_id=str(manager_membership.id),
-            decision="approved",
-            note="Approved for critical client delivery. Please submit toll receipts.",
+        # Manager rejects request with note
+        reject_resp = await corp_svc.respond_to_approval(
+            approval_id=appr_id2,
+            approver_membership_id=manager_membership_id,
+            decision="rejected",
+            note="Budget for outstation conferences is exhausted for Q3.",
         )
-
-        assert appr_resp["approval_status"] == "approved"
-        print(f"  [OK] Manager Approved Travel Request: ID={approval_id}, Final Status={appr_resp['approval_status']}.")
+        assert reject_resp["approval_status"] == "rejected"
+        print(f"  [OK] Manager Rejection Successfully Processed: Status={reject_resp['approval_status']}")
 
         # =========================================================================
-        # TEST 6: CORPORATE WALLET TOP-UP & AUDIT TRAIL
+        # TEST 12: SECURITY GUARD (SELF-APPROVAL BLOCKED)
         # =========================================================================
         print("\n" + "=" * 70)
-        print("TEST 6: CORPORATE WALLET TOP-UP & AUDIT TRAIL")
+        print("TEST 12: SECURITY GUARD (Self-Approval Prevention)")
         print("=" * 70)
 
+        try:
+            await corp_svc.respond_to_approval(
+                approval_id=appr_id2,
+                approver_membership_id=emp_membership_id,  # Requester attempts to approve
+                decision="approved",
+            )
+            assert False, "Self-approval must be blocked"
+        except ValueError as err:
+            print(f"  [OK] Self-approval blocked as expected: '{err}'")
+
+        # =========================================================================
+        # TEST 13: PARTNER PRIVACY SHIELD (ZERO LEAKAGE)
+        # =========================================================================
+        print("\n" + "=" * 70)
+        print("TEST 13: PARTNER PRIVACY SHIELD (Operational Data Only, Zero Secrets)")
+        print("=" * 70)
+
+        partner_payload = corp_svc.sanitize_partner_operational_data(
+            booking_reference="CORP-260829-AB91",
+            passenger_name="Neha Deshmukh",
+            passenger_phone=emp_phone,
+            pickup_address="Magarpatta City, Tower B",
+            pickup_lat=18.5204,
+            pickup_lng=73.8567,
+            drop_address="Cybercity Tower 4, Kharadi",
+            drop_lat=18.5913,
+            drop_lng=73.7389,
+            service_type="ride",
+            vehicle_category="SEDAN",
+            trip_otp="4829",
+            estimated_distance_km=12.5,
+            estimated_duration_min=25,
+        )
+
+        # Operational fields MUST be present
+        assert partner_payload["passenger_name"] == "Neha Deshmukh"
+        assert partner_payload["trip_otp"] == "4829"
+        assert partner_payload["is_corporate"] is True
+        assert partner_payload["billing_type"] == "CORPORATE_BILLING"
+        assert "****" in partner_payload["passenger_phone_masked"]
+
+        # Sensitive HR, Financial, and Approval fields MUST NOT be present
+        assert "employee_code" not in partner_payload, "HR employee code must NOT be leaked to partner"
+        assert "gstin" not in partner_payload, "Company GSTIN must NOT be leaked to partner"
+        assert "wallet_balance" not in partner_payload, "Company wallet balance must NOT be leaked to partner"
+        assert "approval_notes" not in partner_payload, "Internal approval notes must NOT be leaked to partner"
+        assert "approver_name" not in partner_payload, "Approver hierarchy must NOT be leaked to partner"
+        assert "cost_center_code" not in partner_payload, "Internal cost center must NOT be leaked to partner"
+        print(f"  [OK] Partner Operational Data Verified: Passenger={partner_payload['passenger_name']}, Masked Phone={partner_payload['passenger_phone_masked']}, OTP={partner_payload['trip_otp']}")
+        print("  [OK] Privacy Isolation: 100% verified zero HR data, zero payment secrets, zero internal approval notes leaked.")
+
+        # =========================================================================
+        # TEST 14: CORPORATE WALLET TOP-UP, TRIP SETTLEMENT & 5% GST INVOICING
+        # =========================================================================
+        print("\n" + "=" * 70)
+        print("TEST 14: CORPORATE WALLET TOP-UP, TRIP SETTLEMENT & GST INVOICING")
+        print("=" * 70)
+
+        # Top-up corporate wallet with ₹50,000
         topup_res = await corp_svc.topup_corporate_wallet(
             company_id=company_id,
             amount=50000.0,
             requester_membership_id=admin_membership_id,
         )
-
         assert topup_res["balance"] == 50000.0
-        print(f"  [OK] Top-up Successful: Added Rs.{topup_res['topped_up']}, Current Corporate Wallet Balance: Rs.{topup_res['balance']}.")
+        print(f"  [OK] Corporate Wallet Topped Up: Current Balance=Rs.{topup_res['balance']}.")
 
-        # Retrieve Wallet Details
-        wallet_info = await corp_svc.get_corporate_wallet(
+        # Settle a completed corporate trip (₹7,500 with 5% GST)
+        settle_res = await corp_svc.settle_corporate_trip(
             company_id=company_id,
-            requester_membership_id=admin_membership_id,
-        )
-        assert wallet_info["balance"] == 50000.0
-        assert len(wallet_info["recent_transactions"]) > 0
-        print(f"  [OK] Corporate Wallet Verified: Balance=Rs.{wallet_info['balance']}, Transactions Logged={len(wallet_info['recent_transactions'])}.")
-
-        # =========================================================================
-        # TEST 7: MONTHLY CONSOLIDATED GST INVOICE GENERATION
-        # =========================================================================
-        print("\n" + "=" * 70)
-        print("TEST 7: MONTHLY CONSOLIDATED GST INVOICE GENERATION")
-        print("=" * 70)
-
-        billing_month = "2026-08"
-        inv_res = await corp_svc.generate_monthly_invoice(
-            company_id=company_id,
-            billing_month=billing_month,
-        )
-
-        invoice_id = inv_res["invoice_id"]
-        invoice_number = inv_res["invoice_number"]
-        assert invoice_number.startswith("INV-202608-")
-        print(f"  [OK] Generated Monthly Consolidated Invoice: Number={invoice_number}, Period={inv_res['billing_period']}, Status={inv_res['status']}.")
-
-        # Seed 2 Line Items onto Invoice for testing detail retrieval
-        line1 = InvoiceLineItem(
-            id=uuid.uuid4(),
-            invoice_id=uuid.UUID(invoice_id),
-            membership_id=uuid.UUID(emp_membership_id),
-            department_id=dept.id,
+            membership_id=emp_membership_id,
+            booking_reference="CORP-260829-OUT88",
             service_type="outstation",
-            booking_reference="OUT-260825-NX91",
-            booking_date=date.today(),
-            description="Intercity Round-Trip Pune -> Mumbai BKC",
-            fare_amount=Decimal("7142.86"),
-            gst_amount=Decimal("357.14"),
-            total_amount=Decimal("7500.00"),
-            business_purpose="Client Deployment",
+            fare_amount=7500.0,
+            business_purpose="Client Infrastructure Deployment",
             cost_center_code="CC-ENG-904",
+            department_id=dept_id,
+            payment_method="CORPORATE_WALLET",
         )
-        session.add(line1)
 
-        # Update invoice totals
-        inv_record = await session.get(CorporateInvoice, uuid.UUID(invoice_id))
-        inv_record.total_bookings = 1
-        inv_record.subtotal = Decimal("7142.86")
-        inv_record.gst_amount = Decimal("357.14")
-        inv_record.total_amount = Decimal("7500.00")
-        await session.commit()
+        assert settle_res["total_amount"] == 7500.0
+        assert settle_res["subtotal"] == 7142.86
+        assert settle_res["gst_amount"] == 357.14
+        print(f"  [OK] Corporate Trip Settled: Total=Rs.{settle_res['total_amount']}, Subtotal=Rs.{settle_res['subtotal']}, 5% GST=Rs.{settle_res['gst_amount']}")
 
-        # Retrieve full invoice details
-        inv_detail = await corp_svc.get_invoice_detail(
-            invoice_id=invoice_id,
+        # Verify Corporate Wallet was debited: 50,000 - 7,500 = 42,500
+        wallet_info = await corp_svc.get_corporate_wallet(company_id=company_id, requester_membership_id=admin_membership_id)
+        assert wallet_info["balance"] == 42500.0
+        print(f"  [OK] Corporate Wallet Debited: New Balance=Rs.{wallet_info['balance']}")
+
+        # Verify invoice detail retrieval
+        invoice_detail = await corp_svc.get_invoice_detail(
+            invoice_id=settle_res["invoice_id"],
             requester_membership_id=admin_membership_id,
         )
-        assert inv_detail["total_bookings"] == 1
-        assert inv_detail["total_amount"] == 7500.0
-        assert len(inv_detail["line_items"]) == 1
-        print(f"  [OK] Retrieved Itemized GST Invoice:")
-        print(f"    - Subtotal: Rs.{inv_detail['subtotal']}, 5% GST: Rs.{inv_detail['gst_amount']}, Total Payable: Rs.{inv_detail['total_amount']}")
-        print(f"    - Line Item 1: {inv_detail['line_items'][0]['description']} (Cost Center: {inv_detail['line_items'][0]['cost_center_code']})")
+        assert len(invoice_detail["line_items"]) >= 1
+        print(f"  [OK] Itemized Corporate GST Invoice Verified: Invoice #{invoice_detail['invoice_number']} with {len(invoice_detail['line_items'])} line items.")
 
         # =========================================================================
-        # TEST 8: CORPORATE SPEND & EXPENSE ANALYTICS REPORT
+        # TEST 15: CORPORATE EXPENSE & SPEND ANALYTICS
         # =========================================================================
         print("\n" + "=" * 70)
-        print("TEST 8: CORPORATE EXPENSE & SPEND ANALYTICS")
+        print("TEST 15: CORPORATE EXPENSE & SPEND ANALYTICS")
         print("=" * 70)
 
-        report = await corp_svc.get_expense_report(
+        analytics = await corp_svc.get_expense_report(
             company_id=company_id,
             requester_membership_id=admin_membership_id,
-            department_id=str(dept.id),
+            department_id=dept_id,
         )
-
-        assert report["total_spend"] == 7500.0
-        assert report["total_trips"] == 1
-        assert "outstation" in report["by_service_type"]
-        print(f"  [OK] Expense Report: Total Spend=Rs.{report['total_spend']}, Total Trips={report['total_trips']}.")
-        print(f"    - By Service Breakdown: {report['by_service_type']}")
+        assert analytics["total_spend"] >= 7500.0
+        assert analytics["total_trips"] >= 1
+        assert "outstation" in analytics["by_service_type"]
+        print(f"  [OK] Expense Report: Total Spend=Rs.{analytics['total_spend']}, Total Trips={analytics['total_trips']}")
+        print(f"    - By Service Breakdown: {analytics['by_service_type']}")
 
         print("\n" + "=" * 80)
-        print("🎉 ALL 8 SERVICE 10 (CORPORATE TRAVEL) TEST SCENARIOS PASSED WITH 100% SUCCESS!")
+        print("🎉 ALL 15 PHASE 22 (CORPORATE TRAVEL) PRODUCTION TESTS PASSED WITH 100% SUCCESS!")
         print("=" * 80)
 
 

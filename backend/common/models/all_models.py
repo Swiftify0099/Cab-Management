@@ -7,7 +7,7 @@ import uuid
 from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum as PyEnum
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from geoalchemy2 import Geography, Geometry
 from sqlalchemy import (
@@ -4485,6 +4485,8 @@ class CorporatePolicy(Base, UUIDMixin, TimestampMixin):
     max_fare_auto_approve: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("2000.00"), nullable=False)
     require_approval_above: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("2000.00"), nullable=False)
     require_purpose: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    cashless_only: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    allowed_payment_methods: Mapped[list] = mapped_column(JSONB, default=["CORPORATE_WALLET", "INVOICE_BILLING"], nullable=False)
     personal_rides_allowed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     allowed_booking_hours_start: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # 6 = 6 AM
     allowed_booking_hours_end: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)    # 22 = 10 PM
@@ -4511,6 +4513,7 @@ class ApprovalRequest(Base, UUIDMixin, TimestampMixin):
     estimated_fare: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     purpose: Mapped[str] = mapped_column(String(255), nullable=False)
     department_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("departments.id", ondelete="SET NULL"), nullable=True)
+    cost_center_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     booking_details_json: Mapped[dict] = mapped_column(JSONB, default={}, nullable=False)  # service-specific details
 
     status: Mapped[ApprovalStatus] = mapped_column(
@@ -5202,11 +5205,16 @@ class MovingOrderStatus(str, PyEnum):
     REQUESTED = "REQUESTED"
     QUOTING = "QUOTING"
     CREW_ASSIGNED = "CREW_ASSIGNED"
+    CREW_ARRIVED = "CREW_ARRIVED"
+    PRE_INSPECTION = "PRE_INSPECTION"
     PACKING = "PACKING"
     LOADING = "LOADING"
     LOADED = "LOADED"
     IN_TRANSIT = "IN_TRANSIT"
+    ARRIVED_DESTINATION = "ARRIVED_DESTINATION"
     UNLOADING = "UNLOADING"
+    POST_INSPECTION = "POST_INSPECTION"
+    DAMAGE_SIGNOFF = "DAMAGE_SIGNOFF"
     COMPLETED = "COMPLETED"
     CANCELLED = "CANCELLED"
 
@@ -5230,10 +5238,14 @@ class MovingOrder(Base, UUIDMixin, TimestampMixin):
     assigned_mover_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="SET NULL"), nullable=True, index=True)
     assigned_vehicle_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("vehicles.id", ondelete="SET NULL"), nullable=True)
 
+    property_type: Mapped[str] = mapped_column(String(50), default="APARTMENT", nullable=False)
     move_size: Mapped[MoveSize] = mapped_column(
         Enum(MoveSize, values_callable=lambda obj: [e.value for e in obj], name="movesize"),
         default=MoveSize.BHK1, nullable=False
     )
+    rooms_count: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
+    large_items_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    box_count: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     scheduled_move_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
 
     # Pickup Location specs
@@ -5242,6 +5254,7 @@ class MovingOrder(Base, UUIDMixin, TimestampMixin):
     pickup_lng: Mapped[float] = mapped_column(Float, nullable=False)
     pickup_floor: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     pickup_has_lift: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    pickup_service_lift_available: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Drop Location specs
     drop_address: Mapped[str] = mapped_column(Text, nullable=False)
@@ -5249,16 +5262,33 @@ class MovingOrder(Base, UUIDMixin, TimestampMixin):
     drop_lng: Mapped[float] = mapped_column(Float, nullable=False)
     drop_floor: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     drop_has_lift: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    drop_service_lift_available: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     distance_km: Mapped[float] = mapped_column(Float, default=15.0, nullable=False)
+    packing_required: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    packing_type: Mapped[str] = mapped_column(String(50), default="STANDARD", nullable=False)  # STANDARD, MULTI_LAYER, PREMIUM_CRATE
+    loading_required: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    unloading_required: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    helpers_count: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
     requires_assembly: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    requires_disassembly: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     requires_fragile_packing: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     insurance_opted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     insurance_fee: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
 
+    pickup_otp: Mapped[Optional[str]] = mapped_column(String(6), nullable=True)
+    pickup_otp_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    delivery_otp: Mapped[Optional[str]] = mapped_column(String(6), nullable=True)
+    delivery_otp_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # Financials
     base_estimate: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     final_fare: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    gross_fare: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    mover_earning: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    platform_commission: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    payment_status: Mapped[str] = mapped_column(String(50), default="PAID", nullable=False)
+    payment_method: Mapped[str] = mapped_column(String(50), default="WALLET", nullable=False)
 
     status: Mapped[MovingOrderStatus] = mapped_column(
         Enum(MovingOrderStatus, values_callable=lambda obj: [e.value for e in obj], name="movingorderstatus"),
@@ -5271,6 +5301,8 @@ class MovingOrder(Base, UUIDMixin, TimestampMixin):
     mover: Mapped[Optional["Driver"]] = relationship("Driver", foreign_keys=[assigned_mover_id])
     items: Mapped[List["MovingItem"]] = relationship("MovingItem", back_populates="order", cascade="all, delete-orphan")
     quotes: Mapped[List["MovingQuote"]] = relationship("MovingQuote", back_populates="order", cascade="all, delete-orphan")
+    crew_members: Mapped[List["MovingCrewMember"]] = relationship("MovingCrewMember", back_populates="order", cascade="all, delete-orphan")
+    inspections: Mapped[List["MovingInspection"]] = relationship("MovingInspection", back_populates="order", cascade="all, delete-orphan")
     pod: Mapped[Optional["MovingPOD"]] = relationship("MovingPOD", back_populates="order", uselist=False, cascade="all, delete-orphan")
 
 
@@ -5281,11 +5313,17 @@ class MovingItem(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "moving_items"
 
     order_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("moving_orders.id", ondelete="CASCADE"), nullable=False, index=True)
-    category: Mapped[str] = mapped_column(String(50), nullable=False)  # FURNITURE, APPLIANCE, KITCHEN, FRAGILE, BOX
+    category: Mapped[str] = mapped_column(String(50), nullable=False)  # FURNITURE, APPLIANCE, KITCHEN, FRAGILE, BOX, MISC
     item_name: Mapped[str] = mapped_column(String(100), nullable=False)  # e.g. "Double Bed King Size", "Refrigerator Double Door"
     quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     is_fragile: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     needs_disassembly: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    needs_assembly: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    cubic_feet_est: Mapped[float] = mapped_column(Float, default=10.0, nullable=False)
+    weight_kg_est: Mapped[float] = mapped_column(Float, default=25.0, nullable=False)
+    pre_existing_damage_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    pre_inspection_photo_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    post_inspection_photo_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
 
     order: Mapped["MovingOrder"] = relationship("MovingOrder", back_populates="items")
 
@@ -5300,6 +5338,12 @@ class MovingQuote(Base, UUIDMixin, TimestampMixin):
     mover_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"), nullable=False, index=True)
 
     quoted_fare: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    base_shifting_rate: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    crew_charge: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    packing_materials_charge: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    vehicle_charge: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    toll_and_taxes: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+
     crew_size: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
     truck_type: Mapped[str] = mapped_column(String(50), default="14ft Eicher Closed Container", nullable=False)
     estimated_hours: Mapped[float] = mapped_column(Float, default=4.0, nullable=False)
@@ -5314,6 +5358,42 @@ class MovingQuote(Base, UUIDMixin, TimestampMixin):
     mover: Mapped["Driver"] = relationship("Driver", foreign_keys=[mover_id])
 
 
+class MovingCrewMember(Base, UUIDMixin, TimestampMixin):
+    """
+    Crew members and laborers assigned to a moving order.
+    """
+    __tablename__ = "moving_crew_members"
+
+    order_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("moving_orders.id", ondelete="CASCADE"), nullable=False, index=True)
+    mover_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="SET NULL"), nullable=True)
+    member_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    phone: Mapped[str] = mapped_column(String(20), nullable=False)
+    role: Mapped[str] = mapped_column(String(50), default="HELPER", nullable=False)  # LEAD_PACKER, CARPENTER, HELPER, DRIVER
+    is_present: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    check_in_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    order: Mapped["MovingOrder"] = relationship("MovingOrder", back_populates="crew_members")
+    mover: Mapped[Optional["Driver"]] = relationship("Driver", foreign_keys=[mover_id])
+
+
+class MovingInspection(Base, UUIDMixin, TimestampMixin):
+    """
+    Cloudinary photo walkthroughs and damage signoff records for pre/post move inspection.
+    """
+    __tablename__ = "moving_inspections"
+
+    order_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("moving_orders.id", ondelete="CASCADE"), nullable=False, index=True)
+    stage: Mapped[str] = mapped_column(String(50), nullable=False)  # PRE_INSPECTION, POST_INSPECTION
+    inspector_driver_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="SET NULL"), nullable=True)
+    photos_json: Mapped[List[Dict[str, Any]]] = mapped_column(JSONB, default=list, nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    customer_signature_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    customer_acknowledged: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    order: Mapped["MovingOrder"] = relationship("MovingOrder", back_populates="inspections")
+
+
 class MovingPOD(Base, UUIDMixin, TimestampMixin):
     """
     Proof of Delivery and final damage inspection walkthrough record.
@@ -5325,6 +5405,12 @@ class MovingPOD(Base, UUIDMixin, TimestampMixin):
     signature_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     damage_reported: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     damage_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    damage_photos_json: Mapped[List[Dict[str, Any]]] = mapped_column(JSONB, default=list, nullable=False)
+    claimed_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    agreed_deduction: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    customer_acknowledged: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    mover_acknowledged: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    mover_signature_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now(), nullable=False)
 
     order: Mapped["MovingOrder"] = relationship("MovingOrder", back_populates="pod")

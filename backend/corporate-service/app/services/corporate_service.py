@@ -296,13 +296,22 @@ class CorporateService:
         company_id: str,
         membership_id: str,
         service_type: str,
-        vehicle_category: Optional[str],
-        estimated_fare: float,
+        vehicle_category: Optional[str] = None,
+        estimated_fare: float = 0.0,
         is_personal: bool = False,
+        payment_method: Optional[str] = None,
+        purpose: Optional[str] = None,
+        cost_center_code: Optional[str] = None,
     ) -> PolicyCheckResult:
         """
         Data-driven policy evaluation. Backend-authoritative.
-        Never returns hardcoded company-specific logic.
+        Enforces:
+        - Cashless corporate billing (blocks CASH payment when cashless_only is True)
+        - Mandatory business purpose (when require_purpose is True)
+        - Service type whitelist
+        - Vehicle category limits
+        - Booking time windows
+        - Threshold-based manager approval routing
         """
         membership = await self.db.get(CompanyMembership, uuid.UUID(membership_id))
         if not membership or str(membership.company_id) != company_id:
@@ -330,31 +339,341 @@ class CorporateService:
         if not policy:
             return PolicyCheckResult(False, False, "No travel policy configured for your role")
 
-        # Check personal rides
+        # 1. Check Cash Payment Restriction (Cashless Policy Enforcement)
+        is_cashless = getattr(policy, "cashless_only", True)
+        if payment_method and payment_method.upper() == "CASH" and is_cashless:
+            return PolicyCheckResult(
+                False, False,
+                "Cash payment is blocked for corporate travel under company policy: Cashless corporate billing required"
+            )
+
+        # 2. Check Mandatory Business Purpose
+        if policy.require_purpose and not (purpose and purpose.strip()):
+            return PolicyCheckResult(
+                False, False,
+                "Business purpose is mandatory for corporate travel under company policy"
+            )
+
+        # 3. Check personal rides prohibition
         if is_personal and not policy.personal_rides_allowed:
-            return PolicyCheckResult(False, False, "Personal rides not allowed on corporate account per policy")
+            return PolicyCheckResult(
+                False, False,
+                "Personal rides are strictly prohibited on corporate account per company policy"
+            )
 
-        # Check allowed services
-        allowed_services = policy.allowed_services or []
-        if service_type.lower() not in [s.lower() for s in allowed_services]:
-            return PolicyCheckResult(False, False, f"Service '{service_type}' not covered by travel policy")
+        # 4. Check allowed services whitelist
+        allowed_services = [s.lower() for s in (policy.allowed_services or [])]
+        if service_type.lower() not in allowed_services:
+            return PolicyCheckResult(
+                False, False,
+                f"Service '{service_type}' is not covered by company travel policy"
+            )
 
-        # Check vehicle category
-        allowed_vehicles = [v.upper() for v in (policy.allowed_vehicle_categories or [])]
-        if vehicle_category and vehicle_category.upper() not in allowed_vehicles:
-            return PolicyCheckResult(False, False, f"Vehicle category '{vehicle_category}' exceeds policy limit")
+        # 5. Check vehicle category tier limit
+        if vehicle_category:
+            allowed_vehicles = [v.upper() for v in (policy.allowed_vehicle_categories or [])]
+            if vehicle_category.upper() not in allowed_vehicles:
+                return PolicyCheckResult(
+                    False, False,
+                    f"Vehicle category '{vehicle_category}' exceeds authorized policy tier"
+                )
 
-        # Check booking hours
+        # 6. Check booking hours window
         if policy.allowed_booking_hours_start is not None and policy.allowed_booking_hours_end is not None:
             current_hour = datetime.now(timezone.utc).hour
             if not (policy.allowed_booking_hours_start <= current_hour < policy.allowed_booking_hours_end):
-                return PolicyCheckResult(False, False, f"Booking not allowed outside {policy.allowed_booking_hours_start}:00–{policy.allowed_booking_hours_end}:00")
+                return PolicyCheckResult(
+                    False, False,
+                    f"Booking not allowed outside {policy.allowed_booking_hours_start}:00–{policy.allowed_booking_hours_end}:00"
+                )
 
-        # Check fare threshold → requires approval?
+        # 7. Check fare threshold → requires approval?
         if estimated_fare > float(policy.require_approval_above):
-            return PolicyCheckResult(True, True, f"Fare ₹{estimated_fare} exceeds auto-approve limit ₹{float(policy.require_approval_above)}. Approval required.")
+            return PolicyCheckResult(
+                True, True,
+                f"Fare ₹{estimated_fare} exceeds auto-approve limit ₹{float(policy.require_approval_above)}. Approval required."
+            )
 
         return PolicyCheckResult(True, False, "Policy check passed. Auto-approved.")
+
+    # ── 3.5. Corporate Booking Orchestration ──────────────────────────────────
+
+    async def create_corporate_booking(
+        self,
+        company_id: str,
+        membership_id: str,
+        service_type: str,
+        vehicle_category: Optional[str],
+        estimated_fare: float,
+        purpose: str,
+        pickup_address: str,
+        drop_address: str,
+        payment_method: str = "CORPORATE_WALLET",
+        department_id: Optional[str] = None,
+        cost_center_code: Optional[str] = None,
+        booking_details: Optional[dict] = None,
+    ) -> dict:
+        """
+        Orchestrates full corporate booking flow:
+        1. Evaluates data-driven policy engine (cashless, purpose, service, vehicle, budget).
+        2. Routes to approval or auto-approves.
+        3. Creates booking record with corporate attribution.
+        """
+        membership = await self.db.get(CompanyMembership, uuid.UUID(membership_id))
+        if not membership or str(membership.company_id) != company_id:
+            raise ValueError("Not an authorized member of this company")
+
+        # Policy evaluation
+        policy_result = await self.check_policy(
+            company_id=company_id,
+            membership_id=membership_id,
+            service_type=service_type,
+            vehicle_category=vehicle_category,
+            estimated_fare=estimated_fare,
+            is_personal=False,
+            payment_method=payment_method,
+            purpose=purpose,
+            cost_center_code=cost_center_code,
+        )
+
+        if not policy_result.allowed:
+            raise ValueError(f"Policy check failed: {policy_result.reason}")
+
+        booking_ref = f"CORP-{datetime.now(timezone.utc).strftime('%y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+
+        # If requires approval, create approval request in PENDING state
+        if policy_result.requires_approval:
+            appr = await self.create_approval_request(
+                company_id=company_id,
+                requester_membership_id=membership_id,
+                service_type=service_type,
+                estimated_fare=estimated_fare,
+                purpose=purpose,
+                department_id=department_id or (str(membership.department_id) if membership.department_id else None),
+                booking_details={
+                    "booking_reference": booking_ref,
+                    "pickup_address": pickup_address,
+                    "drop_address": drop_address,
+                    "vehicle_category": vehicle_category,
+                    "payment_method": payment_method,
+                    "cost_center_code": cost_center_code,
+                    **(booking_details or {}),
+                },
+            )
+            return {
+                "booking_reference": booking_ref,
+                "status": "PENDING_APPROVAL",
+                "approval_id": appr["approval_id"],
+                "approval_required": True,
+                "reason": policy_result.reason,
+                "estimated_fare": estimated_fare,
+            }
+
+        # Auto-approved
+        return {
+            "booking_reference": booking_ref,
+            "status": "CONFIRMED",
+            "approval_required": False,
+            "approval_status": "NOT_REQUIRED",
+            "estimated_fare": estimated_fare,
+            "payment_method": payment_method,
+            "purpose": purpose,
+            "cost_center_code": cost_center_code,
+        }
+
+    # ── 3.6. Partner Privacy Shield (Zero Leakage) ───────────────────────────
+
+    def sanitize_partner_operational_data(
+        self,
+        booking_reference: str,
+        passenger_name: str,
+        passenger_phone: str,
+        pickup_address: str,
+        pickup_lat: float,
+        pickup_lng: float,
+        drop_address: str,
+        drop_lat: float,
+        drop_lng: float,
+        service_type: str,
+        vehicle_category: str,
+        trip_otp: str,
+        estimated_distance_km: float,
+        estimated_duration_min: int,
+    ) -> dict:
+        """
+        Sanitizes corporate booking data for Driver / Partner view.
+        EXPOSES ONLY OPERATIONAL DATA.
+        STRICTLY OMITS:
+        - HR metadata (employee code, department hierarchy, internal grades)
+        - Company payment secrets (GSTIN, corporate card tokens, wallet balance)
+        - Private approval notes and internal manager decisions
+        """
+        masked_phone = f"+91 **** {passenger_phone[-4:]}" if len(passenger_phone) >= 4 else "+91 ****"
+        return {
+            "booking_reference": booking_reference,
+            "passenger_name": passenger_name,
+            "passenger_phone_masked": masked_phone,
+            "pickup_address": pickup_address,
+            "pickup_lat": pickup_lat,
+            "pickup_lng": pickup_lng,
+            "drop_address": drop_address,
+            "drop_lat": drop_lat,
+            "drop_lng": drop_lng,
+            "service_type": service_type,
+            "vehicle_category": vehicle_category,
+            "trip_otp": trip_otp,
+            "estimated_distance_km": estimated_distance_km,
+            "estimated_duration_min": estimated_duration_min,
+            "is_corporate": True,
+            "billing_type": "CORPORATE_BILLING",
+        }
+
+    # ── 3.7. Department & Cost Center Management ─────────────────────────────
+
+    async def create_department(
+        self,
+        company_id: str,
+        name: str,
+        cost_center_code: str,
+        requester_membership_id: str,
+        manager_membership_id: Optional[str] = None,
+    ) -> dict:
+        """Create a department with cost center code."""
+        membership = await self.db.get(CompanyMembership, uuid.UUID(requester_membership_id))
+        if not membership or membership.role not in (CorporateRole.COMPANY_ADMIN, CorporateRole.TRAVEL_ADMIN):
+            raise ValueError("Unauthorized: only Company Admin can create departments")
+
+        dept = Department(
+            id=uuid.uuid4(),
+            company_id=uuid.UUID(company_id),
+            name=name,
+            cost_center_code=cost_center_code,
+            manager_membership_id=uuid.UUID(manager_membership_id) if manager_membership_id else None,
+            is_active=True,
+        )
+        self.db.add(dept)
+        await self.db.commit()
+
+        return {
+            "department_id": str(dept.id),
+            "name": dept.name,
+            "cost_center_code": dept.cost_center_code,
+            "company_id": company_id,
+        }
+
+    async def list_departments(self, company_id: str) -> list:
+        """List departments and cost centers for a company."""
+        dept_q = select(Department).where(
+            Department.company_id == uuid.UUID(company_id),
+            Department.is_active == True,
+        )
+        res = await self.db.execute(dept_q)
+        return [
+            {
+                "department_id": str(d.id),
+                "name": d.name,
+                "cost_center_code": d.cost_center_code,
+            }
+            for d in res.scalars().all()
+        ]
+
+    # ── 3.8. Corporate Trip Completion & GST Settlement ───────────────────────
+
+    async def settle_corporate_trip(
+        self,
+        company_id: str,
+        membership_id: str,
+        booking_reference: str,
+        service_type: str,
+        fare_amount: float,
+        business_purpose: str,
+        cost_center_code: Optional[str] = None,
+        department_id: Optional[str] = None,
+        payment_method: str = "CORPORATE_WALLET",
+    ) -> dict:
+        """
+        Settles completed corporate trip:
+        1. Appends line item to active invoice with 5% GST breakdown.
+        2. Debits corporate wallet if payment method is CORPORATE_WALLET.
+        """
+        membership = await self.db.get(CompanyMembership, uuid.UUID(membership_id))
+        if not membership:
+            raise ValueError("Membership not found")
+
+        # 5% GST calculation
+        gst_rate = Decimal("0.05")
+        dec_fare = Decimal(str(fare_amount))
+        subtotal = round(dec_fare / (Decimal("1.00") + gst_rate), 2)
+        gst_amount = dec_fare - subtotal
+
+        # Find or create active invoice
+        inv_q = select(CorporateInvoice).where(
+            CorporateInvoice.company_id == uuid.UUID(company_id),
+            CorporateInvoice.status.in_([CorporateInvoiceStatus.DRAFT, CorporateInvoiceStatus.GENERATED]),
+        ).order_by(CorporateInvoice.created_at.desc()).limit(1)
+        inv_res = await self.db.execute(inv_q)
+        invoice = inv_res.scalar_one_or_none()
+
+        if not invoice:
+            # Create new invoice
+            now = date_type.today()
+            inv_res_dict = await self.generate_monthly_invoice(company_id, now.strftime("%Y-%m"))
+            invoice = await self.db.get(CorporateInvoice, uuid.UUID(inv_res_dict["invoice_id"]))
+
+        line_item = InvoiceLineItem(
+            id=uuid.uuid4(),
+            invoice_id=invoice.id,
+            membership_id=membership.id,
+            department_id=uuid.UUID(department_id) if department_id else membership.department_id,
+            service_type=service_type,
+            booking_reference=booking_reference,
+            booking_date=date_type.today(),
+            description=f"Corporate {service_type.capitalize()} — {business_purpose}",
+            fare_amount=subtotal,
+            gst_amount=gst_amount,
+            total_amount=dec_fare,
+            business_purpose=business_purpose,
+            cost_center_code=cost_center_code,
+        )
+        self.db.add(line_item)
+
+        # Update invoice totals
+        invoice.total_bookings += 1
+        invoice.subtotal += subtotal
+        invoice.gst_amount += gst_amount
+        invoice.total_amount += dec_fare
+
+        # Debit corporate wallet if applicable
+        if payment_method == "CORPORATE_WALLET":
+            w_q = select(CorporateWallet).where(CorporateWallet.company_id == uuid.UUID(company_id)).with_for_update()
+            w_res = await self.db.execute(w_q)
+            wallet = w_res.scalar_one_or_none()
+            if wallet:
+                wallet.balance -= dec_fare
+                txn = CorporateWalletTransaction(
+                    id=uuid.uuid4(),
+                    wallet_id=wallet.id,
+                    company_id=uuid.UUID(company_id),
+                    direction="DEBIT",
+                    amount=dec_fare,
+                    balance_after=wallet.balance,
+                    description=f"Trip payment #{booking_reference} ({service_type})",
+                    booking_reference=booking_reference,
+                    membership_id=membership.id,
+                )
+                self.db.add(txn)
+
+        await self.db.commit()
+
+        return {
+            "invoice_id": str(invoice.id),
+            "invoice_number": invoice.invoice_number,
+            "line_item_id": str(line_item.id),
+            "booking_reference": booking_reference,
+            "total_amount": float(dec_fare),
+            "gst_amount": float(gst_amount),
+            "subtotal": float(subtotal),
+        }
 
     # ── 4. Approval Workflow ──────────────────────────────────────────────────
 

@@ -231,7 +231,10 @@ class CarpoolService:
         c_uuid = uuid.UUID(customer_user_id) if isinstance(customer_user_id, str) else customer_user_id
         t_uuid = uuid.UUID(trip_id) if isinstance(trip_id, str) else trip_id
 
-        trip = await self.db.get(CarpoolTrip, t_uuid)
+        # Row-lock the CarpoolTrip to prevent concurrent overbooking
+        trip_stmt = select(CarpoolTrip).where(CarpoolTrip.id == t_uuid).with_for_update()
+        trip_res = await self.db.execute(trip_stmt)
+        trip = trip_res.scalar_one_or_none()
         if not trip:
             raise HTTPException(status_code=404, detail="Carpool trip not found")
 
@@ -490,8 +493,10 @@ class CarpoolService:
         booking.status = CarpoolBookingStatus.CANCELLED
         booking.refund_amount = refund_amount
 
-        # Restore seats on trip
-        trip = await self.db.get(CarpoolTrip, booking.trip_id)
+        # Restore seats on trip with row-lock
+        trip_stmt = select(CarpoolTrip).where(CarpoolTrip.id == booking.trip_id).with_for_update()
+        trip_res = await self.db.execute(trip_stmt)
+        trip = trip_res.scalar_one_or_none()
         if trip:
             trip.available_seats += booking.seats_booked
 
