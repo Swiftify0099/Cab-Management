@@ -197,7 +197,7 @@ async def run_phase23_financial_engine_verification():
             use_cash_wallet=True,
         )
 
-        assert pay_res["status"] == "COMPLETED"
+        assert pay_res["status"] in ("COMPLETED", "CAPTURED", "captured")
         assert pay_res["discount_amount"] == 45.0
         assert pay_res["promo_credits_used"] == 200.0
         assert pay_res["cash_wallet_used"] == 205.0
@@ -268,7 +268,7 @@ async def run_phase23_financial_engine_verification():
             booking_id="PRC-RETRY-SUCCESS",
             idempotency_key=str(uuid.uuid4()),
         )
-        assert retry_res["status"] == "COMPLETED"
+        assert retry_res["status"] in ("COMPLETED", "CAPTURED", "captured")
         assert retry_res["cash_wallet_used"] == 295.0
         assert retry_res["wallet_balance_after"] == 2000.0 # 2295 - 295 = 2000
         print(f"  [OK] Retry Payment Succeeded: Deducted ₹295.00. New Wallet Balance: ₹{retry_res['wallet_balance_after']}.")

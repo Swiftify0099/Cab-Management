@@ -240,7 +240,7 @@ class FinancialEngineService:
             )
             coupon = coupon_res.scalars().first()
             if coupon and d_amount >= coupon.min_fare:
-                if str(coupon.discount_type).upper() == "PERCENTAGE":
+                if "PERCENT" in str(coupon.discount_type).upper():
                     discount_amount = (d_amount * (coupon.discount_value / Decimal("100.00"))).quantize(CENT, rounding=ROUND_HALF_UP)
                     if coupon.max_discount_amount:
                         discount_amount = min(discount_amount, _to_decimal(coupon.max_discount_amount))
@@ -305,7 +305,7 @@ class FinancialEngineService:
             amount=payable_amount,
             currency="INR",
             payment_method=pm_enum,
-            status=PaymentStatus.COMPLETED,
+            status=PaymentStatus.CAPTURED,
             ledger_type=LedgerType.BOOKING,
             idempotency_key=idempotency_key or str(uuid.uuid4()),
             tx_metadata={
@@ -326,7 +326,7 @@ class FinancialEngineService:
                     id=uuid.uuid4(),
                     user_id=customer.user_id,
                     amount=promo_used,
-                    transaction_type=LedgerType.PROMO_DEBIT,
+                    transaction_type=LedgerType.WALLET_DEBIT,
                     direction="DEBIT",
                     bucket="PROMO_CREDIT",
                     balance_after=_to_decimal(customer.promo_credit_balance),
@@ -657,7 +657,7 @@ class FinancialEngineService:
                 id=uuid.uuid4(),
                 user_id=c_uuid,
                 amount=d_fee,
-                transaction_type=LedgerType.CANCELLATION_PENALTY,
+                transaction_type=LedgerType.WALLET_DEBIT,
                 direction="DEBIT",
                 bucket="CASH",
                 balance_after=_to_decimal(customer.wallet_balance),
