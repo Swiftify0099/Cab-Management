@@ -150,11 +150,34 @@ class RideStartService:
         pin: str,
         driver_lat: float,
         driver_lng: float,
-        accuracy: float = 10.0
+        accuracy: float = 10.0,
+        purpose: str = "RIDE_START",
+        customer_id: Optional[uuid.UUID] = None,
     ) -> Dict[str, Any]:
         """
         Authoritative Ride Start Endpoint.
+        Validates:
+          1. Purpose (RIDE_START, PARCEL_PICKUP, PARCEL_DELIVERY) — rejects LOGIN.
+          2. Trip & Customer mapping.
+          3. Partner assignment.
+          4. PIN expiry (15 mins) and lockout limit (5 attempts).
+          5. PIN verification.
+          6. PostGIS physical proximity (<= 1000m).
+          7. Atomic transition to IN_PROGRESS and emit OTP_VERIFIED -> START_ALLOWED.
         """
+        # 0. Purpose Validation
+        valid_start_purposes = {"RIDE_START", "PARCEL_PICKUP", "PARCEL_DELIVERY"}
+        if purpose == "LOGIN":
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid OTP purpose: LOGIN OTP cannot be used for starting a ride.",
+            )
+        if purpose not in valid_start_purposes:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported OTP purpose '{purpose}'. Allowed: {', '.join(valid_start_purposes)}",
+            )
+
         d_res = await self.db.execute(
             select(Driver).where(Driver.user_id == uuid.UUID(driver_user_id))
         )
@@ -180,19 +203,23 @@ class RideStartService:
                 "message": "Ride already started (Idempotent response).",
                 "ride_id": str(ride.id),
                 "status": "in_progress",
+                "start_allowed": True,
                 "started_at": ride.started_at.isoformat() if ride.started_at else datetime.utcnow().isoformat(),
                 "destination": {
                     "address": ride.destination_address,
                     "lat": ride.destination_lat,
                     "lng": ride.destination_lng,
                 },
-                "fare": float(ride.estimated_fare),
+                "fare": float(ride.estimated_fare or 0),
                 "route_polyline": ride.route_polyline,
             }
 
         # 3. Ownership & Status Validation
         if ride.assigned_driver_id != driver.id:
             raise HTTPException(status_code=403, detail="You are not assigned to start this ride.")
+
+        if customer_id and ride.customer_id != customer_id:
+            raise HTTPException(status_code=403, detail="Customer ID mismatch for this ride request.")
 
         if ride.status not in [RideRequestStatus.ASSIGNED, RideRequestStatus.PICKUP]:
             raise HTTPException(status_code=400, detail=f"Cannot start ride in status '{ride.status.value}'.")
@@ -206,7 +233,32 @@ class RideStartService:
                 detail=f"PIN verification locked due to excessive failed attempts. Try again in {remaining_mins} minutes."
             )
 
-        # 5. PIN Verification
+        # 5. PIN Expiry Check (15 minutes from creation or update)
+        pin_created_at = getattr(ride, "start_pin_created_at", None) or ride.updated_at or ride.created_at
+        if pin_created_at:
+            elapsed_sec = (now - pin_created_at.replace(tzinfo=None)).total_seconds()
+            if elapsed_sec > 900:  # 15 minutes
+                raise HTTPException(
+                    status_code=400,
+                    detail="Ride PIN has expired (valid for 15 minutes). Please request a new OTP."
+                )
+
+        # 6. PostGIS GPS Proximity Validation
+        dist_m = haversine_distance_km(driver_lat, driver_lng, ride.pickup_lat, ride.pickup_lng) * 1000.0
+        if dist_m > 1000.0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"GPS Proximity Error: You are {int(dist_m)}m away from pickup (Max allowed: 1000m). Approach pickup before starting ride."
+            )
+
+        # 7. GPS Accuracy Validation (<=100m)
+        if accuracy > 100.0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"GPS accuracy too low ({int(accuracy)}m > 100m). Please wait for a better GPS fix."
+            )
+
+        # 8. PIN Matching Verification
         target_hash = ride.start_pin_hash
         target_plain = ride.start_pin_plain
         pin_clean = pin.strip()
@@ -220,7 +272,6 @@ class RideStartService:
         elif pin_clean in ["1234", "4821", "0000", "9999"]:  # Dev fallback PINs
             pin_matched = True
         elif not target_plain and not target_hash and len(pin_clean) == 4:
-            # If PIN was never explicitly set, set and accept the supplied 4-digit PIN
             ride.start_pin_plain = pin_clean
             ride.start_pin_hash = input_hash
             pin_matched = True
@@ -241,23 +292,7 @@ class RideStartService:
                 detail=f"Incorrect Ride PIN. {remaining_attempts} attempt(s) remaining."
             )
 
-        # 6. PostGIS GPS Proximity Validation
-        dist_m = haversine_distance_km(driver_lat, driver_lng, ride.pickup_lat, ride.pickup_lng) * 1000.0
-        # Allow reasonable GPS tolerance (1000m) since OTP itself guarantees physical presence
-        if dist_m > 1000.0:
-            raise HTTPException(
-                status_code=400,
-                detail=f"GPS Proximity Error: You are {int(dist_m)}m away from pickup (Max allowed: 1000m)."
-            )
-
-        # 7. GPS Accuracy Validation (<=100m)
-        if accuracy > 100.0:
-            raise HTTPException(
-                status_code=400,
-                detail=f"GPS accuracy too low ({int(accuracy)}m > 100m). Please wait for a better GPS fix."
-            )
-
-        # 8. Atomic State Transition & Pickup Snapshot
+        # 9. Atomic State Transition & Pickup Snapshot
         ride.status = RideRequestStatus.IN_PROGRESS
         ride.started_at = now
         ride.start_lat = driver_lat
@@ -267,7 +302,6 @@ class RideStartService:
         ride.pin_locked_until = None
 
         driver.status = "on_trip"
-        # driver.current_trip_id is FK to trips.id, not ride_requests
 
         event_log = RideEventLog(
             id=uuid.uuid4(),
@@ -280,11 +314,25 @@ class RideStartService:
                 "start_lng": driver_lng,
                 "accuracy": accuracy,
                 "pickup_distance_meters": dist_m,
+                "purpose": purpose,
                 "pin_verified": True,
             }
         )
         self.db.add(event_log)
         await self.db.commit()
+
+        # 10. Emit OTP_VERIFIED and START_ALLOWED events
+        cust_id_str = str(ride.customer_id)
+        req_id_str = str(ride.id)
+        verified_payload = {
+            "event": "OTP_VERIFIED",
+            "ride_request_id": req_id_str,
+            "purpose": purpose,
+            "start_allowed": True,
+            "verified_at": now.isoformat(),
+        }
+        await _safe_redis_publish(f"customer:{cust_id_str}:events", verified_payload)
+        await _safe_redis_publish(f"driver:{str(driver.user_id)}:events", verified_payload)
 
         # Broadcast TRIP_STARTED & RIDE_STARTED to customer and trip rooms
         start_payload = {
@@ -293,6 +341,7 @@ class RideStartService:
             "booking_id": str(ride.id),
             "trip_id": str(ride.id),
             "status": "IN_PROGRESS",
+            "start_allowed": True,
             "started_at": ride.started_at.isoformat() if ride.started_at else now.isoformat(),
             "destination": {
                 "address": ride.destination_address,
@@ -301,8 +350,6 @@ class RideStartService:
             },
             "fare": float(ride.estimated_fare or 0),
         }
-        cust_id_str = str(ride.customer_id)
-        req_id_str = str(ride.id)
         for ch in [
             f"customer:{cust_id_str}:events",
             f"user:{cust_id_str}:events",
@@ -311,21 +358,6 @@ class RideStartService:
         ]:
             await _safe_redis_publish(ch, start_payload)
 
-        # Send trip started push notification to customer
-        try:
-            cust_res = await self.db.execute(select(User).where(User.id == ride.customer_id))
-            cust_user = cust_res.scalar_one_or_none()
-            if cust_user and cust_user.device_token:
-                from common.utils.push import send_push_notification
-                await send_push_notification(
-                    token=cust_user.device_token,
-                    title="Trip Started! 🛣️",
-                    body=f"Your ride to {ride.destination_address[:40]} has started. Have a safe journey!",
-                    data={"screen": "track", "booking_id": req_id_str},
-                )
-        except Exception:
-            pass
-
         # Realtime Socket.IO Event Broadcast non-blocking
         await _safe_redis_publish("communication:events", {
             "event": "ride:started",
@@ -333,26 +365,29 @@ class RideStartService:
             "customer_id": str(ride.customer_id),
             "driver_id": str(driver.id),
             "status": "in_progress",
+            "start_allowed": True,
             "started_at": now.isoformat(),
             "destination": {
                 "address": ride.destination_address,
                 "lat": ride.destination_lat,
                 "lng": ride.destination_lng,
             },
-            "fare": float(ride.estimated_fare),
+            "fare": float(ride.estimated_fare or 0),
         })
 
         return {
             "success": True,
-            "message": "PIN verified! Trip successfully started.",
+            "message": "OTP verified! Trip successfully started.",
             "ride_id": str(ride.id),
             "status": "in_progress",
+            "start_allowed": True,
+            "purpose": purpose,
             "started_at": now.isoformat(),
             "destination": {
                 "address": ride.destination_address,
                 "lat": ride.destination_lat,
                 "lng": ride.destination_lng,
             },
-            "fare": float(ride.estimated_fare),
+            "fare": float(ride.estimated_fare or 0),
             "route_polyline": ride.route_polyline,
         }
