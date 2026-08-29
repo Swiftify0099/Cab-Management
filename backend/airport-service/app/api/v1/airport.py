@@ -74,6 +74,24 @@ class FlightWebhookPayload(BaseModel):
 
 class DriverArrivalPayload(BaseModel):
     driver_id: str
+    driver_lat: Optional[float] = None
+    driver_lng: Optional[float] = None
+
+class ExtendWaitingPayload(BaseModel):
+    additional_minutes: int = 15
+    reason: Optional[str] = "Flight delayed / Baggage retrieval in progress"
+
+class LogParkingPayload(BaseModel):
+    driver_id: str
+    amount: float
+    bay_info: Optional[str] = None
+
+class DriverActionPayload(BaseModel):
+    driver_id: str
+
+class StartTripPayload(BaseModel):
+    driver_id: str
+    simulated_waiting_mins: Optional[int] = None
 
 class CancelBookingPayload(BaseModel):
     reason: Optional[str] = "Customer requested cancellation"

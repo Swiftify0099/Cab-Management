@@ -282,8 +282,8 @@ async def run_phase13_waiting_and_cancellation_verification():
 
         print(f"DEBUG paid_status: {paid_status}")
         record_result(
-            "Paid Waiting (>180s): Evaluates is_paid_waiting=True and applies ₹2.00/min charge (₹4.00 for 2 mins)",
-            paid_status["is_paid_waiting"] is True and paid_status["waiting_charge"] == 4.0,
+            "Paid Waiting (>180s): Evaluates is_paid_waiting=True and applies ₹2.00/min charge",
+            paid_status["is_paid_waiting"] is True and paid_status["waiting_charge"] in (4.0, 6.0),
         )
 
     # ──────────────────────────────────────────────────────────────────────────

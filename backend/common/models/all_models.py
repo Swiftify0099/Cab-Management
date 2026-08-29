@@ -3629,9 +3629,15 @@ class TransportOrder(Base, UUIDMixin, TimestampMixin, SoftDeleteMixin):
     scheduled_pickup_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     loading_required: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    loading_floor: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    loading_has_elevator: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     unloading_required: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    unloading_floor: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    unloading_has_elevator: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     helpers_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     vehicle_category_required: Mapped[str] = mapped_column(String(50), default="TATA_ACE", nullable=False)
+    tarp_required: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    ropes_required: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     special_instructions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Authoritative Itemized Financials
@@ -3673,7 +3679,9 @@ class TransportOrder(Base, UUIDMixin, TimestampMixin, SoftDeleteMixin):
     cancellation_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     cancelled_by: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
-    # Verification OTP
+    # Verification OTPs
+    pickup_otp: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    pickup_otp_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     delivery_otp: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     delivery_otp_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     delivery_otp_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -3691,13 +3699,18 @@ class TransportOrder(Base, UUIDMixin, TimestampMixin, SoftDeleteMixin):
 class TransportLoad(Base, UUIDMixin, TimestampMixin):
     """
     Itemized and dimensional payload specification for a Transport Order.
+    Includes GST E-Way Bill compliance for commercial cargo movements.
     """
     __tablename__ = "transport_loads"
 
     order_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("transport_orders.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
     goods_category: Mapped[str] = mapped_column(String(50), default="GENERAL", nullable=False)
-    goods_description: Mapped[str] = mapped_column(Text, nullable=False)
+    goods_description: Mapped[Text] = mapped_column(Text, nullable=False)
     declared_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), nullable=True)
+    eway_bill_required: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    eway_bill_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    eway_bill_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    eway_bill_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     weight_kg: Mapped[float] = mapped_column(Float, nullable=False)
     length_ft: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     width_ft: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
@@ -3726,11 +3739,15 @@ class TransportQuote(Base, UUIDMixin, TimestampMixin):
     vehicle_number: Mapped[str] = mapped_column(String(30), nullable=False)
     vehicle_name: Mapped[str] = mapped_column(String(100), nullable=False)
 
+    base_rate: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    helper_charge: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    toll_and_taxes: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(10), default="INR", nullable=False)
     included_helpers: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     estimated_pickup_eta_min: Mapped[int] = mapped_column(Integer, default=15, nullable=False)
     estimated_transit_duration_min: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     status: Mapped[TransportQuoteStatus] = mapped_column(
         Enum(TransportQuoteStatus, native_enum=False, length=50, values_callable=lambda obj: [e.value for e in obj]),

@@ -1,6 +1,6 @@
 """
 ===============================================================================
-TRANSPORT REST API ROUTER — FEATURE 17
+TRANSPORT REST API ROUTER — FEATURE 17 & PHASE 17
 ===============================================================================
 """
 from datetime import datetime
@@ -33,10 +33,16 @@ class TransportEstimateRequest(BaseModel):
     height_ft: float = 0.0
     package_count: int = 1
     loading_required: bool = True
+    loading_floor: int = 0
+    loading_has_elevator: bool = True
     unloading_required: bool = True
+    unloading_floor: int = 0
+    unloading_has_elevator: bool = True
     helpers_count: int = 0
     vehicle_category: str = "TATA_ACE"
     declared_value: Optional[float] = None
+    tarp_required: bool = False
+    ropes_required: bool = False
     promo_code: Optional[str] = None
 
 
@@ -59,7 +65,11 @@ class CreateTransportOrderRequest(BaseModel):
     height_ft: float = 0.0
     package_count: int = 1
     loading_required: bool = True
+    loading_floor: int = 0
+    loading_has_elevator: bool = True
     unloading_required: bool = True
+    unloading_floor: int = 0
+    unloading_has_elevator: bool = True
     helpers_count: int = 0
     vehicle_category_required: str = "TATA_ACE"
     pricing_mode: str = "INSTANT_PRICE"  # INSTANT_PRICE | REQUEST_QUOTES
@@ -69,7 +79,11 @@ class CreateTransportOrderRequest(BaseModel):
     drop_notes: Optional[str] = None
     special_instructions: Optional[str] = None
     declared_value: Optional[float] = None
+    eway_bill_number: Optional[str] = None
+    eway_bill_url: Optional[str] = None
     fragile_handling: bool = False
+    tarp_required: bool = False
+    ropes_required: bool = False
     payment_method: str = "WALLET"
     promo_code: Optional[str] = None
 
@@ -78,9 +92,13 @@ class SubmitQuoteRequest(BaseModel):
     driver_id: str
     vehicle_id: str
     amount: float
+    base_rate: Optional[float] = None
+    helper_charge: Optional[float] = None
+    toll_and_taxes: Optional[float] = None
     included_helpers: int = 0
     estimated_pickup_eta_min: int = 15
     estimated_transit_duration_min: int = 60
+    notes: Optional[str] = None
 
 
 class CounterOfferRequest(BaseModel):
@@ -102,6 +120,16 @@ class UpdateTransportStatusRequest(BaseModel):
     longitude: Optional[float] = None
 
 
+class VerifyPickupOTPRequest(BaseModel):
+    driver_id: str
+    pickup_otp: str
+
+
+class VerifyEWayBillRequest(BaseModel):
+    driver_id: str
+    eway_bill_number: str
+
+
 class VerifyPODRequest(BaseModel):
     driver_id: str
     receiver_name: str
@@ -112,6 +140,10 @@ class VerifyPODRequest(BaseModel):
     delivery_notes: Optional[str] = None
     latitude: float = 18.5204
     longitude: float = 73.8567
+
+
+class CancelTransportOrderRequest(BaseModel):
+    reason: Optional[str] = None
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -135,10 +167,16 @@ async def calculate_estimate(
         height_ft=req.height_ft,
         package_count=req.package_count,
         loading_required=req.loading_required,
+        loading_floor=req.loading_floor,
+        loading_has_elevator=req.loading_has_elevator,
         unloading_required=req.unloading_required,
+        unloading_floor=req.unloading_floor,
+        unloading_has_elevator=req.unloading_has_elevator,
         helpers_count=req.helpers_count,
         vehicle_category=req.vehicle_category,
         declared_value=req.declared_value,
+        tarp_required=req.tarp_required,
+        ropes_required=req.ropes_required,
         promo_code=req.promo_code,
     )
 
@@ -170,7 +208,11 @@ async def create_transport_order(
         height_ft=req.height_ft,
         package_count=req.package_count,
         loading_required=req.loading_required,
+        loading_floor=req.loading_floor,
+        loading_has_elevator=req.loading_has_elevator,
         unloading_required=req.unloading_required,
+        unloading_floor=req.unloading_floor,
+        unloading_has_elevator=req.unloading_has_elevator,
         helpers_count=req.helpers_count,
         vehicle_category_required=req.vehicle_category_required,
         pricing_mode=req.pricing_mode,
@@ -180,7 +222,11 @@ async def create_transport_order(
         drop_notes=req.drop_notes,
         special_instructions=req.special_instructions,
         declared_value=req.declared_value,
+        eway_bill_number=req.eway_bill_number,
+        eway_bill_url=req.eway_bill_url,
         fragile_handling=req.fragile_handling,
+        tarp_required=req.tarp_required,
+        ropes_required=req.ropes_required,
         payment_method=req.payment_method,
         promo_code=req.promo_code,
     )
@@ -204,6 +250,17 @@ async def get_my_transport_orders(
     return await service.get_customer_orders(current_user.user_id_str)
 
 
+@router.get("/open-requests", summary="Get open transport requests for bidding (Driver marketplace)")
+@router.get("/driver-requests", summary="Get open transport requests for bidding (Driver marketplace)")
+async def get_open_requests(
+    db: AsyncSession = Depends(get_db),
+    pickup_lat: Optional[float] = Query(None),
+    pickup_lng: Optional[float] = Query(None),
+):
+    service = TransportService(db)
+    return await service.get_open_freight_requests(pickup_lat=pickup_lat, pickup_lng=pickup_lng)
+
+
 @router.post("/orders/{order_id}/quote", summary="Transporter submits commercial quote")
 async def submit_quote(
     order_id: str,
@@ -218,9 +275,13 @@ async def submit_quote(
         driver_id=req.driver_id,
         vehicle_id=req.vehicle_id,
         amount=req.amount,
+        base_rate=req.base_rate,
+        helper_charge=req.helper_charge,
+        toll_and_taxes=req.toll_and_taxes,
         included_helpers=req.included_helpers,
         estimated_pickup_eta_min=req.estimated_pickup_eta_min,
         estimated_transit_duration_min=req.estimated_transit_duration_min,
+        notes=req.notes,
     )
 
 
@@ -284,6 +345,34 @@ async def update_transport_status(
     )
 
 
+@router.post("/orders/{order_id}/verify-pickup-otp", summary="Verify pickup OTP on cargo loading completion")
+async def verify_pickup_otp(
+    order_id: str,
+    req: VerifyPickupOTPRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    service = TransportService(db)
+    return await service.verify_pickup_otp(
+        order_id=order_id,
+        driver_id=req.driver_id,
+        pickup_otp=req.pickup_otp,
+    )
+
+
+@router.post("/orders/{order_id}/verify-eway-bill", summary="Verify E-Way Bill at loading dock")
+async def verify_eway_bill(
+    order_id: str,
+    req: VerifyEWayBillRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    service = TransportService(db)
+    return await service.verify_eway_bill(
+        order_id=order_id,
+        driver_id=req.driver_id,
+        eway_bill_number=req.eway_bill_number,
+    )
+
+
 @router.post("/orders/{order_id}/verify-pod", summary="Verify OTP, record POD & settle driver earnings")
 async def verify_pod(
     order_id: str,
@@ -302,4 +391,20 @@ async def verify_pod(
         delivery_notes=req.delivery_notes,
         latitude=req.latitude,
         longitude=req.longitude,
+    )
+
+
+@router.post("/orders/{order_id}/cancel", summary="Cancel transport order")
+async def cancel_transport_order(
+    order_id: str,
+    req: CancelTransportOrderRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    service = TransportService(db)
+    return await service.cancel_transport_order(
+        order_id=order_id,
+        user_id=current_user.user_id_str,
+        user_role="CUSTOMER",
+        reason=req.reason,
     )

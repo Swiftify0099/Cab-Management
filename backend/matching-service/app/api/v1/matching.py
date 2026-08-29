@@ -5103,24 +5103,101 @@ async def check_scheduled_auto_releases(
     return await service.check_and_auto_release_expired()
 
 
-@router.post("/scheduled/dev-simulate")
-async def simulate_scheduled_dev_scenario(
+@router.post("/scheduled/create")
+async def create_scheduled_ride_endpoint(
     payload: Dict[str, Any],
     current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Developer Mode sandbox simulator for seeding scheduled bookings and testing edge cases.
+    Customer schedules an advance ride booking.
     """
-    driver_res = await db.execute(select(Driver).where(Driver.user_id == current_user.id))
-    driver = driver_res.scalar_one_or_none()
-    scenario_key = payload.get("scenario_key", "SEED_AVAILABLE_SCHEDULED_RIDES")
-
     service = ScheduledRideService(db)
-    return await service.simulate_dev_scenario(
-        driver_id=driver.id if driver else uuid.uuid4(),
-        scenario_key=scenario_key
+    pref_id = uuid.UUID(payload["preferred_driver_id"]) if payload.get("preferred_driver_id") else None
+    cat_id = uuid.UUID(payload["ride_category_id"]) if payload.get("ride_category_id") else None
+    fare_val = Decimal(str(payload["estimated_fare"])) if payload.get("estimated_fare") else None
+
+    return await service.create_scheduled_ride(
+        customer_user_id=current_user.id,
+        pickup_lat=float(payload["pickup_lat"]),
+        pickup_lng=float(payload["pickup_lng"]),
+        pickup_address=payload["pickup_address"],
+        destination_lat=float(payload["destination_lat"]),
+        destination_lng=float(payload["destination_lng"]),
+        destination_address=payload["destination_address"],
+        scheduled_pickup_time=payload["scheduled_pickup_time"],
+        service_type=payload.get("service_type", "cab"),
+        ride_category_id=cat_id,
+        preferred_driver_id=pref_id,
+        estimated_fare=fare_val,
+        seats_requested=int(payload.get("seats_requested", 1)),
     )
+
+
+@router.patch("/scheduled/{ride_id}/modify")
+async def modify_scheduled_ride_endpoint(
+    ride_id: uuid.UUID,
+    payload: Dict[str, Any],
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Customer modifies an upcoming scheduled booking (pickup time or address).
+    """
+    service = ScheduledRideService(db)
+    return await service.modify_scheduled_ride(
+        customer_user_id=current_user.id,
+        ride_id=ride_id,
+        new_scheduled_pickup_time=payload.get("new_scheduled_pickup_time"),
+        new_pickup_address=payload.get("new_pickup_address"),
+        new_pickup_lat=float(payload["new_pickup_lat"]) if payload.get("new_pickup_lat") is not None else None,
+        new_pickup_lng=float(payload["new_pickup_lng"]) if payload.get("new_pickup_lng") is not None else None,
+        new_destination_address=payload.get("new_destination_address"),
+        new_destination_lat=float(payload["new_destination_lat"]) if payload.get("new_destination_lat") is not None else None,
+        new_destination_lng=float(payload["new_destination_lng"]) if payload.get("new_destination_lng") is not None else None,
+    )
+
+
+@router.post("/scheduled/{ride_id}/customer-cancel")
+async def customer_cancel_scheduled_ride_endpoint(
+    ride_id: uuid.UUID,
+    payload: Dict[str, Any],
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Customer cancels an upcoming scheduled booking with early vs late fee policy.
+    """
+    service = ScheduledRideService(db)
+    reason = payload.get("reason", "Customer requested cancellation")
+    return await service.cancel_scheduled_ride_by_customer(
+        customer_user_id=current_user.id,
+        ride_id=ride_id,
+        reason=reason,
+    )
+
+
+@router.get("/scheduled/customer-upcoming")
+async def get_customer_upcoming_scheduled_endpoint(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Returns upcoming advance bookings for the authenticated customer.
+    """
+    service = ScheduledRideService(db)
+    return await service.get_customer_scheduled_rides(customer_user_id=current_user.id)
+
+
+@router.post("/scheduled/reminders/process")
+async def process_scheduled_reminders_endpoint(
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Background worker endpoint: dispatches T-60m and T-30m pre-trip notifications.
+    """
+    service = ScheduledRideService(db)
+    return await service.process_scheduled_reminders()
 
 
 # ============================================================

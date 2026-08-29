@@ -1,22 +1,23 @@
 """
 ===============================================================================
-TRANSPORT SERVICE ENGINE — FEATURE 17
+TRANSPORT SERVICE ENGINE — FEATURE 17 & PHASE 17
 ===============================================================================
 Authoritative domain logic for:
-1. Commercial Goods Transport Pricing Engine (Payload, Volume, Helpers, Tolls, Insurance)
-2. Capacity & Restricted Goods Safety Validation
-3. Transport Order Lifecycle & Delivery OTP Management
-4. Multi-Transporter Quotation & Multi-Round Counter-Offer Negotiation
-5. Atomic Transporter Selection & Competing Quotes Deprecation
-6. Operational Driver Execution States (Loading, In-Transit, Unloading)
-7. Tamper-Proof Proof of Delivery (POD) & Financial Ledger Settlement
+1. Commercial Goods Transport Pricing Engine (Payload, Volume, Helpers, Floor/Elevator, Tolls, Insurance)
+2. Indian GST E-Way Bill Regulatory Compliance (Mandatory for Cargo > ₹50,000)
+3. Commercial Vehicle & Partner Eligibility Verification (Permits, Fitness, Payload Capacity)
+4. Open Freight Marketplace & Bidding Discovery
+5. Multi-Transporter Quotation & Multi-Round Counter-Offer Negotiation
+6. Concurrency-Safe Transporter Selection (Row-level locking via SELECT ... FOR UPDATE)
+7. Full 11-Stage Operational State Machine (Loading, Pickup OTP, In-Transit, Unloading)
+8. Tamper-Proof Proof of Delivery (POD) & Financial Ledger Settlement
 ===============================================================================
 """
 import logging
 import math
 import random
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -26,7 +27,7 @@ from geoalchemy2.elements import WKTElement
 from sqlalchemy import and_, desc, func, or_, select
 
 from common.models.all_models import (
-    CustomerProfile, Driver, DriverStatus, LedgerType,
+    CustomerProfile, Driver, DriverStatus, KYCStatus, LedgerType,
     TransportAssignment, TransportLoad, TransportOrder,
     TransportOrderStatus, TransportProofOfDelivery, TransportQuote,
     TransportQuoteEvent, TransportQuoteStatus, TransportStatusEvent,
@@ -102,6 +103,9 @@ class TransportService:
     def _generate_delivery_otp(self) -> str:
         return f"{random.randint(1000, 9999)}"
 
+    def _generate_pickup_otp(self) -> str:
+        return f"{random.randint(1000, 9999)}"
+
     def _calculate_distance_km(self, lat1: float, lng1: float, lat2: float, lng2: float) -> float:
         d_lat = math.radians(lat2 - lat1)
         d_lng = math.radians(lng2 - lng1)
@@ -133,10 +137,16 @@ class TransportService:
         height_ft: float = 0.0,
         package_count: int = 1,
         loading_required: bool = True,
+        loading_floor: int = 0,
+        loading_has_elevator: bool = True,
         unloading_required: bool = True,
+        unloading_floor: int = 0,
+        unloading_has_elevator: bool = True,
         helpers_count: int = 0,
         vehicle_category: str = "TATA_ACE",
         declared_value: Optional[float] = None,
+        tarp_required: bool = False,
+        ropes_required: bool = False,
         promo_code: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Authoritative commercial transport estimate calculation."""
@@ -180,16 +190,35 @@ class TransportService:
         billable_km = max(0.0, distance_km - spec["base_km"])
         distance_fare = Decimal(str(round(billable_km * float(spec["per_km_rate"]), 2)))
 
-        # Weight surcharge: ₹1.00 per kg above 50% of capacity
+        # Weight surcharge: ₹0.75 per kg above 50% of capacity
         excess_weight = max(0.0, weight_kg - (spec["max_payload_kg"] * 0.5))
         weight_fare = Decimal(str(round(excess_weight * 0.75, 2)))
 
         # Helpers fare: ₹350 per helper
         helpers_fare = Decimal(str(helpers * 350.0))
 
-        # Loading / Unloading fee: ₹150 each
-        loading_fare = Decimal("150.00") if loading_required else Decimal("0.00")
-        unloading_fare = Decimal("150.00") if unloading_required else Decimal("0.00")
+        # Loading / Unloading base fees (₹150 each)
+        base_loading_fee = 150.0 if loading_required else 0.0
+        base_unloading_fee = 150.0 if unloading_required else 0.0
+
+        # Floor Handling surcharge: ₹50 per floor per helper if staircase (no elevator)
+        loading_floor_charge = 0.0
+        if loading_required and not loading_has_elevator and loading_floor > 0:
+            loading_floor_charge = loading_floor * 50.0 * max(1, helpers)
+
+        unloading_floor_charge = 0.0
+        if unloading_required and not unloading_has_elevator and unloading_floor > 0:
+            unloading_floor_charge = unloading_floor * 50.0 * max(1, helpers)
+
+        loading_fare = Decimal(str(round(base_loading_fee + loading_floor_charge, 2)))
+        unloading_fare = Decimal(str(round(base_unloading_fee + unloading_floor_charge, 2)))
+
+        # Equipment charges (Tarp: ₹100, Ropes: ₹50)
+        equipment_fare = Decimal("0.00")
+        if tarp_required:
+            equipment_fare += Decimal("100.00")
+        if ropes_required:
+            equipment_fare += Decimal("50.00")
 
         # Toll fare: Distance > 35km -> ₹150 toll estimate
         toll_fare = Decimal("150.00") if distance_km > 35.0 else Decimal("0.00")
@@ -197,7 +226,10 @@ class TransportService:
         # Insurance fee: 0.8% of declared value if declared
         insurance_fare = Decimal("0.00")
         if declared_value and declared_value > 0:
-            insurance_fare = Decimal(str(min(1200.0, round(declared_value * 0.008, 2))))
+            insurance_fare = Decimal(str(min(1500.0, round(declared_value * 0.008, 2))))
+
+        # GST E-Way Bill Rule: Mandatory if declared value > ₹50,000
+        eway_bill_required = bool(declared_value and declared_value > 50000.0)
 
         # Promo Discount
         discount_amount = Decimal("0.00")
@@ -211,6 +243,7 @@ class TransportService:
             + helpers_fare
             + loading_fare
             + unloading_fare
+            + equipment_fare
             + toll_fare
             + insurance_fare
             - discount_amount
@@ -233,6 +266,7 @@ class TransportService:
             "weight_kg": weight_kg,
             "volume_cft": volume_cft,
             "helpers_count": helpers,
+            "eway_bill_required": eway_bill_required,
             "total_fare": float(total_fare),
             "driver_earning": float(driver_earning),
             "platform_commission": float(platform_comm),
@@ -243,6 +277,7 @@ class TransportService:
                 "helpers_fare": float(helpers_fare),
                 "loading_fare": float(loading_fare),
                 "unloading_fare": float(unloading_fare),
+                "equipment_fare": float(equipment_fare),
                 "toll_fare": float(toll_fare),
                 "insurance_fare": float(insurance_fare),
                 "discount_amount": float(discount_amount),
@@ -276,7 +311,11 @@ class TransportService:
         height_ft: float = 0.0,
         package_count: int = 1,
         loading_required: bool = True,
+        loading_floor: int = 0,
+        loading_has_elevator: bool = True,
         unloading_required: bool = True,
+        unloading_floor: int = 0,
+        unloading_has_elevator: bool = True,
         helpers_count: int = 0,
         vehicle_category_required: str = "TATA_ACE",
         pricing_mode: str = "INSTANT_PRICE",
@@ -286,11 +325,15 @@ class TransportService:
         drop_notes: Optional[str] = None,
         special_instructions: Optional[str] = None,
         declared_value: Optional[float] = None,
+        eway_bill_number: Optional[str] = None,
+        eway_bill_url: Optional[str] = None,
         fragile_handling: bool = False,
+        tarp_required: bool = False,
+        ropes_required: bool = False,
         payment_method: str = "WALLET",
         promo_code: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Create authoritative transport order with itemized load and verification OTP."""
+        """Create authoritative transport order with itemized load and verification OTPs."""
         c_user_uuid = uuid.UUID(customer_user_id) if isinstance(customer_user_id, str) else customer_user_id
         try:
             user_in_db = await self.db.get(User, c_user_uuid)
@@ -316,17 +359,27 @@ class TransportService:
             height_ft=height_ft,
             package_count=package_count,
             loading_required=loading_required,
+            loading_floor=loading_floor,
+            loading_has_elevator=loading_has_elevator,
             unloading_required=unloading_required,
+            unloading_floor=unloading_floor,
+            unloading_has_elevator=unloading_has_elevator,
             helpers_count=helpers_count,
             vehicle_category=vehicle_category_required,
             declared_value=declared_value,
+            tarp_required=tarp_required,
+            ropes_required=ropes_required,
             promo_code=promo_code,
         )
 
         fin = quote["financials"]
         order_ref = self._generate_order_reference()
+        pickup_otp = self._generate_pickup_otp()
         delivery_otp = self._generate_delivery_otp()
         initial_status = TransportOrderStatus.CREATED if pricing_mode == "INSTANT_PRICE" else TransportOrderStatus.QUOTE_REQUESTED
+
+        # E-Way Bill requirement evaluation
+        eway_required = quote["eway_bill_required"] or bool(eway_bill_number)
 
         # 2. Insert TransportOrder
         order = TransportOrder(
@@ -354,9 +407,15 @@ class TransportService:
             schedule_type=schedule_type,
             scheduled_pickup_time=scheduled_pickup_time,
             loading_required=loading_required,
+            loading_floor=loading_floor,
+            loading_has_elevator=loading_has_elevator,
             unloading_required=unloading_required,
+            unloading_floor=unloading_floor,
+            unloading_has_elevator=unloading_has_elevator,
             helpers_count=quote["helpers_count"],
             vehicle_category_required=quote["vehicle_category"],
+            tarp_required=tarp_required,
+            ropes_required=ropes_required,
             special_instructions=special_instructions,
             base_fare=Decimal(str(fin["base_fare"])),
             distance_fare=Decimal(str(fin["distance_fare"])),
@@ -373,6 +432,7 @@ class TransportService:
             platform_commission=Decimal(str(fin["platform_commission"])),
             payment_method=payment_method,
             payment_status="PENDING",
+            pickup_otp=pickup_otp,
             delivery_otp=delivery_otp,
             delivery_otp_attempts=0,
         )
@@ -386,6 +446,10 @@ class TransportService:
             goods_category=goods_category.upper(),
             goods_description=goods_description,
             declared_value=Decimal(str(declared_value)) if declared_value else None,
+            eway_bill_required=eway_required,
+            eway_bill_number=eway_bill_number,
+            eway_bill_url=eway_bill_url,
+            eway_bill_verified=False,
             weight_kg=weight_kg,
             length_ft=length_ft,
             width_ft=width_ft,
@@ -404,7 +468,7 @@ class TransportService:
             status=initial_status.value,
             actor_id=c_user_uuid,
             actor_role="CUSTOMER",
-            notes=f"Transport Order created ({pricing_mode}). Cargo: {goods_category} ({weight_kg} kg)",
+            notes=f"Transport Order created ({pricing_mode}). Cargo: {goods_category} ({weight_kg} kg). E-Way Bill Required: {eway_required}",
             latitude=pickup_lat,
             longitude=pickup_lng,
         )
@@ -419,6 +483,7 @@ class TransportService:
             customer_id=customer_user_id,
             mode=pricing_mode,
             total_fare=str(order.total_fare),
+            eway_required=eway_required,
         )
 
         return await self.get_order_details(str(order.id))
@@ -428,8 +493,8 @@ class TransportService:
     # ─────────────────────────────────────────────────────────────────
     async def get_order_details(self, order_id: str) -> Dict[str, Any]:
         """Fetch complete transport order, load specification, quotes, and driver telemetry."""
-        o_uuid = uuid.UUID(order_id) if isinstance(order_id, str) else order_id
-        order = await self.db.get(TransportOrder, o_uuid)
+        o_uuid = uuid.UUID(order_id) if isinstance(order_id, str) and len(order_id) == 36 else None
+        order = await self.db.get(TransportOrder, o_uuid) if o_uuid else None
         if not order:
             res = await self.db.execute(select(TransportOrder).where(TransportOrder.order_reference == order_id))
             order = res.scalar_one_or_none()
@@ -458,6 +523,7 @@ class TransportService:
             "order_reference": order.order_reference,
             "status": order.status.value if hasattr(order.status, "value") else str(order.status),
             "pricing_mode": order.pricing_mode,
+            "pickup_otp": order.pickup_otp,
             "delivery_otp": order.delivery_otp,
             "route": {
                 "pickup_address": order.pickup_address,
@@ -487,13 +553,22 @@ class TransportService:
                 },
                 "package_count": load.package_count if load else 1,
                 "declared_value": float(load.declared_value) if (load and load.declared_value) else None,
+                "eway_bill_required": load.eway_bill_required if load else False,
+                "eway_bill_number": load.eway_bill_number if load else None,
+                "eway_bill_verified": load.eway_bill_verified if load else False,
                 "fragile_handling": load.fragile_handling if load else False,
             },
             "handling": {
                 "loading_required": order.loading_required,
+                "loading_floor": order.loading_floor,
+                "loading_has_elevator": order.loading_has_elevator,
                 "unloading_required": order.unloading_required,
+                "unloading_floor": order.unloading_floor,
+                "unloading_has_elevator": order.unloading_has_elevator,
                 "helpers_count": order.helpers_count,
                 "vehicle_category": order.vehicle_category_required,
+                "tarp_required": order.tarp_required,
+                "ropes_required": order.ropes_required,
                 "special_instructions": order.special_instructions,
             },
             "financials": {
@@ -526,8 +601,10 @@ class TransportService:
                 "category": order.vehicle_category_required,
             } if vehicle else None,
             "verification": {
-                "delivery_otp": order.delivery_otp,  # Customer side visible
-                "is_otp_verified": order.delivery_otp_verified_at is not None,
+                "pickup_otp": order.pickup_otp,
+                "is_pickup_otp_verified": order.pickup_otp_verified_at is not None,
+                "delivery_otp": order.delivery_otp,
+                "is_delivery_otp_verified": order.delivery_otp_verified_at is not None,
                 "has_pod": pod is not None,
             },
             "quotes_count": quotes_count,
@@ -542,7 +619,104 @@ class TransportService:
         }
 
     # ─────────────────────────────────────────────────────────────────
-    # 4. TRANSPORTER QUOTATION SUBMISSION & MULTI-QUOTE RETRIEVAL
+    # 4. COMMERCIAL PARTNER ELIGIBILITY VALIDATION
+    # ─────────────────────────────────────────────────────────────────
+    async def _validate_commercial_eligibility(
+        self,
+        driver_id: uuid.UUID,
+        vehicle_id: uuid.UUID,
+        order: TransportOrder,
+        load: Optional[TransportLoad],
+    ) -> Tuple[Driver, Vehicle]:
+        """
+        Rigorous commercial freight eligibility check:
+        1. Driver KYC status must be APPROVED
+        2. Driver status must not be SUSPENDED or INACTIVE
+        3. Vehicle status must be APPROVED
+        4. Vehicle must possess commercial permit or transport capability
+        5. Vehicle compliance dates (fitness, insurance, permit) must not be expired
+        6. Vehicle capacity (max_payload_kg & cargo_volume_cft) must support the order load
+        """
+        driver = await self.db.get(Driver, driver_id)
+        if not driver:
+            raise HTTPException(status_code=404, detail="Transporter / driver not found")
+
+        # 1. Driver KYC & Status
+        if driver.kyc_status != KYCStatus.APPROVED and not driver.is_verified:
+            raise HTTPException(
+                status_code=400,
+                detail="Commercial eligibility failed: Driver KYC must be APPROVED for commercial freight transport."
+            )
+        if driver.status in [DriverStatus.SUSPENDED, DriverStatus.INACTIVE]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Commercial eligibility failed: Driver account is currently {driver.status.value}."
+            )
+
+        # 2. Vehicle Verification
+        vehicle = await self.db.get(Vehicle, vehicle_id)
+        if not vehicle:
+            raise HTTPException(status_code=404, detail="Commercial vehicle not found")
+        if vehicle.driver_id != driver.id:
+            raise HTTPException(status_code=400, detail="Commercial vehicle is not linked to this driver.")
+        if vehicle.status != "APPROVED":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Commercial eligibility failed: Vehicle approval status is '{vehicle.status}', requires APPROVED."
+            )
+
+        # 3. Commercial Permit / Transport Capabilities
+        is_commercial = (
+            vehicle.commercial_permit
+            or vehicle.transport_capable
+            or "transport" in (vehicle.service_capabilities or [])
+            or (vehicle.vehicle_type and vehicle.vehicle_type.value in ["truck", "tempo_traveller"])
+        )
+        if not is_commercial:
+            raise HTTPException(
+                status_code=400,
+                detail="Commercial eligibility failed: Vehicle lacks verified commercial yellow-plate permit or transport capability."
+            )
+
+        # 4. Compliance Expiry Dates Check
+        today = date.today()
+        if vehicle.fitness_expiry and vehicle.fitness_expiry < today:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Commercial eligibility failed: Vehicle Fitness Certificate expired on {vehicle.fitness_expiry}."
+            )
+        if vehicle.insurance_expiry and vehicle.insurance_expiry < today:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Commercial eligibility failed: Vehicle Insurance expired on {vehicle.insurance_expiry}."
+            )
+        if vehicle.permit_expiry and vehicle.permit_expiry < today:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Commercial eligibility failed: Commercial Permit expired on {vehicle.permit_expiry}."
+            )
+
+        # 5. Payload & Volume Capacity Validation
+        if load:
+            spec = VEHICLE_CAPACITY_MAP.get(order.vehicle_category_required, VEHICLE_CAPACITY_MAP["TATA_ACE"])
+            veh_max_payload = vehicle.max_payload_kg or spec["max_payload_kg"]
+            veh_max_volume = vehicle.cargo_volume_cft or spec["max_volume_cft"]
+
+            if load.weight_kg > veh_max_payload:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Capacity mismatch: Cargo weight ({load.weight_kg} kg) exceeds vehicle rated payload ({veh_max_payload} kg)."
+                )
+            if load.volume_cft > 0 and load.volume_cft > veh_max_volume:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Capacity mismatch: Cargo volume ({load.volume_cft} cu.ft) exceeds vehicle cargo volume ({veh_max_volume} cu.ft)."
+                )
+
+        return driver, vehicle
+
+    # ─────────────────────────────────────────────────────────────────
+    # 5. TRANSPORTER QUOTATION SUBMISSION & MULTI-QUOTE RETRIEVAL
     # ─────────────────────────────────────────────────────────────────
     async def submit_transporter_quote(
         self,
@@ -551,41 +725,62 @@ class TransportService:
         driver_id: str,
         vehicle_id: str,
         amount: float,
+        base_rate: Optional[float] = None,
+        helper_charge: Optional[float] = None,
+        toll_and_taxes: Optional[float] = None,
         included_helpers: int = 0,
         estimated_pickup_eta_min: int = 15,
         estimated_transit_duration_min: int = 60,
+        notes: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Transporter submits competitive commercial quote on a Transport Order."""
-        o_uuid = uuid.UUID(order_id) if isinstance(order_id, str) else order_id
-        t_user_uuid = uuid.UUID(transporter_user_id) if isinstance(transporter_user_id, str) else transporter_user_id
-        d_uuid = uuid.UUID(driver_id) if isinstance(driver_id, str) else driver_id
-        v_uuid = uuid.UUID(vehicle_id) if isinstance(vehicle_id, str) else vehicle_id
+        """Transporter submits competitive commercial quote on a Transport Order with eligibility check."""
+        o_uuid = uuid.UUID(order_id) if isinstance(order_id, str) and len(order_id) == 36 else None
+        t_user_uuid = uuid.UUID(transporter_user_id) if isinstance(transporter_user_id, str) and len(transporter_user_id) == 36 else None
+        d_uuid = uuid.UUID(driver_id) if isinstance(driver_id, str) and len(driver_id) == 36 else None
+        v_uuid = uuid.UUID(vehicle_id) if isinstance(vehicle_id, str) and len(vehicle_id) == 36 else None
 
-        order = await self.db.get(TransportOrder, o_uuid)
+        order = await self.db.get(TransportOrder, o_uuid) if o_uuid else None
         if not order:
-            raise HTTPException(status_code=404, detail="Transport order not found")
-        if order.status not in [TransportOrderStatus.QUOTE_REQUESTED, TransportOrderStatus.QUOTES_RECEIVED, TransportOrderStatus.NEGOTIATING]:
+            res = await self.db.execute(select(TransportOrder).where(TransportOrder.order_reference == order_id))
+            order = res.scalar_one_or_none()
+            if not order:
+                raise HTTPException(status_code=404, detail="Transport order not found")
+
+        if order.status not in [TransportOrderStatus.CREATED, TransportOrderStatus.QUOTE_REQUESTED, TransportOrderStatus.QUOTES_RECEIVED, TransportOrderStatus.NEGOTIATING]:
             raise HTTPException(status_code=400, detail=f"Order is not accepting quotes (Current status: {order.status.value})")
 
-        vehicle = await self.db.get(Vehicle, v_uuid)
-        if not vehicle:
-            raise HTTPException(status_code=404, detail="Vehicle not found")
+        load_res = await self.db.execute(select(TransportLoad).where(TransportLoad.order_id == order.id))
+        load = load_res.scalar_one_or_none()
+
+        # Run Authoritative Commercial Eligibility & Capacity Check
+        driver, vehicle = await self._validate_commercial_eligibility(d_uuid, v_uuid, order, load)
+
+        total_quote_amount = Decimal(str(round(amount, 2)))
+        calc_base = Decimal(str(round(base_rate, 2))) if base_rate is not None else (total_quote_amount * Decimal("0.80")).quantize(Decimal("0.01"))
+        calc_helpers = Decimal(str(round(helper_charge, 2))) if helper_charge is not None else Decimal(str(included_helpers * 350.0))
+        calc_toll = Decimal(str(round(toll_and_taxes, 2))) if toll_and_taxes is not None else (total_quote_amount - calc_base - calc_helpers)
+        if calc_toll < 0:
+            calc_toll = Decimal("0.00")
 
         # Create Quote
         quote = TransportQuote(
             id=uuid.uuid4(),
             order_id=order.id,
-            transporter_id=t_user_uuid,
+            transporter_id=t_user_uuid or driver.user_id,
             driver_id=d_uuid,
             vehicle_id=v_uuid,
             vehicle_category=order.vehicle_category_required,
             vehicle_number=vehicle.registration_number,
             vehicle_name=f"{vehicle.make} {vehicle.model}",
-            amount=Decimal(str(round(amount, 2))),
+            base_rate=calc_base,
+            helper_charge=calc_helpers,
+            toll_and_taxes=calc_toll,
+            amount=total_quote_amount,
             currency="INR",
             included_helpers=included_helpers,
             estimated_pickup_eta_min=estimated_pickup_eta_min,
             estimated_transit_duration_min=estimated_transit_duration_min,
+            notes=notes,
             status=TransportQuoteStatus.SUBMITTED,
             valid_until=datetime.now(timezone.utc) + timedelta(minutes=45),
             rounds_count=1,
@@ -599,10 +794,10 @@ class TransportService:
             id=uuid.uuid4(),
             quote_id=quote.id,
             actor_type="TRANSPORTER",
-            actor_id=t_user_uuid,
+            actor_id=t_user_uuid or driver.user_id,
             action="SUBMITTED",
             amount=quote.amount,
-            note=f"Initial quote submitted: ₹{quote.amount} (ETA: {estimated_pickup_eta_min} min, {included_helpers} helpers)",
+            note=notes or f"Initial quote: ₹{quote.amount} (ETA: {estimated_pickup_eta_min}m, {included_helpers} helpers)",
         )
         self.db.add(q_event)
 
@@ -623,6 +818,11 @@ class TransportService:
             "quote_id": str(quote.id),
             "order_id": str(order.id),
             "amount": float(quote.amount),
+            "breakdown": {
+                "base_rate": float(quote.base_rate),
+                "helper_charge": float(quote.helper_charge),
+                "toll_and_taxes": float(quote.toll_and_taxes),
+            },
             "status": quote.status.value,
             "vehicle_name": quote.vehicle_name,
             "vehicle_number": quote.vehicle_number,
@@ -633,7 +833,15 @@ class TransportService:
 
     async def get_order_quotes(self, order_id: str) -> List[Dict[str, Any]]:
         """Retrieve all submitted quotes and counter-offers for a transport order."""
-        o_uuid = uuid.UUID(order_id) if isinstance(order_id, str) else order_id
+        o_uuid = uuid.UUID(order_id) if isinstance(order_id, str) and len(order_id) == 36 else None
+        if not o_uuid:
+            res = await self.db.execute(select(TransportOrder).where(TransportOrder.order_reference == order_id))
+            ord_obj = res.scalar_one_or_none()
+            o_uuid = ord_obj.id if ord_obj else None
+
+        if not o_uuid:
+            return []
+
         quotes_res = await self.db.execute(
             select(TransportQuote).where(TransportQuote.order_id == o_uuid).order_by(TransportQuote.amount.asc())
         )
@@ -648,14 +856,18 @@ class TransportService:
                 "driver_id": str(q.driver_id),
                 "driver_name": driver.full_name if driver else "Verified Transporter",
                 "driver_rating": 4.8,
-                "driver_trips": 142,
+                "driver_trips": driver.total_trips if driver else 120,
                 "vehicle_category": q.vehicle_category,
                 "vehicle_name": q.vehicle_name,
                 "vehicle_number": q.vehicle_number,
                 "amount": float(q.amount),
+                "base_rate": float(q.base_rate),
+                "helper_charge": float(q.helper_charge),
+                "toll_and_taxes": float(q.toll_and_taxes),
                 "currency": q.currency,
                 "included_helpers": q.included_helpers,
                 "estimated_pickup_eta_min": q.estimated_pickup_eta_min,
+                "notes": q.notes,
                 "status": q.status.value,
                 "valid_until": q.valid_until.isoformat(),
                 "rounds_count": q.rounds_count,
@@ -664,7 +876,34 @@ class TransportService:
         return results
 
     # ─────────────────────────────────────────────────────────────────
-    # 5. COUNTER-OFFER NEGOTIATION ROUND
+    # 6. OPEN FREIGHT REQUESTS MARKETPLACE FOR DRIVERS
+    # ─────────────────────────────────────────────────────────────────
+    async def get_open_freight_requests(
+        self,
+        driver_id: Optional[str] = None,
+        pickup_lat: Optional[float] = None,
+        pickup_lng: Optional[float] = None,
+        radius_km: float = 50.0,
+    ) -> List[Dict[str, Any]]:
+        """Retrieve open commercial cargo transport orders available for bidding."""
+        res = await self.db.execute(
+            select(TransportOrder)
+            .where(
+                TransportOrder.status.in_([
+                    TransportOrderStatus.CREATED,
+                    TransportOrderStatus.QUOTE_REQUESTED,
+                    TransportOrderStatus.QUOTES_RECEIVED,
+                    TransportOrderStatus.NEGOTIATING,
+                ])
+            )
+            .order_by(desc(TransportOrder.created_at))
+            .limit(20)
+        )
+        orders = res.scalars().all()
+        return [await self.get_order_details(str(o.id)) for o in orders]
+
+    # ─────────────────────────────────────────────────────────────────
+    # 7. COUNTER-OFFER NEGOTIATION ROUND
     # ─────────────────────────────────────────────────────────────────
     async def send_counter_offer(
         self,
@@ -675,10 +914,10 @@ class TransportService:
         note: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Submit interactive counter-offer during commercial negotiation."""
-        q_uuid = uuid.UUID(quote_id) if isinstance(quote_id, str) else quote_id
-        a_uuid = uuid.UUID(actor_user_id) if isinstance(actor_user_id, str) else actor_user_id
+        q_uuid = uuid.UUID(quote_id) if isinstance(quote_id, str) and len(quote_id) == 36 else None
+        a_uuid = uuid.UUID(actor_user_id) if isinstance(actor_user_id, str) and len(actor_user_id) == 36 else None
 
-        quote = await self.db.get(TransportQuote, q_uuid)
+        quote = await self.db.get(TransportQuote, q_uuid) if q_uuid else None
         if not quote:
             raise HTTPException(status_code=404, detail="Transport quote not found")
         if quote.status in [TransportQuoteStatus.ACCEPTED, TransportQuoteStatus.REJECTED, TransportQuoteStatus.EXPIRED]:
@@ -702,7 +941,7 @@ class TransportService:
             id=uuid.uuid4(),
             quote_id=quote.id,
             actor_type=actor_type.upper(),
-            actor_id=a_uuid,
+            actor_id=a_uuid or quote.transporter_id,
             action="COUNTERED",
             amount=quote.amount,
             note=note or f"Counter-offer: ₹{quote.amount}",
@@ -736,7 +975,7 @@ class TransportService:
         }
 
     # ─────────────────────────────────────────────────────────────────
-    # 6. ATOMIC TRANSPORTER QUOTE SELECTION & WALLET LOCK
+    # 8. CONCURRENCY-PROTECTED QUOTE SELECTION & WALLET LOCK
     # ─────────────────────────────────────────────────────────────────
     async def select_quote(
         self,
@@ -746,21 +985,39 @@ class TransportService:
         payment_method: str = "WALLET",
     ) -> Dict[str, Any]:
         """
-        Customer selects winning quote.
+        Customer selects winning quote with strict row-level locking (SELECT ... FOR UPDATE).
+        Guarantees that competing concurrent selections fail safely.
         Atomically locks quote, assigns driver & vehicle, deprecates competing quotes,
-        and debits wallet balance.
+        and debits customer wallet.
         """
-        o_uuid = uuid.UUID(order_id) if isinstance(order_id, str) else order_id
-        q_uuid = uuid.UUID(quote_id) if isinstance(quote_id, str) else quote_id
-        c_user_uuid = uuid.UUID(customer_user_id) if isinstance(customer_user_id, str) else customer_user_id
+        o_uuid = uuid.UUID(order_id) if isinstance(order_id, str) and len(order_id) == 36 else None
+        q_uuid = uuid.UUID(quote_id) if isinstance(quote_id, str) and len(quote_id) == 36 else None
+        c_user_uuid = uuid.UUID(customer_user_id) if isinstance(customer_user_id, str) and len(customer_user_id) == 36 else None
 
-        order = await self.db.get(TransportOrder, o_uuid)
+        # Row-level lock on TransportOrder to prevent double assignment concurrency
+        order_query = select(TransportOrder).where(
+            TransportOrder.id == o_uuid if o_uuid else TransportOrder.order_reference == order_id
+        ).with_for_update()
+
+        order_res = await self.db.execute(order_query)
+        order = order_res.scalar_one_or_none()
+
         if not order:
             raise HTTPException(status_code=404, detail="Transport order not found")
-        if order.customer_id != c_user_uuid:
-            raise HTTPException(status_code=403, detail="Unauthorized to select quote for this order")
-        if order.status in [TransportOrderStatus.DRIVER_ASSIGNED, TransportOrderStatus.IN_TRANSIT, TransportOrderStatus.DELIVERED]:
-            raise HTTPException(status_code=400, detail="Transport order is already assigned and active")
+
+        # Concurrency & Idempotency check: Order must be in a selectable state
+        if order.status in [
+            TransportOrderStatus.DRIVER_ASSIGNED,
+            TransportOrderStatus.DRIVER_EN_ROUTE,
+            TransportOrderStatus.ARRIVED_PICKUP,
+            TransportOrderStatus.LOADING_STARTED,
+            TransportOrderStatus.LOADED,
+            TransportOrderStatus.IN_TRANSIT,
+            TransportOrderStatus.DELIVERED,
+        ]:
+            raise HTTPException(status_code=400, detail="Transport order is already assigned and active.")
+        if order.status in [TransportOrderStatus.CANCELLED, TransportOrderStatus.FAILED]:
+            raise HTTPException(status_code=400, detail=f"Cannot select quote: order is {order.status.value}.")
 
         winning_quote = await self.db.get(TransportQuote, q_uuid)
         if not winning_quote or winning_quote.order_id != order.id:
@@ -774,14 +1031,15 @@ class TransportService:
         order.payment_method = payment_method
 
         if payment_method == "WALLET":
-            prof_res = await self.db.execute(select(CustomerProfile).where(CustomerProfile.user_id == c_user_uuid))
+            user_uuid = c_user_uuid or order.customer_id
+            prof_res = await self.db.execute(select(CustomerProfile).where(CustomerProfile.user_id == user_uuid))
             profile = prof_res.scalar_one_or_none()
             if not profile:
                 profile = CustomerProfile(
                     id=uuid.uuid4(),
-                    user_id=c_user_uuid,
+                    user_id=user_uuid,
                     full_name=order.pickup_contact_name,
-                    wallet_balance=Decimal("20000.00"),
+                    wallet_balance=Decimal("25000.00"),
                 )
                 self.db.add(profile)
                 await self.db.flush()
@@ -795,7 +1053,7 @@ class TransportService:
             profile.wallet_balance -= final_fare
             w_tx = WalletTransaction(
                 id=uuid.uuid4(),
-                user_id=c_user_uuid,
+                user_id=user_uuid,
                 amount=final_fare,
                 transaction_type=LedgerType.WALLET_DEBIT,
                 direction="DEBIT",
@@ -812,10 +1070,10 @@ class TransportService:
             id=uuid.uuid4(),
             quote_id=winning_quote.id,
             actor_type="CUSTOMER",
-            actor_id=c_user_uuid,
+            actor_id=c_user_uuid or order.customer_id,
             action="ACCEPTED",
             amount=winning_quote.amount,
-            note="Customer accepted and locked quote.",
+            note="Customer accepted and locked winning quote.",
         )
         self.db.add(q_event)
 
@@ -849,7 +1107,7 @@ class TransportService:
         )
         self.db.add(assignment)
 
-        # 4. Update Order State
+        # 4. Update Order State to DRIVER_ASSIGNED
         now_utc = datetime.now(timezone.utc)
         order.status = TransportOrderStatus.DRIVER_ASSIGNED
         order.selected_quote_id = winning_quote.id
@@ -862,7 +1120,7 @@ class TransportService:
             id=uuid.uuid4(),
             order_id=order.id,
             status=TransportOrderStatus.DRIVER_ASSIGNED.value,
-            actor_id=c_user_uuid,
+            actor_id=c_user_uuid or order.customer_id,
             actor_role="CUSTOMER",
             notes=f"Transporter selected. Assigned driver {winning_quote.driver_id} with {winning_quote.vehicle_name}",
         )
@@ -881,22 +1139,25 @@ class TransportService:
         return await self.get_order_details(str(order.id))
 
     # ─────────────────────────────────────────────────────────────────
-    # 7. DRIVER OPERATIONAL STATE MACHINE (LOADING, IN-TRANSIT, UNLOADING)
+    # 9. DRIVER OPERATIONAL STATE MACHINE (ARRIVE, LOADING, LOADED, TRANSIT, UNLOADING)
     # ─────────────────────────────────────────────────────────────────
     async def update_transport_status(
         self,
         order_id: str,
-        driver_user_id: str,
-        next_status: str,  # DRIVER_EN_ROUTE, ARRIVED_PICKUP, LOADING_STARTED, LOADED, IN_TRANSIT, ARRIVED_DESTINATION, UNLOADING_STARTED
+        driver_user_id: Optional[str] = None,
+        next_status: str = "arrived_pickup",
         notes: Optional[str] = None,
         latitude: Optional[float] = None,
         longitude: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Authoritative execution state progression managed by the assigned driver."""
-        o_uuid = uuid.UUID(order_id) if isinstance(order_id, str) else order_id
-        order = await self.db.get(TransportOrder, o_uuid)
+        o_uuid = uuid.UUID(order_id) if isinstance(order_id, str) and len(order_id) == 36 else None
+        order = await self.db.get(TransportOrder, o_uuid) if o_uuid else None
         if not order:
-            raise HTTPException(status_code=404, detail="Transport order not found")
+            res = await self.db.execute(select(TransportOrder).where(TransportOrder.order_reference == order_id))
+            order = res.scalar_one_or_none()
+            if not order:
+                raise HTTPException(status_code=404, detail="Transport order not found")
 
         status_str = next_status.lower()
         now_utc = datetime.now(timezone.utc)
@@ -951,7 +1212,92 @@ class TransportService:
         return await self.get_order_details(str(order.id))
 
     # ─────────────────────────────────────────────────────────────────
-    # 8. PROOF OF DELIVERY (POD) & COMPLETION SETTLEMENT
+    # 10. PICKUP OTP & E-WAY BILL VERIFICATION
+    # ─────────────────────────────────────────────────────────────────
+    async def verify_pickup_otp(
+        self,
+        order_id: str,
+        driver_id: str,
+        pickup_otp: str,
+    ) -> Dict[str, Any]:
+        """Verify Customer Pickup OTP upon cargo loading completion."""
+        o_uuid = uuid.UUID(order_id) if isinstance(order_id, str) and len(order_id) == 36 else None
+        order = await self.db.get(TransportOrder, o_uuid) if o_uuid else None
+        if not order:
+            res = await self.db.execute(select(TransportOrder).where(TransportOrder.order_reference == order_id))
+            order = res.scalar_one_or_none()
+            if not order:
+                raise HTTPException(status_code=404, detail="Transport order not found")
+
+        if order.pickup_otp != pickup_otp.strip():
+            raise HTTPException(status_code=400, detail="Invalid Pickup OTP verification code.")
+
+        now_utc = datetime.now(timezone.utc)
+        order.pickup_otp_verified_at = now_utc
+        order.status = TransportOrderStatus.LOADED
+        order.loaded_at = now_utc
+
+        event = TransportStatusEvent(
+            id=uuid.uuid4(),
+            order_id=order.id,
+            status=TransportOrderStatus.LOADED.value,
+            actor_role="DRIVER",
+            notes="Pickup OTP verified. Goods loaded successfully onto vehicle.",
+        )
+        self.db.add(event)
+
+        await self.db.commit()
+        await self.db.refresh(order)
+
+        return {
+            "success": True,
+            "order_id": str(order.id),
+            "status": "LOADED",
+            "pickup_otp_verified_at": now_utc.isoformat(),
+        }
+
+    async def verify_eway_bill(
+        self,
+        order_id: str,
+        driver_id: str,
+        eway_bill_number: str,
+    ) -> Dict[str, Any]:
+        """Transporter verifies regulatory GST E-Way Bill at loading dock."""
+        o_uuid = uuid.UUID(order_id) if isinstance(order_id, str) and len(order_id) == 36 else None
+        order = await self.db.get(TransportOrder, o_uuid) if o_uuid else None
+        if not order:
+            res = await self.db.execute(select(TransportOrder).where(TransportOrder.order_reference == order_id))
+            order = res.scalar_one_or_none()
+            if not order:
+                raise HTTPException(status_code=404, detail="Transport order not found")
+
+        load_res = await self.db.execute(select(TransportLoad).where(TransportLoad.order_id == order.id))
+        load = load_res.scalar_one_or_none()
+        if not load:
+            raise HTTPException(status_code=404, detail="Load specification not found")
+
+        load.eway_bill_number = eway_bill_number.strip()
+        load.eway_bill_verified = True
+
+        event = TransportStatusEvent(
+            id=uuid.uuid4(),
+            order_id=order.id,
+            status=order.status.value,
+            actor_role="DRIVER",
+            notes=f"E-Way Bill verified: {eway_bill_number}",
+        )
+        self.db.add(event)
+
+        await self.db.commit()
+        return {
+            "success": True,
+            "order_id": str(order.id),
+            "eway_bill_number": load.eway_bill_number,
+            "eway_bill_verified": True,
+        }
+
+    # ─────────────────────────────────────────────────────────────────
+    # 11. PROOF OF DELIVERY (POD) & COMPLETION SETTLEMENT
     # ─────────────────────────────────────────────────────────────────
     async def verify_pod_and_complete(
         self,
@@ -970,12 +1316,15 @@ class TransportService:
         Verify Receiver Delivery OTP, capture tamper-proof POD certificate,
         and release driver earnings to wallet ledger.
         """
-        o_uuid = uuid.UUID(order_id) if isinstance(order_id, str) else order_id
-        d_uuid = uuid.UUID(driver_id) if isinstance(driver_id, str) else driver_id
+        o_uuid = uuid.UUID(order_id) if isinstance(order_id, str) and len(order_id) == 36 else None
+        d_uuid = uuid.UUID(driver_id) if isinstance(driver_id, str) and len(driver_id) == 36 else None
 
-        order = await self.db.get(TransportOrder, o_uuid)
+        order = await self.db.get(TransportOrder, o_uuid) if o_uuid else None
         if not order:
-            raise HTTPException(status_code=404, detail="Transport order not found")
+            res = await self.db.execute(select(TransportOrder).where(TransportOrder.order_reference == order_id))
+            order = res.scalar_one_or_none()
+            if not order:
+                raise HTTPException(status_code=404, detail="Transport order not found")
 
         # 1. Delivery OTP Verification
         if order.delivery_otp != delivery_otp.strip():
@@ -983,7 +1332,7 @@ class TransportService:
             await self.db.commit()
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid Delivery OTP. ({3 - order.delivery_otp_attempts} attempts remaining)."
+                detail=f"Invalid Delivery OTP. ({max(0, 3 - order.delivery_otp_attempts)} attempts remaining)."
             )
 
         now_utc = datetime.now(timezone.utc)
@@ -993,7 +1342,7 @@ class TransportService:
         pod = TransportProofOfDelivery(
             id=uuid.uuid4(),
             order_id=order.id,
-            driver_id=d_uuid,
+            driver_id=d_uuid or order.assigned_driver_id,
             receiver_name=receiver_name,
             receiver_phone=receiver_phone,
             otp_verified=True,
@@ -1012,7 +1361,7 @@ class TransportService:
         order.payment_status = "PAID"
 
         # 4. Release Driver Earnings to Driver Ledger & Wallet
-        driver = await self.db.get(Driver, d_uuid)
+        driver = await self.db.get(Driver, d_uuid or order.assigned_driver_id)
         if driver:
             driver.wallet_balance = (driver.wallet_balance or Decimal("0.00")) + order.driver_earning
             driver.total_earnings = (driver.total_earnings or Decimal("0.00")) + order.driver_earning
@@ -1020,7 +1369,6 @@ class TransportService:
 
             try:
                 from common.models.all_models import DriverEarningLedger
-                from datetime import date
                 ledger_entry = DriverEarningLedger(
                     id=uuid.uuid4(),
                     driver_id=driver.id,
@@ -1042,7 +1390,7 @@ class TransportService:
                 )
                 self.db.add(ledger_entry)
             except Exception as ex:
-                logger.warning("DriverEarningLedger creation error in transport", error=str(ex))
+                logger.warning("DriverEarningLedger creation note", error=str(ex))
 
             driver_user = await self.db.get(User, driver.user_id)
             if driver_user:
@@ -1101,11 +1449,11 @@ class TransportService:
         }
 
     # ─────────────────────────────────────────────────────────────────
-    # 9. GET CUSTOMER TRANSPORT HISTORY
+    # 12. GET CUSTOMER TRANSPORT HISTORY
     # ─────────────────────────────────────────────────────────────────
     async def get_customer_orders(self, customer_user_id: str) -> List[Dict[str, Any]]:
         """Retrieve all active and completed transport orders for customer."""
-        c_user_uuid = uuid.UUID(customer_user_id) if isinstance(customer_user_id, str) else customer_user_id
+        c_user_uuid = uuid.UUID(customer_user_id) if isinstance(customer_user_id, str) and len(customer_user_id) == 36 else None
         res = await self.db.execute(
             select(TransportOrder)
             .where(TransportOrder.customer_id == c_user_uuid)
@@ -1115,7 +1463,7 @@ class TransportService:
         return [await self.get_order_details(str(o.id)) for o in orders]
 
     # ─────────────────────────────────────────────────────────────────
-    # 10. CANCEL TRANSPORT ORDER
+    # 13. CANCEL TRANSPORT ORDER
     # ─────────────────────────────────────────────────────────────────
     async def cancel_transport_order(
         self,
@@ -1125,10 +1473,13 @@ class TransportService:
         reason: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Cancel a transport order before delivery."""
-        o_uuid = uuid.UUID(order_id) if isinstance(order_id, str) else order_id
-        order = await self.db.get(TransportOrder, o_uuid)
+        o_uuid = uuid.UUID(order_id) if isinstance(order_id, str) and len(order_id) == 36 else None
+        order = await self.db.get(TransportOrder, o_uuid) if o_uuid else None
         if not order:
-            raise HTTPException(status_code=404, detail="Transport order not found")
+            res = await self.db.execute(select(TransportOrder).where(TransportOrder.order_reference == order_id))
+            order = res.scalar_one_or_none()
+            if not order:
+                raise HTTPException(status_code=404, detail="Transport order not found")
 
         if order.status in (TransportOrderStatus.DELIVERED, TransportOrderStatus.CANCELLED):
             return {"success": True, "status": order.status.value, "message": "Already finished"}

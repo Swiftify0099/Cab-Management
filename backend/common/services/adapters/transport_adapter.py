@@ -231,6 +231,16 @@ class TransportServiceAdapter(ServiceAdapter):
                 message="Arrived at destination for unloading.",
                 updated_status=CommonJobStatus.NEAR_COMPLETION.value,
             )
+        elif command == CommonJobCommand.START_UNLOADING:
+            order.status = TransportOrderStatus.UNLOADING_STARTED
+            order.unloading_started_at = datetime.utcnow()
+            order.updated_at = datetime.utcnow()
+            await db.commit()
+            return CommandResult(
+                success=True,
+                message="Unloading cargo started at destination.",
+                updated_status=CommonJobStatus.ACTIVE.value,
+            )
         elif command == CommonJobCommand.CONFIRM_DELIVERY or command == CommonJobCommand.COMPLETE:
             otp = params.get("otp", "")
             if order.delivery_otp and otp != order.delivery_otp:

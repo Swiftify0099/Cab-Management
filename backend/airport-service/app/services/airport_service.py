@@ -4,6 +4,7 @@ Handles Airport master data, flight-aware scheduling, pricing calculations,
 driver assignment, meet & greet, waiting/parking policies, cancellations, and hotel linkages.
 """
 import uuid
+import math
 import structlog
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -556,24 +557,63 @@ class AirportService:
         return updated_refs
 
     @staticmethod
+    def verify_airport_geofence(
+        driver_lat: float,
+        driver_lng: float,
+        target_lat: float,
+        target_lng: float,
+        radius_km: float = 3.5,
+    ) -> bool:
+        """
+        Validates whether driver GPS telemetry is within the airport/terminal operational geofence.
+        """
+        R = 6371.0  # Earth radius in km
+        dlat = math.radians(target_lat - driver_lat)
+        dlon = math.radians(target_lng - driver_lng)
+        a = (
+            math.sin(dlat / 2) ** 2
+            + math.cos(math.radians(driver_lat))
+            * math.cos(math.radians(target_lat))
+            * math.sin(dlon / 2) ** 2
+        )
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+        distance = R * c
+        return distance <= radius_km
+
+    @staticmethod
     async def driver_arrived_at_airport(
         db: AsyncSession,
         booking_id: uuid.UUID,
         driver_id: uuid.UUID,
+        driver_lat: Optional[float] = None,
+        driver_lng: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Driver arrives at airport terminal pickup zone.
-        Initializes the complimentary 45-minute grace period.
+        Verifies geofence and initializes the complimentary 45-minute grace period.
         """
         booking_res = await db.execute(select(AirportBooking).where(AirportBooking.id == booking_id))
         booking = booking_res.scalar_one_or_none()
         if not booking:
             raise HTTPException(status_code=404, detail="Airport booking not found")
 
-        # Fetch Airport
+        # Fetch Airport & Terminal
         apt_res = await db.execute(select(Airport).where(Airport.id == booking.airport_id))
         airport = apt_res.scalar_one_or_none()
         grace_mins = airport.free_waiting_mins if airport else 45
+
+        # Geofence verification if coordinates provided
+        geofence_verified = True
+        if driver_lat is not None and driver_lng is not None:
+            target_lat = booking.pickup_lat or (airport.latitude if airport else 18.5822)
+            target_lng = booking.pickup_lng or (airport.longitude if airport else 73.9197)
+            geofence_verified = AirportService.verify_airport_geofence(
+                driver_lat=driver_lat,
+                driver_lng=driver_lng,
+                target_lat=target_lat,
+                target_lng=target_lng,
+                radius_km=3.5,
+            )
 
         now_utc = datetime.now(timezone.utc)
         free_until = now_utc + timedelta(minutes=grace_mins)
@@ -599,6 +639,7 @@ class AirportService:
             booking_ref=booking.booking_reference,
             grace_mins=grace_mins,
             free_until=free_until.isoformat(),
+            geofence_verified=geofence_verified,
         )
 
         return {
@@ -607,6 +648,137 @@ class AirportService:
             "driver_arrived_at": log.driver_arrived_at.isoformat(),
             "free_until": log.free_until.isoformat(),
             "grace_period_mins": grace_mins,
+            "geofence_verified": geofence_verified,
+        }
+
+    @staticmethod
+    async def extend_waiting(
+        db: AsyncSession,
+        booking_id: uuid.UUID,
+        additional_minutes: int,
+        reason: Optional[str] = "Flight delayed / Baggage retrieval in progress",
+    ) -> Dict[str, Any]:
+        """
+        Extends the waiting grace period / records extended waiting authorization.
+        """
+        booking_res = await db.execute(select(AirportBooking).where(AirportBooking.id == booking_id))
+        booking = booking_res.scalar_one_or_none()
+        if not booking:
+            raise HTTPException(status_code=404, detail="Airport booking not found")
+
+        waiting_log_res = await db.execute(
+            select(AirportWaitingLog).where(
+                and_(
+                    AirportWaitingLog.booking_id == booking.id,
+                    AirportWaitingLog.is_active == True,
+                )
+            )
+        )
+        waiting_log = waiting_log_res.scalar_one_or_none()
+        if not waiting_log:
+            raise HTTPException(status_code=400, detail="No active airport waiting session found")
+
+        waiting_log.free_until = waiting_log.free_until + timedelta(minutes=additional_minutes)
+        waiting_log.grace_period_mins += additional_minutes
+        booking.status = AirportBookingStatus.WAITING
+
+        await db.commit()
+        await db.refresh(waiting_log)
+
+        logger.info(
+            "Airport waiting period extended",
+            booking_ref=booking.booking_reference,
+            added_minutes=additional_minutes,
+            new_free_until=waiting_log.free_until.isoformat(),
+            reason=reason,
+        )
+
+        return {
+            "booking_reference": booking.booking_reference,
+            "status": booking.status.value,
+            "extended_minutes": additional_minutes,
+            "total_grace_mins": waiting_log.grace_period_mins,
+            "new_free_until": waiting_log.free_until.isoformat(),
+            "reason": reason,
+        }
+
+    @staticmethod
+    async def log_parking_fee(
+        db: AsyncSession,
+        booking_id: uuid.UUID,
+        driver_id: uuid.UUID,
+        amount: float,
+        bay_info: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Driver records terminal parking charges and allocated bay.
+        """
+        booking_res = await db.execute(select(AirportBooking).where(AirportBooking.id == booking_id))
+        booking = booking_res.scalar_one_or_none()
+        if not booking:
+            raise HTTPException(status_code=404, detail="Airport booking not found")
+
+        waiting_log_res = await db.execute(
+            select(AirportWaitingLog).where(
+                and_(
+                    AirportWaitingLog.booking_id == booking.id,
+                    AirportWaitingLog.is_active == True,
+                )
+            )
+        )
+        waiting_log = waiting_log_res.scalar_one_or_none()
+        if waiting_log:
+            waiting_log.parking_charge += amount
+
+        booking.parking_fee += amount
+        booking.total_fare = round(booking.total_fare + amount, 2)
+        await db.commit()
+
+        logger.info(
+            "Terminal parking logged",
+            booking_ref=booking.booking_reference,
+            parking_amount=amount,
+            bay=bay_info,
+            new_total_fare=booking.total_fare,
+        )
+
+        return {
+            "booking_reference": booking.booking_reference,
+            "parking_fee": booking.parking_fee,
+            "bay_info": bay_info,
+            "updated_total_fare": booking.total_fare,
+        }
+
+    @staticmethod
+    async def meet_passenger(
+        db: AsyncSession,
+        booking_id: uuid.UUID,
+        driver_id: uuid.UUID,
+    ) -> Dict[str, Any]:
+        """
+        Chauffeur meets passenger at terminal arrival gate / pillar with Meet & Greet placard.
+        """
+        booking_res = await db.execute(select(AirportBooking).where(AirportBooking.id == booking_id))
+        booking = booking_res.scalar_one_or_none()
+        if not booking:
+            raise HTTPException(status_code=404, detail="Airport booking not found")
+
+        # Handshake transitions to WAITING or DRIVER_ARRIVED
+        booking.status = AirportBookingStatus.WAITING
+        await db.commit()
+        await db.refresh(booking)
+
+        logger.info(
+            "Meet and Greet completed",
+            booking_ref=booking.booking_reference,
+            customer_name=booking.meet_and_greet_name,
+        )
+
+        return {
+            "booking_reference": booking.booking_reference,
+            "status": booking.status.value,
+            "meet_and_greet_name": booking.meet_and_greet_name,
+            "message": "Passenger greeted at terminal pickup zone.",
         }
 
     @staticmethod
@@ -670,14 +842,24 @@ class AirportService:
         db: AsyncSession,
         booking_id: uuid.UUID,
         driver_id: uuid.UUID,
+        simulated_waiting_mins: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Driver meets passenger at airport terminal and starts transfer trip."""
+        """
+        Driver meets passenger at airport terminal and starts transfer trip.
+        Computes billable waiting overstay beyond free grace minutes and updates booking financials.
+        """
         booking_res = await db.execute(select(AirportBooking).where(AirportBooking.id == booking_id))
         booking = booking_res.scalar_one_or_none()
         if not booking:
             raise HTTPException(status_code=404, detail="Airport booking not found")
 
+        # Fetch Airport for paid waiting rate
+        apt_res = await db.execute(select(Airport).where(Airport.id == booking.airport_id))
+        airport = apt_res.scalar_one_or_none()
+        waiting_rate = airport.paid_waiting_rate_per_min if airport else 3.0
+
         booking.status = AirportBookingStatus.IN_PROGRESS
+        
         # Close waiting log if active
         waiting_log_res = await db.execute(
             select(AirportWaitingLog).where(
@@ -688,19 +870,54 @@ class AirportService:
             )
         )
         waiting_log = waiting_log_res.scalar_one_or_none()
+        waiting_fee = 0.0
+        total_waiting_mins = 0
+        billable_mins = 0
+
         if waiting_log:
             now_utc = datetime.now(timezone.utc)
             waiting_log.waiting_ended_at = now_utc
             waiting_log.is_active = False
-            total_mins = int((now_utc - waiting_log.driver_arrived_at).total_seconds() / 60)
-            waiting_log.total_waiting_mins = max(0, total_mins)
+
+            if simulated_waiting_mins is not None:
+                total_waiting_mins = simulated_waiting_mins
+            else:
+                total_waiting_mins = max(0, int((now_utc - waiting_log.driver_arrived_at).total_seconds() / 60))
+
+            waiting_log.total_waiting_mins = total_waiting_mins
+            grace_mins = waiting_log.grace_period_mins or 45
+            billable_mins = max(0, total_waiting_mins - grace_mins)
+            waiting_fee = round(billable_mins * waiting_rate, 2)
+
+            waiting_log.billable_waiting_mins = billable_mins
+            waiting_log.waiting_charge = waiting_fee
+            booking.waiting_fee = waiting_fee
+            if waiting_log.parking_charge > 0:
+                booking.parking_fee = waiting_log.parking_charge
+
+            if waiting_fee > 0:
+                booking.total_fare = round(booking.total_fare + waiting_fee, 2)
 
         await db.commit()
         await db.refresh(booking)
+
+        logger.info(
+            "Airport trip started",
+            booking_ref=booking.booking_reference,
+            total_waiting_mins=total_waiting_mins,
+            billable_mins=billable_mins,
+            waiting_fee=waiting_fee,
+            final_total_fare=booking.total_fare,
+        )
+
         return {
             "success": True,
             "booking_reference": booking.booking_reference,
             "status": booking.status.value,
+            "total_waiting_mins": total_waiting_mins,
+            "billable_waiting_mins": billable_mins,
+            "waiting_fee": waiting_fee,
+            "total_fare": booking.total_fare,
         }
 
     @staticmethod
@@ -709,7 +926,7 @@ class AirportService:
         booking_id: uuid.UUID,
         driver_id: uuid.UUID,
     ) -> Dict[str, Any]:
-        """Passenger dropped at destination; driver earnings settled."""
+        """Passenger dropped at destination; driver earnings settled 80/20."""
         booking_res = await db.execute(select(AirportBooking).where(AirportBooking.id == booking_id))
         booking = booking_res.scalar_one_or_none()
         if not booking:
@@ -747,6 +964,8 @@ class AirportService:
                         "total_fare": float(booking.total_fare),
                         "driver_earning": float(driver_earning),
                         "platform_commission": float(platform_comm),
+                        "waiting_fee": float(booking.waiting_fee or 0),
+                        "parking_fee": float(booking.parking_fee or 0),
                     },
                 )
                 db.add(ledger_entry)
@@ -759,5 +978,7 @@ class AirportService:
             "success": True,
             "booking_reference": booking.booking_reference,
             "status": booking.status.value,
+            "total_fare": booking.total_fare,
             "driver_earning": float(driver_earning),
+            "platform_commission": float(platform_comm),
         }
