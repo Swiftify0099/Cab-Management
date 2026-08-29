@@ -32,16 +32,9 @@ _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
-# Add all service subdirectories to sys.path
-for s_dir in [
-    "auth-service", "booking-service", "matching-service", "payment-service",
-    "admin-service", "analytics-service", "parcel-service", "hotel-service",
-    "transport-service", "airport-service", "rental-service", "outstation-service",
-    "carpool-service", "packers-service", "corporate-service", "notification-service"
-]:
-    p = os.path.join(_BACKEND_DIR, s_dir)
-    if p not in sys.path:
-        sys.path.insert(0, p)
+_PACKERS_DIR = os.path.join(_BACKEND_DIR, "packers-service")
+if _PACKERS_DIR not in sys.path:
+    sys.path.insert(0, _PACKERS_DIR)
 
 from fastapi import HTTPException
 from sqlalchemy import and_, desc, func, or_, select
@@ -133,16 +126,16 @@ async def run_phase25_superapp_production_e2e():
                 is_verified=True,
                 wallet_balance=Decimal("10000.00"),
                 total_earnings=Decimal("250000.00"),
-                current_lat=18.5204,
-                current_lng=73.8567,
+                current_latitude=18.5204,
+                current_longitude=73.8567,
             )
             db.add(driver)
             await db.flush()
         else:
             driver.kyc_status = KYCStatus.APPROVED
             driver.status = DriverStatus.ONLINE
-            driver.current_lat = 18.5204
-            driver.current_lng = 73.8567
+            driver.current_latitude = 18.5204
+            driver.current_longitude = 73.8567
 
         # 3. Fleet Vehicles (Commercial Closed Container Truck & Sedan Cab)
         v_truck_res = await db.execute(select(Vehicle).where(Vehicle.registration_number == "MH 12 SP 2026"))
@@ -271,18 +264,17 @@ async def run_phase25_superapp_production_e2e():
             id=uuid.uuid4(),
             tracking_number="PRC-260829-9988",
             booking_owner_id=cust_user.id,
-            sender_id=cust_user.id,
             sender_name="Dr. Anita Roy",
             sender_phone="+919876000001",
-            recipient_name="Deepak Joshi",
-            recipient_phone="+919876000099",
-            pickup_address="Aundh ITI Road, Pune",
-            pickup_lat=18.5626,
-            pickup_lng=73.8087,
-            drop_address="Baner High Street, Pune",
-            drop_lat=18.5590,
-            drop_lng=73.7868,
-            category="DOCUMENTS",
+            sender_address="Aundh ITI Road, Pune",
+            sender_lat=18.5626,
+            sender_lng=73.8087,
+            receiver_name="Deepak Joshi",
+            receiver_phone="+919876000099",
+            receiver_address="Baner High Street, Pune",
+            receiver_lat=18.5590,
+            receiver_lng=73.7868,
+            parcel_category="DOCUMENTS",
             weight_kg=1.5,
             delivery_priority="EXPRESS",
             declared_value=Decimal("5000.00"),

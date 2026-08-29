@@ -270,7 +270,7 @@ class NotificationEngineService:
         # Duplicate check
         is_acquired = await self.check_and_acquire_idempotency(idempotency_key)
         if not is_acquired:
-            logger.info("Notification duplicate suppressed", event=event_type, recipient_id=recipient_id, idemp=idempotency_key)
+            logger.info("Notification duplicate suppressed", ev_type=event_type, recipient_id=recipient_id, idemp=idempotency_key)
             return {
                 "success": False,
                 "status": "DUPLICATE_SUPPRESSED",
@@ -298,12 +298,16 @@ class NotificationEngineService:
             db_notif = Notification(
                 id=notif_id,
                 user_id=uuid.UUID(recipient_id),
-                user_type=recipient_type,
                 title=title,
                 body=body,
                 notification_type=notif_type,
-                data={**data_payload, "event_type": event_type, "event_id": event_id},
-                reference_id=str(data_payload.get("ride_id") or data_payload.get("booking_id") or ""),
+                data={
+                    **data_payload,
+                    "event_type": event_type,
+                    "event_id": event_id,
+                    "user_type": recipient_type,
+                    "reference_id": str(data_payload.get("ride_id") or data_payload.get("booking_id") or ""),
+                },
                 is_read=False,
             )
             self.db.add(db_notif)
