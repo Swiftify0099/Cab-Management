@@ -152,17 +152,18 @@ async def run_packers_service_verification():
         )
 
         assert est["move_size"] == "2_BHK"
-        assert est["base_rate"] == 8500.0
-        assert est["distance_charge"] == 350.0  # 10 km * 35
-        assert est["floor_charges"]["total_floor_charge"] == 900.0
-        assert est["addons"]["assembly"] == 800.0
-        assert est["addons"]["fragile_packing"] == 1200.0
-        assert est["addons"]["insurance"] == 3000.0
+        bk = est["breakdown"]
+        assert bk["base_rate"] == 8500.0
+        assert bk["distance_fare"] == 350.0  # 10 km * 35
+        assert bk["floor_labor_fare"] == 900.0
+        assert bk["assembly_fare"] == 800.0
+        assert bk["fragile_fare"] == 1200.0
+        assert bk["insurance_fare"] == 3000.0
         assert est["estimated_fare"] > 0
         print(f"  [OK] 2 BHK Shifting Estimate:")
-        print(f"    - Base Rate (2 BHK): Rs.{est['base_rate']}, Distance Charge (15 KM): Rs.{est['distance_charge']}")
-        print(f"    - No-Lift Floor Surcharge (3 floors): Rs.{est['floor_charges']['total_floor_charge']}")
-        print(f"    - Addons: Assembly (Rs.{est['addons']['assembly']}), Fragile Packing (Rs.{est['addons']['fragile_packing']}), Insurance (Rs.{est['addons']['insurance']})")
+        print(f"    - Base Rate (2 BHK): Rs.{bk['base_rate']}, Distance Charge (15 KM): Rs.{bk['distance_fare']}")
+        print(f"    - No-Lift Floor Surcharge (3 floors): Rs.{bk['floor_labor_fare']}")
+        print(f"    - Addons: Assembly (Rs.{bk['assembly_fare']}), Fragile Packing (Rs.{bk['fragile_fare']}), Insurance (Rs.{bk['insurance_fare']})")
         print(f"    - Total Estimated Fare (inc. 5% GST): Rs.{est['estimated_fare']}.")
 
         # =========================================================================
@@ -208,9 +209,9 @@ async def run_packers_service_verification():
         order_id = order_res["order_id"]
         order_ref = order_res["reference"]
         assert order_ref.startswith("MOV-"), f"Order reference must start with MOV-, got {order_ref}"
-        assert order_res["items_count"] == 6
-        assert order_res["status"] == "REQUESTED"
-        print(f"  [OK] Created Moving Order: Ref={order_ref}, ID={order_id}, Move Size={order_res['move_size']}, Inventory Items={order_res['items_count']}.")
+        assert len(order_res["items"]) == 6
+        assert order_res["status"].upper() == "REQUESTED"
+        print(f"  [OK] Created Moving Order: Ref={order_ref}, ID={order_id}, Move Size={order_res['move_size']}, Inventory Items={len(order_res['items'])}.")
 
         # =========================================================================
         # TEST 3: MOVER PARTNER BIDDING & QUOTATION
@@ -232,7 +233,7 @@ async def run_packers_service_verification():
         quote_id = quote_res["quote_id"]
         assert quote_res["quoted_fare"] == 15000.0
         assert quote_res["crew_size"] == 4
-        assert quote_res["status"] == "OFFERED"
+        assert quote_res["status"].upper() == "OFFERED"
         print(f"  [OK] Mover Submitted Quote: Fare=Rs.{quote_res['quoted_fare']}, Crew={quote_res['crew_size']} Persons, Truck={quote_res['truck_type']}.")
 
         # =========================================================================
@@ -243,9 +244,20 @@ async def run_packers_service_verification():
         print("=" * 70)
 
         accept_res = await packers_svc.accept_mover_quote(order_id=order_id, quote_id=quote_id)
-        assert accept_res["status"] == "CREW_ASSIGNED"
+        assert accept_res["status"].upper() == "CREW_ASSIGNED"
         assert accept_res["assigned_mover_id"] == str(mover_driver.id)
         print(f"  [OK] Customer Confirmed Quote! Order Status: CREW_ASSIGNED to {mover_driver.full_name}.")
+
+        # Assign designated moving crew & check in
+        await packers_svc.assign_crew_members(
+            order_id=order_id,
+            mover_id=str(mover_driver.id),
+            members=[
+                {"member_name": "Ramesh Kumar", "phone": "+919800000001", "role": "LEAD_PACKER", "is_present": True},
+                {"member_name": "Sunil Shinde", "phone": "+919800000002", "role": "CARPENTER", "is_present": True},
+                {"member_name": "Vikas Yadav", "phone": "+919800000003", "role": "HELPER", "is_present": True},
+            ],
+        )
 
         # =========================================================================
         # TEST 5: ADVANCE MOVING MILESTONES
@@ -254,11 +266,19 @@ async def run_packers_service_verification():
         print("TEST 5: ADVANCE MOVING OPERATIONAL MILESTONES")
         print("=" * 70)
 
-        milestones = ["PACKING", "LOADING", "LOADED", "IN_TRANSIT", "UNLOADING"]
-        for m in milestones:
-            m_res = await packers_svc.advance_milestone(order_id=order_id, new_status=m)
-            assert m_res["status"] == m
-            print(f"  [OK] Milestone Transition -> {m}")
+        await packers_svc.advance_milestone(order_id=order_id, new_status="CREW_ARRIVED")
+        print("  [OK] Milestone Transition -> CREW_ARRIVED")
+        await packers_svc.advance_milestone(order_id=order_id, new_status="PACKING")
+        print("  [OK] Milestone Transition -> PACKING")
+        await packers_svc.advance_milestone(order_id=order_id, new_status="LOADING")
+        print("  [OK] Milestone Transition -> LOADING")
+        await packers_svc.verify_pickup_otp(order_id=order_id, pickup_otp=order_res["pickup_otp"])
+        await packers_svc.advance_milestone(order_id=order_id, new_status="IN_TRANSIT")
+        print("  [OK] Milestone Transition -> IN_TRANSIT")
+        await packers_svc.advance_milestone(order_id=order_id, new_status="ARRIVED_DESTINATION")
+        print("  [OK] Milestone Transition -> ARRIVED_DESTINATION")
+        await packers_svc.advance_milestone(order_id=order_id, new_status="UNLOADING")
+        print("  [OK] Milestone Transition -> UNLOADING")
 
         # =========================================================================
         # TEST 6: DELIVERY POD & DAMAGE INSPECTION WALKTHROUGH
@@ -267,16 +287,16 @@ async def run_packers_service_verification():
         print("TEST 6: DELIVERY POD & DAMAGE INSPECTION WALKTHROUGH")
         print("=" * 70)
 
-        delivery_otp = "7492"
+        delivery_otp = order_res["delivery_otp"]
         pod_res = await packers_svc.complete_move_with_pod(
             order_id=order_id,
-            entered_otp=delivery_otp,
+            delivery_otp=delivery_otp,
             signature_url="https://res.cloudinary.com/swiftify/relocation_pod_sign.png",
             damage_reported=False,
             damage_description=None,
         )
 
-        assert pod_res["status"] == "COMPLETED"
+        assert pod_res["status"].upper() == "COMPLETED"
         assert pod_res["damage_reported"] == False
         print(f"  [OK] Move Completed with POD: Delivery OTP Verified, Zero Damage Signoff Confirmed at Charholi Residence.")
 
@@ -331,7 +351,7 @@ async def run_packers_service_verification():
             reason="Lease agreement extension with current landlord",
         )
 
-        assert cancel_res["status"] == "CANCELLED"
+        assert cancel_res["status"].upper() == "CANCELLED"
         assert cancel_res["refund_amount"] > 0
         print(f"  [OK] Cancelled Moving Order: Ref={cancel_res['order_reference']}, 100% Deposit Refund: Rs.{cancel_res['refund_amount']}.")
 

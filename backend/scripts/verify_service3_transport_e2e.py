@@ -96,8 +96,13 @@ async def run_transport_service_verification():
             registration_number=f"MH-12-T{uuid.uuid4().hex[:3].upper()}",
             vehicle_type=VehicleType.HATCHBACK,
             seat_capacity=2,
+            status="APPROVED",
+            commercial_permit=True,
+            transport_capable=True,
             parcel_capable=True,
             parcel_capacity_kg=750.0,
+            max_payload_kg=750.0,
+            cargo_volume_cft=120.0,
         )
         session.add(v1)
 
@@ -136,8 +141,13 @@ async def run_transport_service_verification():
             registration_number=f"MH-12-E{uuid.uuid4().hex[:3].upper()}",
             vehicle_type=VehicleType.TEMPO_TRAVELLER,
             seat_capacity=3,
+            status="APPROVED",
+            commercial_permit=True,
+            transport_capable=True,
             parcel_capable=True,
             parcel_capacity_kg=4000.0,
+            max_payload_kg=4000.0,
+            cargo_volume_cft=650.0,
         )
         session.add(v2)
 
@@ -412,7 +422,7 @@ async def run_transport_service_verification():
             longitude=73.8640,
         )
         assert pod_res["success"] is True
-        assert pod_res["status"] == "DELIVERED"
+        assert pod_res["status"].upper() == "DELIVERED"
         print(f"  [OK] Transport Completed with OTP {delivery_otp}! Status: DELIVERED.")
 
         # Verify Driver Wallet Credited

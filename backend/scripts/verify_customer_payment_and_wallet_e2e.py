@@ -28,38 +28,7 @@ if hasattr(sys.stderr, "reconfigure"):
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "payment-service")))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from sqlalchemy.pool import StaticPool
-from sqlalchemy import select, and_, delete
-from sqlalchemy.ext.compiler import compiles
-from geoalchemy2 import Geography, Geometry
-import geoalchemy2.admin.dialects.sqlite
-
-geoalchemy2.admin.dialects.sqlite.after_create = lambda *args, **kwargs: None
-geoalchemy2.admin.dialects.sqlite.before_create = lambda *args, **kwargs: None
-
-@compiles(Geography, "sqlite")
-@compiles(Geometry, "sqlite")
-def compile_geography_sqlite(type_, compiler, **kw):
-    return "TEXT"
-
-from sqlalchemy.types import ARRAY as GenericARRAY
-from sqlalchemy.dialects.postgresql import JSONB, UUID, ARRAY as PG_ARRAY
-
-@compiles(JSONB, "sqlite")
-def compile_jsonb_sqlite(type_, compiler, **kw):
-    return "JSON"
-
-@compiles(UUID, "sqlite")
-def compile_uuid_sqlite(type_, compiler, **kw):
-    return "CHAR(36)"
-
-@compiles(GenericARRAY, "sqlite")
-@compiles(PG_ARRAY, "sqlite")
-def compile_array_sqlite(type_, compiler, **kw):
-    return "TEXT"
-
-from common.database import Base
+from common.database import Base, async_session_maker, engine
 from common.models.all_models import (
     User, CustomerProfile, UserRole,
     Transaction, WalletTransaction, CustomerPaymentMethod,
@@ -75,20 +44,9 @@ async def run_all_tests():
     print(">> STARTING CUSTOMER APP FEATURES 11 & 12 FINANCIAL VERIFICATION SUITE")
     print("=" * 75)
 
-    # In-memory SQLite async engine
-    test_db_url = "sqlite+aiosqlite:///:memory:"
-    engine = create_async_engine(
-        test_db_url,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-        echo=False
-    )
-    async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    await engine.dispose()
 
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    async with async_session() as db:
+    async with async_session_maker() as db:
         test_customer_id = uuid.uuid4()
         test_phone = f"+9199{uuid.uuid4().hex[:8]}"
 

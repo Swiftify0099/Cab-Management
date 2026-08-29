@@ -95,9 +95,8 @@ export default function ActiveTripScreen() {
   }>()
 
   const { isDark: systemIsDark } = useTheme()
-  const mapRef = useRef<MapView | null>(null)
-
-  const [activeRideId, setActiveRideId] = useState(bookingId || 'fb6a0afb-93a7-405a-b863-4cfe3bc81998')
+  const [activeRideId, setActiveRideId] = useState<string>(bookingId || '')
+  const [loadingActiveTrip, setLoadingActiveTrip] = useState<boolean>(!bookingId)
 
   // Navigation State
   const [phase, setPhase] = useState<NavigationPhase>('EN_ROUTE_PICKUP')
@@ -175,6 +174,44 @@ export default function ActiveTripScreen() {
   const driverHeading = location?.heading || 45
   const driverSpeed = simulatedSpeed !== null ? simulatedSpeed : (location?.speed ? Math.round(location.speed) : 38)
   const driverAccuracy = gpsQuality === 'weak' ? 45.0 : (location?.accuracy || 8.5)
+
+  // Auto-resolve active job from backend if bookingId was not passed in params
+  useEffect(() => {
+    if (!bookingId) {
+      const fetchActive = async () => {
+        try {
+          const { api, commonJobApi } = require('../src/api/client')
+          const res = await commonJobApi.getActiveJob().catch(() => api.get('/matching/rides/active'))
+          const job = res.data?.data
+          if (job && (job.job_id || job.id || job.domain_id || job.ride_request_id || job.booking_id)) {
+            const resolvedId = job.job_id || job.id || job.domain_id || job.ride_request_id || job.booking_id
+            setActiveRideId(resolvedId)
+            const pLat = job.locations?.pickup?.lat || job.pickup?.latitude || job.pickup?.lat
+            const pLng = job.locations?.pickup?.lng || job.pickup?.longitude || job.pickup?.lng
+            const pAddr = job.locations?.pickup?.address || job.pickup?.address
+            if (pLat && pLng) {
+              setPickupCoord({ lat: Number(pLat), lng: Number(pLng), address: pAddr || 'Pickup Location' })
+            }
+            const dLat = job.locations?.dropoff?.lat || job.dropoff?.latitude || job.dropoff?.lat || job.destination?.lat
+            const dLng = job.locations?.dropoff?.lng || job.dropoff?.longitude || job.dropoff?.lng || job.destination?.lng
+            const dAddr = job.locations?.dropoff?.address || job.dropoff?.address || job.destination?.address
+            if (dLat && dLng) {
+              setDestCoord({ lat: Number(dLat), lng: Number(dLng), address: dAddr || 'Destination' })
+            }
+            const f = job.fare?.total_fare || job.fare_snapshot?.total_fare || job.trip?.fare
+            if (f) setCurrentEstimatedFare(Number(f))
+            if (job.status === 'DRIVER_ARRIVED') setPhase('ARRIVED_PICKUP')
+            else if (job.status === 'ACTIVE' || job.status === 'IN_TRANSIT') setPhase('EN_ROUTE_DESTINATION')
+          }
+        } catch (err) {
+          console.warn('[ActiveTrip] Proactive active job lookup notice:', err)
+        } finally {
+          setLoadingActiveTrip(false)
+        }
+      }
+      fetchActive()
+    }
+  }, [bookingId])
 
   // Join Trip / Ride room for real-time customer-driver sync
   useEffect(() => {

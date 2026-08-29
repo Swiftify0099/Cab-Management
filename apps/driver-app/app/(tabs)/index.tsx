@@ -52,6 +52,10 @@ import { AISmartDriverService } from '../../src/services/aiSmartDriverService'
 import { DriverAIInsights } from '../../src/types/aiSmartDriver'
 import BatteryOptimizationModal from '../../src/components/common/BatteryOptimizationModal'
 import { BatteryOptimizationService } from '../../src/services/batteryOptimizationService'
+import {
+  PartnerServiceAuth,
+  PartnerServiceStatus,
+} from '../../src/services/partnerServiceAuth'
 
 
 const STATUS_COLORS: Record<string, string> = {
@@ -94,6 +98,7 @@ export default function DriverHomeScreen() {
   const [showAIDevSheet, setShowAIDevSheet] = useState(false)
   const [showAICopilotModal, setShowAICopilotModal] = useState(false)
   const [showPendingModal, setShowPendingModal] = useState(false)
+  const [approvedServices, setApprovedServices] = useState<PartnerServiceStatus[]>([])
 
   const [trips, setTrips] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
@@ -124,7 +129,7 @@ export default function DriverHomeScreen() {
   const loadData = useCallback(async () => {
     try {
       setLoading(true)
-      const [tripsRes, statsRes, vehList, destRes, aiRes, radarCntRes, covRes, pendingOffers] = await Promise.allSettled([
+      const [tripsRes, statsRes, vehList, destRes, aiRes, radarCntRes, covRes, pendingOffers, srvRes] = await Promise.allSettled([
         api.get('/matching/trips/my-trips'),
         api.get('/driver/stats'),
         VehicleService.getVehicles(),
@@ -133,7 +138,12 @@ export default function DriverHomeScreen() {
         CoverageService.getRadarCount(),
         CoverageService.getDriverCoverage(),
         RideRequestService.fetchPendingOffers(),
+        PartnerServiceAuth.getApprovedServices(),
       ])
+
+      if (srvRes.status === 'fulfilled' && Array.isArray(srvRes.value)) {
+        setApprovedServices(srvRes.value.filter(s => s.is_approved))
+      }
 
       if (pendingOffers.status === 'fulfilled' && Array.isArray(pendingOffers.value) && pendingOffers.value.length > 0) {
         const { RideQueueService } = require('../../src/services/rideQueueService')
@@ -372,6 +382,71 @@ export default function DriverHomeScreen() {
               </Text>
             </TouchableOpacity>
           </View>
+
+          {/* Approved Service Workspaces Hub */}
+          {approvedServices.length > 0 && (
+            <View style={styles.workspacesSection}>
+              <View style={styles.workspacesSectionHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <MaterialCommunityIcons name="briefcase-check-outline" size={18} color="#0284C7" />
+                  <Text style={[styles.workspacesSectionTitle, { color: theme.colors.text }]}>
+                    My Service Workspaces
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.manageServicesLink}
+                  onPress={() => router.push('/services-management' as any)}
+                >
+                  <Text style={styles.manageServicesLinkText}>Manage ({approvedServices.length})</Text>
+                  <Feather name="chevron-right" size={14} color="#0284C7" />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.workspacesScroll}
+              >
+                {approvedServices.map(srv => {
+                  return (
+                    <TouchableOpacity
+                      key={srv.service_type}
+                      style={[
+                        styles.workspaceChipCard,
+                        {
+                          backgroundColor: isDark ? '#111827' : '#FFFFFF',
+                          borderColor: srv.is_enabled ? (isDark ? '#1E3A8A' : '#BFDBFE') : (isDark ? '#1F2937' : '#E2E8F0'),
+                        },
+                      ]}
+                      onPress={() => {
+                        if (srv.route) {
+                          router.push(srv.route as any)
+                        }
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <View style={[styles.workspaceIconCircle, { backgroundColor: srv.is_enabled ? '#EFF6FF' : '#F1F5F9' }]}>
+                        <Feather
+                          name={(srv.icon as any) || 'box'}
+                          size={18}
+                          color={srv.is_enabled ? '#0284C7' : '#64748B'}
+                        />
+                      </View>
+                      <Text style={[styles.workspaceChipTitle, { color: theme.colors.text }]} numberOfLines={1}>
+                        {srv.display_name}
+                      </Text>
+                      <View style={[styles.workspaceStatusBadge, { backgroundColor: srv.is_enabled ? '#DCFCE7' : '#F1F5F9' }]}>
+                        <View style={[styles.workspaceStatusDot, { backgroundColor: srv.is_enabled ? '#10B981' : '#94A3B8' }]} />
+                        <Text style={[styles.workspaceStatusText, { color: srv.is_enabled ? '#15803D' : '#64748B' }]}>
+                          {srv.is_enabled ? 'ONLINE' : 'PAUSED'}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  )
+                })}
+              </ScrollView>
+            </View>
+          )}
 
           {/* Pending Requests in My Area Button & Card */}
           <TouchableOpacity
@@ -1089,6 +1164,72 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
     color: '#0284C7',
+  },
+  workspacesSection: {
+    marginVertical: 10,
+  },
+  workspacesSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+    marginBottom: 8,
+  },
+  workspacesSectionTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  manageServicesLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  manageServicesLinkText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0284C7',
+  },
+  workspacesScroll: {
+    gap: 10,
+    paddingVertical: 2,
+    paddingHorizontal: 2,
+  },
+  workspaceChipCard: {
+    width: 140,
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    gap: 6,
+  },
+  workspaceIconCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  workspaceChipTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  workspaceStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  workspaceStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  workspaceStatusText: {
+    fontSize: 10,
+    fontWeight: '800',
   },
 })
 

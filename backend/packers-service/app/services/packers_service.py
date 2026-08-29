@@ -1179,6 +1179,8 @@ class PackersService:
             "insurance_fee": float(order.insurance_fee),
             "pickup_otp": order.pickup_otp,
             "delivery_otp": order.delivery_otp,
+            "assigned_mover_id": str(order.assigned_mover_id) if order.assigned_mover_id else None,
+            "assigned_vehicle_id": str(order.assigned_vehicle_id) if order.assigned_vehicle_id else None,
             "base_estimate": float(order.base_estimate),
             "final_fare": float(order.final_fare) if order.final_fare else float(order.base_estimate),
             "gross_fare": float(order.gross_fare) if order.gross_fare else None,

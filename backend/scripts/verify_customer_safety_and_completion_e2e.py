@@ -24,67 +24,8 @@ from datetime import datetime, timezone, timedelta
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "matching-service")))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from sqlalchemy.pool import StaticPool
 from sqlalchemy import select, and_
-from sqlalchemy.ext.compiler import compiles
-from geoalchemy2 import Geography, Geometry
-import geoalchemy2.admin.dialects.sqlite
-
-geoalchemy2.admin.dialects.sqlite.after_create = lambda *args, **kwargs: None
-geoalchemy2.admin.dialects.sqlite.before_create = lambda *args, **kwargs: None
-
-@compiles(Geography, "sqlite")
-@compiles(Geometry, "sqlite")
-def compile_geography_sqlite(type_, compiler, **kw):
-    return "TEXT"
-
-from sqlalchemy.types import ARRAY as GenericARRAY
-from sqlalchemy.dialects.postgresql import JSONB, UUID, ARRAY as PG_ARRAY
-
-@compiles(JSONB, "sqlite")
-def compile_jsonb_sqlite(type_, compiler, **kw):
-    return "JSON"
-
-@compiles(UUID, "sqlite")
-def compile_uuid_sqlite(type_, compiler, **kw):
-    return "CHAR(36)"
-
-from sqlalchemy.types import ARRAY as GenericARRAY
-from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
-
-@compiles(GenericARRAY, "sqlite")
-@compiles(PG_ARRAY, "sqlite")
-def compile_array_sqlite(type_, compiler, **kw):
-    return "TEXT"
-
-DB_URL = "sqlite+aiosqlite:///:memory:"
-
-engine = create_async_engine(
-    DB_URL,
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
-    echo=False
-)
-
-import sqlite3
-import json
-
-sqlite3.register_adapter(list, lambda l: json.dumps(l))
-sqlite3.register_adapter(dict, lambda d: json.dumps(d))
-
-from sqlalchemy import event
-
-@event.listens_for(engine.sync_engine, "connect")
-def do_connect(dbapi_connection, connection_record):
-    dbapi_connection.create_function("ST_GeogFromText", 1, lambda x: x)
-    dbapi_connection.create_function("ST_GeomFromText", 1, lambda x: x)
-    dbapi_connection.create_function("ST_AsText", 1, lambda x: x)
-    dbapi_connection.create_function("AsBinary", 1, lambda x: b"" if x else None)
-    dbapi_connection.create_function("ST_AsBinary", 1, lambda x: b"" if x else None)
-    dbapi_connection.create_function("ST_GeomFromWKB", 1, lambda x: x)
-    dbapi_connection.create_function("ST_Distance", 2, lambda x, y: 0.0)
-    dbapi_connection.create_function("ST_DWithin", 3, lambda x, y, z: 1)
+from common.database import Base, async_session_maker, engine
 
 from common.models.all_models import (
     Base, User, UserRole, CustomerProfile, Driver, DriverStatus, Vehicle, VehicleType,
@@ -111,12 +52,9 @@ async def run_e2e_verification():
     print("[START] E2E VERIFICATION: CUSTOMER SAFETY & TRIP COMPLETION (F9 & F10)")
     print("=" * 80)
 
-    session_factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+    await engine.dispose()
 
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    async with session_factory() as db:
+    async with async_session_maker() as db:
         # Unique suffix for test isolation
         suffix = uuid.uuid4().hex[:6]
         cust_phone = f"+91987{suffix[:7]}"
@@ -253,15 +191,14 @@ async def run_e2e_verification():
 
         # ── 5. PASSIVE SAFETY ANOMALY LOG & RESOLUTION ──
         print("\n--- TEST 5: Passive Safety Anomaly Record & Resolve ---")
-        alert_res = await driver_safety.record_safety_alert(
+        alert_res = await driver_safety.evaluate_route_deviation(
             driver_id=driver.id,
             ride_id=ride.id,
-            alert_type="ROUTE_DEVIATION",
-            severity="WARNING",
-            latitude=18.8000,
-            longitude=73.3500,
-            details={"distance_off_route_m": 450},
+            current_lat=18.8000,
+            current_lng=73.3500,
+            planned_waypoints=[],
         )
+        assert alert_res is not None, "Route deviation beyond threshold must produce an alert"
         assert "alert_id" in alert_res
         alert_id = uuid.UUID(alert_res["alert_id"])
         

@@ -132,28 +132,46 @@ export default function PartnerServicesManagementScreen() {
                 !srv.is_approved && { opacity: 0.6 },
               ]}
             >
-              <View style={styles.serviceIconContainer}>
-                <Feather name={srv.icon as any || 'check'} size={22} color="#0284C7" />
-              </View>
-
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={[styles.serviceTitle, { color: textPrimary }]}>{srv.display_name}</Text>
-                  {srv.is_approved ? (
-                    <View style={styles.approvedBadge}>
-                      <Text style={styles.approvedBadgeText}>APPROVED</Text>
-                    </View>
-                  ) : (
-                    <View style={styles.pendingBadge}>
-                      <Text style={styles.pendingBadgeText}>NOT APPLIED</Text>
-                    </View>
-                  )}
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
+                onPress={() => {
+                  if (srv.is_approved && srv.route) {
+                    router.push(srv.route as any)
+                  } else if (!srv.is_approved) {
+                    Alert.alert(
+                      'Service Not Approved',
+                      `Complete the required verification to unlock the ${srv.display_name} workspace.`
+                    )
+                  }
+                }}
+                activeOpacity={srv.is_approved ? 0.7 : 1}
+              >
+                <View style={styles.serviceIconContainer}>
+                  <Feather name={srv.icon as any || 'check'} size={22} color="#0284C7" />
                 </View>
 
-                <Text style={[styles.serviceSub, { color: textSecondary }]}>
-                  {srv.is_enabled && srv.is_approved ? 'Active & receiving orders' : 'Paused / Offline for this service'}
-                </Text>
-              </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={[styles.serviceTitle, { color: textPrimary }]}>{srv.display_name}</Text>
+                    {srv.is_approved ? (
+                      <View style={styles.approvedBadge}>
+                        <Text style={styles.approvedBadgeText}>APPROVED</Text>
+                      </View>
+                    ) : (
+                      <View style={styles.pendingBadge}>
+                        <Text style={styles.pendingBadgeText}>NOT APPLIED</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  <Text style={[styles.serviceSub, { color: textSecondary }]}>
+                    {srv.is_enabled && srv.is_approved ? 'Active & receiving orders' : 'Paused / Offline for this service'}
+                  </Text>
+                  {srv.is_approved && srv.route && (
+                    <Text style={styles.openWorkspaceLink}>Tap to open workspace →</Text>
+                  )}
+                </View>
+              </TouchableOpacity>
 
               <Switch
                 value={srv.is_enabled && srv.is_approved}
@@ -227,4 +245,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(148, 163, 184, 0.2)',
   },
   pendingBadgeText: { color: '#64748B', fontSize: 9, fontWeight: '800' },
+  openWorkspaceLink: {
+    color: '#0284C7',
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 4,
+  },
 })

@@ -550,7 +550,7 @@ async def run_phase25_superapp_production_e2e():
             model="Ace 0.75 Ton",
             year=2023,
             color="White",
-            registration_number="MH 12 SP 0099",
+            registration_number=f"MH 12 SP {uuid.uuid4().hex[:4].upper()}",
             seat_capacity=2,
             status="APPROVED",
             is_active=True,
@@ -588,17 +588,20 @@ async def run_phase25_superapp_production_e2e():
         assert cap_blocked, "Expected capacity rejection for under-capacity vehicle on 3-BHK move"
 
         # 2. SOS Emergency Safety & Trusted Contact Dispatch
-        em_contact = CustomerEmergencyContact(
-            id=uuid.uuid4(),
-            user_id=cust_user.id,
-            name="Capt. Alok Roy",
-            phone="+919876000099",
-            relation="Brother",
-            is_primary=True,
-            auto_share_rides=True,
-        )
-        db.add(em_contact)
-        await db.commit()
+        em_res = await db.execute(select(CustomerEmergencyContact).where(CustomerEmergencyContact.user_id == cust_user.id))
+        em_contact = em_res.scalars().first()
+        if not em_contact:
+            em_contact = CustomerEmergencyContact(
+                id=uuid.uuid4(),
+                user_id=cust_user.id,
+                name="Capt. Alok Roy",
+                phone="+919876000099",
+                relation="Brother",
+                is_primary=True,
+                auto_share_rides=True,
+            )
+            db.add(em_contact)
+            await db.commit()
         assert em_contact.is_primary is True
         assert em_contact.auto_share_rides is True
         print(f"  ✓ Vehicle capacity rejection enforced & SOS Emergency Contact ({em_contact.name} - {em_contact.phone}) verified: PASS", flush=True)

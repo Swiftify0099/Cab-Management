@@ -241,26 +241,25 @@ class RatingFeedbackService:
         if ride.assigned_driver_id != driver.id:
             raise HTTPException(status_code=403, detail="Unauthorized: Driver was not assigned to this ride")
 
-        # Atomic PostgreSQL UPSERT on ride_id unique constraint
-        stmt = pg_insert(DriverCustomerRating).values(
-            id=uuid.uuid4(),
-            ride_id=ride.id,
-            driver_id=driver.id,
-            customer_id=ride.customer_id,
-            rating=rating,
-            tags=tags,
-            feedback=feedback,
-            status="APPROVED",
-        ).on_conflict_do_update(
-            index_elements=[DriverCustomerRating.ride_id],
-            set_={
-                "rating": rating,
-                "tags": tags,
-                "feedback": feedback,
-                "updated_at": func.now(),
-            }
-        )
-        await self.db.execute(stmt)
+        # Atomic rating creation or update on ride_id
+        exist_res = await self.db.execute(select(DriverCustomerRating).where(DriverCustomerRating.ride_id == ride.id))
+        existing_rating = exist_res.scalar_one_or_none()
+        if existing_rating:
+            existing_rating.rating = rating
+            existing_rating.tags = tags
+            existing_rating.feedback = feedback
+        else:
+            new_r = DriverCustomerRating(
+                id=uuid.uuid4(),
+                ride_id=ride.id,
+                driver_id=driver.id,
+                customer_id=ride.customer_id,
+                rating=rating,
+                tags=tags,
+                feedback=feedback,
+                status="APPROVED",
+            )
+            self.db.add(new_r)
         await self.db.flush()
 
         # Recalculate customer profile rating

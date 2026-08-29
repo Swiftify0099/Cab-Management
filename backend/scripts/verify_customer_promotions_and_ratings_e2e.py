@@ -31,68 +31,8 @@ sys.path.insert(0, os.path.join(ROOT, "matching-service"))
 sys.path.insert(0, os.path.join(ROOT, "common"))
 sys.path.insert(0, ROOT)
 
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from sqlalchemy.pool import StaticPool
 from sqlalchemy import select, and_, delete
-from sqlalchemy.ext.compiler import compiles
-from geoalchemy2 import Geography, Geometry
-import geoalchemy2.admin.dialects.sqlite
-
-geoalchemy2.admin.dialects.sqlite.after_create = lambda *args, **kwargs: None
-geoalchemy2.admin.dialects.sqlite.before_create = lambda *args, **kwargs: None
-
-@compiles(Geography, "sqlite")
-@compiles(Geometry, "sqlite")
-def compile_geography_sqlite(type_, compiler, **kw):
-    return "TEXT"
-
-from sqlalchemy.types import ARRAY as GenericARRAY
-from sqlalchemy.dialects.postgresql import JSONB, UUID, ARRAY as PG_ARRAY
-
-@compiles(JSONB, "sqlite")
-def compile_jsonb_sqlite(type_, compiler, **kw):
-    return "JSON"
-
-@compiles(UUID, "sqlite")
-def compile_uuid_sqlite(type_, compiler, **kw):
-    return "CHAR(36)"
-
-@compiles(GenericARRAY, "sqlite")
-@compiles(PG_ARRAY, "sqlite")
-def compile_array_sqlite(type_, compiler, **kw):
-    return "TEXT"
-
-import sqlite3
-import json
-
-sqlite3.register_adapter(list, lambda l: json.dumps(l))
-sqlite3.register_adapter(dict, lambda d: json.dumps(d))
-
-from sqlalchemy import event
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from sqlalchemy.pool import StaticPool
-from common.database import Base
-
-test_db_url = "sqlite+aiosqlite:///:memory:"
-engine = create_async_engine(
-    test_db_url,
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
-    echo=False
-)
-
-@event.listens_for(engine.sync_engine, "connect")
-def do_connect(dbapi_connection, connection_record):
-    dbapi_connection.create_function("ST_GeogFromText", 1, lambda x: x)
-    dbapi_connection.create_function("ST_GeomFromText", 1, lambda x: x)
-    dbapi_connection.create_function("ST_AsText", 1, lambda x: x)
-    dbapi_connection.create_function("AsBinary", 1, lambda x: b"" if x else None)
-    dbapi_connection.create_function("ST_AsBinary", 1, lambda x: b"" if x else None)
-    dbapi_connection.create_function("ST_GeomFromWKB", 1, lambda x: x)
-    dbapi_connection.create_function("ST_Distance", 2, lambda x, y: 0.0)
-    dbapi_connection.create_function("ST_DWithin", 3, lambda x, y, z: 1)
-
-async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+from common.database import Base, async_session_maker, engine
 
 from common.models.all_models import (
     User, CustomerProfile, UserRole, Driver, Vehicle, VehicleType,
@@ -125,10 +65,9 @@ async def run_promotions_and_ratings_suite():
     print(">> STARTING CUSTOMER APP FEATURES 13 & 14 E2E VERIFICATION SUITE")
     print("=" * 80)
 
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    await engine.dispose()
 
-    async with async_session() as db:
+    async with async_session_maker() as db:
         test_id = uuid.uuid4().hex[:6]
         c_user_id = uuid.uuid4()
         d_user_id = uuid.uuid4()
@@ -216,7 +155,7 @@ async def run_promotions_and_ratings_suite():
         print("\n[TEST 1] First Ride Auto-Offer Evaluation & Max Discount Cap...")
         first_ride_camp = PromotionCampaign(
             id=uuid.uuid4(),
-            code="WELCOME50",
+            code=f"WELCOME50_{test_id}",
             title="First Ride 50% Off",
             description="Welcome offer: 50% off up to ₹100",
             campaign_type="FIRST_RIDE",
@@ -253,7 +192,7 @@ async def run_promotions_and_ratings_suite():
         print("\n[TEST 2] Cashback Campaign & Post-Trip Promo Wallet Credit...")
         cashback_camp = PromotionCampaign(
             id=uuid.uuid4(),
-            code="CASH50",
+            code=f"CASH50_{test_id}",
             title="Earn ₹50 Cashback",
             description="Earn ₹50 post-ride cashback",
             campaign_type="CASHBACK",
@@ -293,7 +232,7 @@ async def run_promotions_and_ratings_suite():
         print("\n[TEST 3] Service-Specific Promotion Filtering (Cab vs Parcel)...")
         parcel_camp = PromotionCampaign(
             id=uuid.uuid4(),
-            code="PARCEL20",
+            code=f"PARCEL20_{test_id}",
             title="Send Parcel ₹20 Off",
             description="Flat ₹20 discount on parcel delivery",
             campaign_type="SERVICE_DISCOUNT",
