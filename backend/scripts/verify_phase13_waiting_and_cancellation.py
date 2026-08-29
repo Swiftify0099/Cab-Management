@@ -404,11 +404,14 @@ async def run_phase13_waiting_and_cancellation_verification():
         waiting_svc = WaitingService(session)
 
         # 4a. Premature No-Show attempt (<5 mins) -> Must be rejected
+        ns_driver_uid = str(u_drv_ns.id)
+        ns_ride_id = ride_ns.id
+
         ns_premature_err = None
         try:
             await waiting_svc.process_no_show_cancellation(
-                driver_user_id=str(u_drv_ns.id),
-                ride_id=ride_ns.id,
+                driver_user_id=ns_driver_uid,
+                ride_id=ns_ride_id,
                 driver_lat=18.5204,
                 driver_lng=73.8567,
             )
@@ -421,19 +424,14 @@ async def run_phase13_waiting_and_cancellation_verification():
         )
 
         # 4b. Distance violation (>150m from pickup) -> Must be rejected
-        await session.execute(
-            update(RideRequest)
-            .where(RideRequest.id == ride_ns.id)
-            .values(pickup_arrived_at=datetime.now(timezone.utc) - timedelta(seconds=320))
-        )
+        ride_ns.pickup_arrived_at = datetime.now(timezone.utc) - timedelta(seconds=320)
         await session.commit()
-        session.expire_all()
 
         ns_distance_err = None
         try:
             await waiting_svc.process_no_show_cancellation(
-                driver_user_id=str(u_drv_ns.id),
-                ride_id=ride_ns.id,
+                driver_user_id=ns_driver_uid,
+                ride_id=ns_ride_id,
                 driver_lat=18.5300, # ~1 km away
                 driver_lng=73.8567,
             )
@@ -449,8 +447,8 @@ async def run_phase13_waiting_and_cancellation_verification():
         ns_contact_err = None
         try:
             await waiting_svc.process_no_show_cancellation(
-                driver_user_id=str(u_drv_ns.id),
-                ride_id=ride_ns.id,
+                driver_user_id=ns_driver_uid,
+                ride_id=ns_ride_id,
                 driver_lat=18.5204,
                 driver_lng=73.8567,
             )
@@ -463,17 +461,12 @@ async def run_phase13_waiting_and_cancellation_verification():
         )
 
         # 4d. Legitimate No-Show Cancellation (>=300s + <=150m + >=1 contact attempt)
-        await session.execute(
-            update(RideRequest)
-            .where(RideRequest.id == ride_ns.id)
-            .values(contact_attempts_count=1)
-        )
+        ride_ns.contact_attempts_count = 1
         await session.commit()
-        session.expire_all()
 
         ns_success_res = await waiting_svc.process_no_show_cancellation(
-            driver_user_id=str(u_drv_ns.id),
-            ride_id=ride_ns.id,
+            driver_user_id=ns_driver_uid,
+            ride_id=ns_ride_id,
             driver_lat=18.5204,
             driver_lng=73.8567,
         )
