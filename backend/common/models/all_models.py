@@ -2419,6 +2419,41 @@ class RideOffer(Base, UUIDMixin, TimestampMixin):
     driver: Mapped["Driver"] = orm_relationship("Driver", foreign_keys=[driver_id])
 
 
+class NegotiationOffer(Base, UUIDMixin, TimestampMixin):
+    """
+    Feature 14: Own Fare & Dynamic Negotiation Engine.
+    Immutable record for every customer offer, driver bid, and counter-offer round.
+    Every offer has an authoritative amount, sender/receiver, status, and expiry.
+    """
+    __tablename__ = "negotiation_offers"
+
+    ride_request_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ride_requests.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    sender_type: Mapped[str] = mapped_column(String(20), nullable=False)  # CUSTOMER, PARTNER
+    sender_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    receiver_type: Mapped[str] = mapped_column(String(20), nullable=False)  # PARTNER, CUSTOMER
+    receiver_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    
+    amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    round_number: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    parent_offer_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("negotiation_offers.id", ondelete="SET NULL"),
+        nullable=True, index=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(30), default="OFFERED", nullable=False, index=True
+    )  # OFFERED, ACCEPTED, REJECTED, EXPIRED, SUPERSEDED, CANCELLED
+    
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    responded_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejection_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # Relationships
+    ride_request: Mapped["RideRequest"] = relationship(foreign_keys=[ride_request_id])
+
+
 # ============================================================
 # SMART RIDE SELECTION & RADAR (Feature 6)
 # ============================================================
