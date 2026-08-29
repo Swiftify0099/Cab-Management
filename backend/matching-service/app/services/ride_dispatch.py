@@ -569,7 +569,7 @@ class RideDispatchService:
                 select(RideOffer).where(
                     and_(
                         RideOffer.ride_request_id == offer.ride_request_id,
-                        RideOffer.status == RideOfferStatus.PENDING,
+                        RideOffer.status.in_([RideOfferStatus.PENDING, RideOfferStatus.OFFERED]),
                         RideOffer.expires_at > now,
                     )
                 )
@@ -646,7 +646,7 @@ class RideDispatchService:
                 and_(
                     RideOffer.ride_request_id == ride_req.id,
                     RideOffer.id != offer.id,
-                    RideOffer.status == RideOfferStatus.PENDING,
+                    RideOffer.status.in_([RideOfferStatus.PENDING, RideOfferStatus.OFFERED]),
                 )
             )
         )
@@ -922,7 +922,7 @@ class RideDispatchService:
             .where(
                 and_(
                     RideOffer.driver_id == driver.id,
-                    RideOffer.status == RideOfferStatus.PENDING,
+                    RideOffer.status.in_([RideOfferStatus.PENDING, RideOfferStatus.OFFERED]),
                     RideOffer.expires_at > now,
                     RideRequest.status.in_([
                         RideRequestStatus.CREATED,
