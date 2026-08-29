@@ -65,12 +65,13 @@ class DriverSafetyService:
             raise HTTPException(status_code=404, detail="Ride request not found")
 
         active_statuses = [
-            RideRequestStatus.ACCEPTED,
-            RideRequestStatus.ARRIVED,
+            RideRequestStatus.CREATED,
+            RideRequestStatus.DISPATCHING,
+            RideRequestStatus.MATCHING,
+            RideRequestStatus.OFFERED,
+            RideRequestStatus.ASSIGNED,
+            RideRequestStatus.PICKUP,
             RideRequestStatus.IN_PROGRESS,
-            RideRequestStatus.DRIVER_ASSIGNED,
-            RideRequestStatus.DRIVER_ARRIVED,
-            RideRequestStatus.SEARCHING,
         ]
         
         status_val = ride.status
@@ -80,7 +81,7 @@ class DriverSafetyService:
             status_str = str(status_val)
 
         if status_val not in active_statuses and status_str.upper() not in [
-            "ACCEPTED", "ARRIVED", "IN_PROGRESS", "DRIVER_ASSIGNED", "DRIVER_ARRIVED", "SEARCHING"
+            "CREATED", "DISPATCHING", "MATCHING", "OFFERED", "ASSIGNED", "PICKUP", "IN_PROGRESS"
         ]:
             raise HTTPException(
                 status_code=400,
@@ -234,7 +235,7 @@ class DriverSafetyService:
                 user_id=user_id,
                 name=name.strip(),
                 phone=cleaned_phone,
-                relationship=relationship.strip(),
+                relation=relationship.strip(),
                 is_primary=is_primary,
                 auto_share_rides=True,
             )

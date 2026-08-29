@@ -403,9 +403,12 @@ class NotificationEngineService:
                     and_(
                         RideRequest.customer_id == user_id,
                         RideRequest.status.in_([
-                            RideRequestStatus.SEARCHING,
-                            RideRequestStatus.DRIVER_ASSIGNED,
-                            RideRequestStatus.DRIVER_ARRIVED,
+                            RideRequestStatus.CREATED,
+                            RideRequestStatus.DISPATCHING,
+                            RideRequestStatus.MATCHING,
+                            RideRequestStatus.OFFERED,
+                            RideRequestStatus.ASSIGNED,
+                            RideRequestStatus.PICKUP,
                             RideRequestStatus.IN_PROGRESS,
                         ])
                     )
@@ -425,8 +428,8 @@ class NotificationEngineService:
                     and_(
                         RideRequest.assigned_driver_id == driver_id,
                         RideRequest.status.in_([
-                            RideRequestStatus.DRIVER_ASSIGNED,
-                            RideRequestStatus.DRIVER_ARRIVED,
+                            RideRequestStatus.ASSIGNED,
+                            RideRequestStatus.PICKUP,
                             RideRequestStatus.IN_PROGRESS,
                         ])
                     )
