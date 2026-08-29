@@ -18,13 +18,13 @@ import structlog
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from common.models.all_models import LiveTracking, Trip, Booking, BookingStatus
+from common.models.all_models import LiveTracking, Trip, Booking, BookingStatus, RideRequest, RideRequestStatus, Driver
 from common.utils.redis_client import get_redis, publish_event
 
 logger = structlog.get_logger(__name__)
 
 
-#  Haversine ETA Engine 
+# ── Haversine ETA Engine ──────────────────────────────────────────────────────
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Great-circle distance between two GPS coordinates in km."""
@@ -47,16 +47,40 @@ def estimate_eta(
     Falls back to average intercity speed of 60 km/h if speed < 5.
     """
     distance_km = haversine_km(current_lat, current_lng, dest_lat, dest_lng)
-    effective_speed = max(speed_kmh, 60.0)  # min 60 km/h for intercity
-    eta_minutes = int((distance_km / effective_speed) * 60)
+    effective_speed = max(speed_kmh, 45.0)  # min 45 km/h for realistic city/intercity blend
+    eta_minutes = max(1, int((distance_km / effective_speed) * 60))
     return round(distance_km, 2), eta_minutes
 
 
-#  Tracking Service 
+# ── Tracking Service ──────────────────────────────────────────────────────────
 
 class TrackingService:
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    async def _get_destination(self, trip_id: str) -> Optional[tuple[float, float]]:
+        """Resolves destination coordinates for either an intercity Trip or on-demand RideRequest."""
+        try:
+            t_uuid = UUID(str(trip_id))
+        except Exception:
+            return None
+
+        # 1. Try Trip
+        t_res = await self.db.execute(select(Trip).where(Trip.id == t_uuid))
+        trip = t_res.scalar_one_or_none()
+        if trip and trip.destination_latitude and trip.destination_longitude:
+            return float(trip.destination_latitude), float(trip.destination_longitude)
+
+        # 2. Try RideRequest
+        r_res = await self.db.execute(select(RideRequest).where(RideRequest.id == t_uuid))
+        ride = r_res.scalar_one_or_none()
+        if ride:
+            if ride.status == RideRequestStatus.IN_PROGRESS and ride.destination_lat and ride.destination_lng:
+                return float(ride.destination_lat), float(ride.destination_lng)
+            elif ride.pickup_lat and ride.pickup_lng:
+                return float(ride.pickup_lat), float(ride.pickup_lng)
+
+        return None
 
     async def record_location(
         self,
@@ -72,65 +96,86 @@ class TrackingService:
     ) -> dict:
         """
         Persist one GPS point to live_tracking.
-        Compute ETA against trip destination.
+        Compute ETA against trip or ride destination.
         Broadcast updated ETA to trip room via Redis.
         """
         # Load trip destination
-        trip = await self._get_trip(trip_id)
+        dest = await self._get_destination(trip_id)
         eta_minutes = None
         distance_remaining_km = None
 
-        if trip:
+        if dest:
+            dest_lat, dest_lng = dest
             distance_remaining_km, eta_minutes = estimate_eta(
                 latitude, longitude,
-                trip.destination_latitude, trip.destination_longitude,
+                dest_lat, dest_lng,
                 speed_kmh,
             )
 
-        # Persist to DB (bulk insert mode  don't await individually)
+        # Persist to DB
         point_wkt = f"SRID=4326;POINT({longitude} {latitude})"
-        tracking = LiveTracking(
-            trip_id=UUID(trip_id),
-            driver_id=UUID(driver_id),
-            booking_id=UUID(booking_id) if booking_id else None,
-            driver_location=point_wkt,
-            latitude=latitude,
-            longitude=longitude,
-            speed_kmh=speed_kmh,
-            heading=heading,
-            accuracy_m=accuracy_m,
-            altitude_m=altitude_m,
-            eta_minutes=eta_minutes,
-            distance_remaining_km=distance_remaining_km,
-            recorded_at=datetime.utcnow(),
-        )
-        self.db.add(tracking)
-        await self.db.commit()
+        try:
+            t_uuid = UUID(str(trip_id)) if trip_id and len(str(trip_id)) >= 32 else None
+            d_uuid = UUID(str(driver_id)) if driver_id and len(str(driver_id)) >= 32 else None
+            b_uuid = UUID(str(booking_id)) if booking_id and len(str(booking_id)) >= 32 else None
+
+            if t_uuid:
+                tracking = LiveTracking(
+                    trip_id=t_uuid,
+                    driver_id=d_uuid,
+                    booking_id=b_uuid,
+                    driver_location=point_wkt,
+                    latitude=latitude,
+                    longitude=longitude,
+                    speed_kmh=speed_kmh,
+                    heading=heading,
+                    accuracy_m=accuracy_m,
+                    altitude_m=altitude_m,
+                    eta_minutes=eta_minutes,
+                    distance_remaining_km=distance_remaining_km,
+                    recorded_at=datetime.utcnow(),
+                )
+                self.db.add(tracking)
+                await self.db.commit()
+        except Exception as db_err:
+            logger.debug("LiveTracking insert notice", exc_info=db_err)
 
         # Cache latest point in Redis (fast read for customer app)
         r = await get_redis()
         location_data = {
-            "trip_id": trip_id,
-            "driver_id": driver_id,
+            "trip_id": str(trip_id),
+            "driver_id": str(driver_id),
             "latitude": latitude,
             "longitude": longitude,
+            "lat": latitude,
+            "lng": longitude,
             "speed_kmh": speed_kmh,
+            "speed": speed_kmh,
             "heading": heading,
+            "accuracy": accuracy_m,
+            "accuracy_m": accuracy_m,
             "eta_minutes": eta_minutes,
             "distance_remaining_km": distance_remaining_km,
             "recorded_at": datetime.utcnow().isoformat(),
         }
         await r.setex(f"trip:location:{trip_id}", 60, json.dumps(location_data))
 
-        # Publish ETA update to trip room  Socket.IO gateway forwards to customers
-        await publish_event(
+        # Publish ETA update to trip room — Socket.IO gateway forwards to customers
+        event_payload = {
+            "event": "LOCATION_UPDATE",
+            "trip_id": str(trip_id),
+            **location_data,
+        }
+        for ch in [
             f"trip:{trip_id}:events",
-            {
-                "event": "LOCATION_UPDATE",
-                "trip_id": trip_id,
-                **location_data,
-            },
-        )
+            f"ride:{trip_id}:events",
+            f"trip:{trip_id}",
+            f"ride:{trip_id}",
+        ]:
+            try:
+                await publish_event(ch, event_payload)
+            except Exception:
+                pass
 
         # ── Arrival Alert (10km / 10min threshold) ────────────────────────
         try:
@@ -145,7 +190,7 @@ class TrackingService:
                 eta_minutes=eta_minutes,
             )
         except Exception as e:
-            logger.warning("Arrival alert check failed", exc_info=e)
+            logger.debug("Arrival alert check notice", exc_info=e)
 
         return location_data
 
@@ -156,27 +201,33 @@ class TrackingService:
         if raw:
             return json.loads(raw)
 
-        # DB fallback  latest recorded point
-        result = await self.db.execute(
-            select(LiveTracking)
-            .where(LiveTracking.trip_id == UUID(trip_id))
-            .order_by(LiveTracking.recorded_at.desc())
-            .limit(1)
-        )
-        point = result.scalar_one_or_none()
-        if not point:
-            return None
+        # DB fallback — latest recorded point
+        try:
+            result = await self.db.execute(
+                select(LiveTracking)
+                .where(LiveTracking.trip_id == UUID(str(trip_id)))
+                .order_by(LiveTracking.recorded_at.desc())
+                .limit(1)
+            )
+            point = result.scalar_one_or_none()
+            if not point:
+                return None
 
-        return {
-            "trip_id": trip_id,
-            "latitude": point.latitude,
-            "longitude": point.longitude,
-            "speed_kmh": point.speed_kmh,
-            "heading": point.heading,
-            "eta_minutes": point.eta_minutes,
-            "distance_remaining_km": point.distance_remaining_km,
-            "recorded_at": point.recorded_at.isoformat(),
-        }
+            return {
+                "trip_id": str(trip_id),
+                "latitude": point.latitude,
+                "longitude": point.longitude,
+                "lat": point.latitude,
+                "lng": point.longitude,
+                "speed_kmh": point.speed_kmh,
+                "heading": point.heading,
+                "accuracy": point.accuracy_m,
+                "eta_minutes": point.eta_minutes,
+                "distance_remaining_km": point.distance_remaining_km,
+                "recorded_at": point.recorded_at.isoformat(),
+            }
+        except Exception:
+            return None
 
     async def get_trip_route(
         self, trip_id: str, limit: int = 500
@@ -185,36 +236,34 @@ class TrackingService:
         Get polyline path for this trip (last `limit` points).
         Used by customer app to draw route line on map.
         """
-        result = await self.db.execute(
-            select(LiveTracking)
-            .where(LiveTracking.trip_id == UUID(trip_id))
-            .order_by(LiveTracking.recorded_at.asc())
-            .limit(limit)
-        )
-        points = result.scalars().all()
-        return [
-            {
-                "lat": p.latitude,
-                "lng": p.longitude,
-                "ts": p.recorded_at.isoformat(),
-                "speed": p.speed_kmh,
-            }
-            for p in points
-        ]
-
-    async def _get_trip(self, trip_id: str) -> Optional[Trip]:
-        result = await self.db.execute(
-            select(Trip).where(Trip.id == UUID(trip_id))
-        )
-        return result.scalar_one_or_none()
+        try:
+            result = await self.db.execute(
+                select(LiveTracking)
+                .where(LiveTracking.trip_id == UUID(str(trip_id)))
+                .order_by(LiveTracking.recorded_at.asc())
+                .limit(limit)
+            )
+            points = result.scalars().all()
+            return [
+                {
+                    "lat": p.latitude,
+                    "lng": p.longitude,
+                    "ts": p.recorded_at.isoformat(),
+                    "speed": p.speed_kmh,
+                    "heading": p.heading,
+                }
+                for p in points
+            ]
+        except Exception:
+            return []
 
 
-#  Redis Pub/Sub Consumer (runs as background task in WebSocket Gateway) 
+# ── Redis Pub/Sub Consumer ────────────────────────────────────────────────────
 
 async def consume_location_updates(db_factory):
     """
     Listens to 'live:location:updates' Redis channel.
-    1. Updates driver's live GPS coordinates in the PostGIS 'drivers' table (current_location, is_online=True).
+    1. Updates driver's live GPS coordinates in the PostGIS 'drivers' table.
     2. Persists active trip point via TrackingService if trip_id is present.
     """
     from sqlalchemy import text as sa_text
@@ -222,7 +271,7 @@ async def consume_location_updates(db_factory):
     r = await get_redis()
     pubsub = r.pubsub()
     await pubsub.subscribe("live:location:updates")
-    logger.info(" Location consumer started")
+    logger.info("📡 Location consumer started")
 
     async for message in pubsub.listen():
         if message["type"] != "message":
@@ -236,6 +285,9 @@ async def consume_location_updates(db_factory):
             driver_id_val = data.get("driver_id")
             lat_val = float(data.get("lat") or data.get("latitude") or 0)
             lng_val = float(data.get("lng") or data.get("longitude") or 0)
+            spd_val = float(data.get("speed") or data.get("speed_kmh", 0.0))
+            head_val = float(data.get("heading", 0.0))
+            acc_val = float(data.get("accuracy") or data.get("accuracy_m", 5.0))
 
             async with db_factory() as db:
                 # 1. Update driver's authoritative PostGIS location in database
@@ -246,12 +298,26 @@ async def consume_location_updates(db_factory):
                             sa_text("""
                                 UPDATE drivers
                                 SET current_location = ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography,
+                                    current_latitude = :lat,
+                                    current_longitude = :lng,
+                                    current_accuracy_m = :acc,
+                                    current_heading = :head,
+                                    current_speed_kmh = :spd,
+                                    last_location_updated_at = NOW(),
                                     is_online = TRUE,
                                     status = 'ONLINE',
                                     updated_at = NOW()
                                 WHERE user_id = :uid OR id = :did
                             """),
-                            {"lng": lng_val, "lat": lat_val, "uid": d_uuid, "did": d_uuid}
+                            {
+                                "lng": lng_val,
+                                "lat": lat_val,
+                                "acc": acc_val,
+                                "head": head_val,
+                                "spd": spd_val,
+                                "uid": d_uuid,
+                                "did": d_uuid,
+                            }
                         )
                         await db.commit()
                     except Exception as db_loc_err:
@@ -259,17 +325,17 @@ async def consume_location_updates(db_factory):
 
                 # 2. Persist trip tracking if on an active trip
                 trip_id_val = data.get("trip_id")
-                if trip_id_val and trip_id_val != "undefined" and len(trip_id_val) > 10:
+                if trip_id_val and trip_id_val != "undefined" and len(str(trip_id_val)) > 10:
                     try:
                         service = TrackingService(db)
                         await service.record_location(
-                            trip_id=trip_id_val,
+                            trip_id=str(trip_id_val),
                             driver_id=str(driver_id_val or ""),
                             latitude=lat_val,
                             longitude=lng_val,
-                            speed_kmh=float(data.get("speed") or data.get("speed_kmh", 0.0)),
-                            heading=float(data.get("heading", 0.0)),
-                            accuracy_m=float(data.get("accuracy") or data.get("accuracy_m", 0.0)),
+                            speed_kmh=spd_val,
+                            heading=head_val,
+                            accuracy_m=acc_val,
                             altitude_m=data.get("altitude_m"),
                             booking_id=data.get("booking_id"),
                         )
