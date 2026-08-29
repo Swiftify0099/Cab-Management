@@ -371,6 +371,7 @@ class TransportQuoteStatus(str, PyEnum):
 
 class RideOfferStatus(str, PyEnum):
     PENDING = "pending"
+    OFFERED = "offered"
     DELIVERED = "delivered"
     VIEWED = "viewed"
     ACCEPTED = "accepted"
