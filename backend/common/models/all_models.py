@@ -616,17 +616,6 @@ class CustomerAppSetting(Base, UUIDMixin, TimestampMixin):
 
     user: Mapped["User"] = orm_relationship("User", foreign_keys=[user_id])
 
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
-    notifications_ride_updates: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    notifications_driver_arrival: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    notifications_promotions: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    notifications_security_alerts: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    privacy_location_sharing: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    privacy_family_trip_tracking: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    privacy_personalized_ads: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-
-    user: Mapped["User"] = relationship(foreign_keys=[user_id])
-
 
 # ============================================================
 # DRIVER & VEHICLE
@@ -860,6 +849,36 @@ class DriverBankAccount(Base, UUIDMixin, TimestampMixin):
     rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     driver: Mapped["Driver"] = relationship(back_populates="bank_account")
+
+
+class DriverFuelExpense(Base, UUIDMixin, TimestampMixin):
+    """Driver fuel expense tracking."""
+    __tablename__ = "driver_fuel_expenses"
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"), nullable=False, index=True)
+    liters: Mapped[float] = mapped_column(Float, nullable=False)
+    price_per_liter: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    total_cost: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    station_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    odometer_km: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    fuel_type: Mapped[str] = mapped_column(String(50), default="petrol", nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    receipt_photo_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+
+    driver: Mapped["Driver"] = relationship()
+
+
+class DriverTrainingProgress(Base, UUIDMixin, TimestampMixin):
+    """Driver academy and training module progress."""
+    __tablename__ = "driver_training_progress"
+
+    driver_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="CASCADE"), nullable=False, index=True)
+    module_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    is_completed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    driver: Mapped["Driver"] = relationship()
 
 
 class AdminProfile(Base, UUIDMixin, TimestampMixin):
