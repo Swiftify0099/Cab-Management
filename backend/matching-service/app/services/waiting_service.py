@@ -6,7 +6,7 @@ realtime waiting charges, and anti-fraud no-show resolution.
 import uuid
 import json
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
 from decimal import Decimal
 from sqlalchemy import select, and_, func
@@ -73,8 +73,14 @@ class WaitingService:
                 "is_no_show_eligible": False,
             }
 
-        now = datetime.utcnow()
-        elapsed_sec = max(int((now - ride.pickup_arrived_at.replace(tzinfo=None)).total_seconds()), 0)
+        now = datetime.now(timezone.utc)
+        arrived_at = ride.pickup_arrived_at
+        if arrived_at:
+            if arrived_at.tzinfo is None:
+                arrived_at = arrived_at.replace(tzinfo=timezone.utc)
+            elapsed_sec = max(int((now - arrived_at).total_seconds()), 0)
+        else:
+            elapsed_sec = 0
         
         # Calculate Free vs Paid
         free_remaining = max(FREE_WAITING_SECONDS - elapsed_sec, 0)
@@ -164,8 +170,11 @@ class WaitingService:
         if not ride.pickup_arrived_at:
             raise HTTPException(status_code=400, detail="Driver has not officially marked arrival at pickup yet.")
 
-        now = datetime.utcnow()
-        elapsed_sec = (now - ride.pickup_arrived_at.replace(tzinfo=None)).total_seconds()
+        now = datetime.now(timezone.utc)
+        arrived_at = ride.pickup_arrived_at
+        if arrived_at.tzinfo is None:
+            arrived_at = arrived_at.replace(tzinfo=timezone.utc)
+        elapsed_sec = (now - arrived_at).total_seconds()
         if elapsed_sec < NO_SHOW_WAITING_SECONDS:
             rem = int(NO_SHOW_WAITING_SECONDS - elapsed_sec)
             raise HTTPException(

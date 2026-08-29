@@ -312,3 +312,142 @@ class CancellationService:
             }
             for e in events
         ]
+
+    async def cancel_ride_by_customer(
+        self,
+        customer_user_id: str,
+        ride_id: uuid.UUID,
+        reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Atomic Customer Cancellation.
+        Enforces policy:
+          - Free if in MATCHING or cancelled within 2 minutes of driver assignment.
+          - Late cancellation fee (₹50.00) if driver has arrived or >2 mins elapsed since assignment.
+          - Cannot cancel IN_PROGRESS or COMPLETED rides.
+        """
+        cust_uuid = uuid.UUID(str(customer_user_id))
+        r_res = await self.db.execute(
+            select(RideRequest).where(RideRequest.id == ride_id).with_for_update()
+        )
+        ride = r_res.scalar_one_or_none()
+        if not ride:
+            raise HTTPException(status_code=404, detail="Ride request not found")
+
+        if ride.customer_id != cust_uuid:
+            raise HTTPException(status_code=403, detail="Unauthorized for this ride request")
+
+        if ride.status in [RideRequestStatus.CANCELLED, RideRequestStatus.COMPLETED]:
+            return {
+                "success": True,
+                "ride_id": str(ride.id),
+                "status": ride.status.value,
+                "message": f"Ride is already {ride.status.value} (Idempotent response).",
+                "cancellation_fee": 0.0,
+            }
+
+        if ride.status == RideRequestStatus.IN_PROGRESS:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot cancel an in-progress trip. Please complete or request emergency stop."
+            )
+
+        now = datetime.utcnow()
+        cancellation_fee = 0.0
+        driver_payout = 0.0
+
+        # Determine if cancellation fee applies
+        if ride.assigned_driver_id:
+            assigned_at = ride.assigned_at or ride.updated_at or ride.created_at
+            elapsed_sec = (now - assigned_at.replace(tzinfo=None)).total_seconds() if assigned_at else 0
+            if ride.pickup_arrived_at or elapsed_sec > 120:  # > 2 mins or driver already arrived
+                cancellation_fee = 50.0
+                driver_payout = 50.0
+
+        ride.status = RideRequestStatus.CANCELLED
+        ride.cancelled_by = "customer"
+        ride.cancellation_reason = reason or "CUSTOMER_CANCELLED"
+        ride.cancelled_at = now
+
+        # If fee applies and driver assigned, credit driver wallet
+        if driver_payout > 0 and ride.assigned_driver_id:
+            w_res = await self.db.execute(
+                select(DriverPointWallet).where(DriverPointWallet.driver_id == ride.assigned_driver_id)
+            )
+            wallet = w_res.scalar_one_or_none()
+            if wallet:
+                wallet.balance += int(driver_payout)
+                tx = DriverPointTransaction(
+                    id=uuid.uuid4(),
+                    driver_id=ride.assigned_driver_id,
+                    wallet_id=wallet.id,
+                    delta=int(driver_payout),
+                    reason="Compensation: Customer Late Cancellation",
+                    ref_id=ride.id,
+                )
+                self.db.add(tx)
+
+        # Canonical Cancellation Event
+        cancel_event = RideCancellationEvent(
+            id=uuid.uuid4(),
+            ride_id=ride.id,
+            actor_type="customer",
+            actor_id=cust_uuid,
+            reason_code=reason or "CUSTOMER_CANCELLED",
+            reason_details=f"Cancelled by customer (fee: ₹{cancellation_fee:.2f})",
+            cancellation_fee=Decimal(str(cancellation_fee)),
+            driver_penalty=Decimal("0.00"),
+            driver_payout=Decimal(str(driver_payout)),
+            is_penalty_exempt=True,
+            policy_version="v1.0",
+        )
+        self.db.add(cancel_event)
+
+        # Audit Event Log
+        event_log = RideEventLog(
+            id=uuid.uuid4(),
+            ride_id=ride.id,
+            event_type="CUSTOMER_CANCELLED",
+            actor_id=cust_uuid,
+            actor_role="customer",
+            details={
+                "cancellation_fee": cancellation_fee,
+                "driver_payout": driver_payout,
+                "reason": reason,
+            }
+        )
+        self.db.add(event_log)
+        await self.db.commit()
+
+        # Broadcast
+        await _safe_redis_publish("trip:updates", {
+            "event": "ride:cancelled",
+            "ride_id": str(ride.id),
+            "reason": reason or "CUSTOMER_CANCELLED",
+            "cancelled_by": "customer",
+            "cancellation_fee": cancellation_fee,
+        })
+        cust_id_str = str(cust_uuid)
+        await _safe_redis_publish(f"customer:{cust_id_str}:events", {
+            "event": "RIDE_CANCELLED",
+            "ride_request_id": str(ride.id),
+            "cancellation_fee": cancellation_fee,
+        })
+        if ride.assigned_driver_id:
+            d_res = await self.db.execute(select(Driver.user_id).where(Driver.id == ride.assigned_driver_id))
+            d_uid = d_res.scalar_one_or_none()
+            if d_uid:
+                await _safe_redis_publish(f"driver:{str(d_uid)}:events", {
+                    "event": "RIDE_CANCELLED",
+                    "ride_request_id": str(ride.id),
+                    "compensation": driver_payout,
+                })
+
+        return {
+            "success": True,
+            "ride_id": str(ride.id),
+            "status": "cancelled",
+            "cancellation_fee": cancellation_fee,
+            "driver_payout": driver_payout,
+            "message": "Ride cancelled successfully.",
+        }

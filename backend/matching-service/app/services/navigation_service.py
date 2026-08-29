@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 import uuid
+from datetime import datetime
 from typing import Optional, Tuple
 
 import structlog
@@ -48,8 +49,25 @@ class NavigationService:
         dist_m = dist_km * 1000.0
 
         if dist_m <= PICKUP_ARRIVAL_RADIUS_METERS:
+            now = datetime.utcnow()
+            if not ride.pickup_arrived_at:
+                ride.pickup_arrived_at = now
             ride.status = RideRequestStatus.PICKUP
             await self.db.commit()
+
+            arrival_payload = {
+                "event": "DRIVER_ARRIVED",
+                "ride_request_id": str(ride.id),
+                "booking_id": str(ride.id),
+                "pickup_arrived_at": now.isoformat(),
+                "free_waiting_seconds": 180,
+            }
+            try:
+                await publish_event(f"customer:{str(ride.customer_id)}:events", arrival_payload)
+                await publish_event(f"trip:{str(ride.id)}:events", arrival_payload)
+            except Exception:
+                pass
+
             return True, "Driver arrived at pickup location", dist_m
         else:
             return False, f"Driver is {int(dist_m)}m away from pickup (must be within {int(PICKUP_ARRIVAL_RADIUS_METERS)}m)", dist_m
