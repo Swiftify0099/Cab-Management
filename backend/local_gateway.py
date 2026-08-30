@@ -665,22 +665,91 @@ try:
         client = _sid_to_user.pop(sid, {})
         print(f"[WS] Client disconnected: {sid} (user_id={client.get('user_id')})")
 
+    # ── Asynchronous Driver DB Presence & Location Syncer ──────────────
+    async def _async_update_driver_presence(user_or_driver_id: str, lat: float = None, lng: float = None):
+        """Asynchronously updates driver live location, online status, and timestamp in DB and Redis."""
+        if not user_or_driver_id or str(user_or_driver_id) in ("unknown", "None", ""):
+            return
+        try:
+            from common.database import async_session_maker
+            from sqlalchemy import text as _stext
+            async with async_session_maker() as _db:
+                if lat is not None and lng is not None and (float(lat) != 0 or float(lng) != 0):
+                    await _db.execute(
+                        _stext("""
+                            UPDATE drivers
+                            SET current_location = ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography,
+                                current_latitude = :lat,
+                                current_longitude = :lng,
+                                last_location_updated_at = NOW(),
+                                last_online_at = NOW(),
+                                is_online = TRUE,
+                                is_active = TRUE,
+                                status = 'ONLINE',
+                                updated_at = NOW()
+                            WHERE user_id = CAST(:uid AS uuid) OR id = CAST(:did AS uuid)
+                        """),
+                        {"lng": float(lng), "lat": float(lat), "uid": str(user_or_driver_id), "did": str(user_or_driver_id)}
+                    )
+                else:
+                    await _db.execute(
+                        _stext("""
+                            UPDATE drivers
+                            SET last_location_updated_at = NOW(),
+                                last_online_at = NOW(),
+                                is_online = TRUE,
+                                is_active = TRUE,
+                                status = 'ONLINE',
+                                updated_at = NOW()
+                            WHERE user_id = CAST(:uid AS uuid) OR id = CAST(:did AS uuid)
+                        """),
+                        {"uid": str(user_or_driver_id), "did": str(user_or_driver_id)}
+                    )
+                await _db.commit()
+        except Exception as _pres_err:
+            pass
+
     # ── Driver online / offline ─────────────────────────────────────────
     @sio.event
     async def DRIVER_ONLINE(sid, data):
+        data = data or {}
         driver_id = data.get('driver_id', '')
-        if driver_id and driver_id != 'unknown':
-            room = f"driver:{driver_id}"
+        client = _sid_to_user.get(sid, {})
+        user_id = client.get("user_id") or driver_id
+        target_id = user_id if (user_id and user_id != 'unknown') else driver_id
+        lat = data.get('lat') or data.get('latitude')
+        lng = data.get('lng') or data.get('longitude')
+        if target_id and target_id != 'unknown':
+            room = f"driver:{target_id}"
             await sio.enter_room(sid, room)
-            _sid_to_user[sid] = {"role": "driver", "id": driver_id}
-            print(f"[WS] Driver {driver_id} online -> room {room}")
-            await sio.emit("DRIVER_SOCKET_READY", {"status": "ready", "driver_id": driver_id, "room": room}, room=sid)
+            _sid_to_user[sid] = {"role": "driver", "id": driver_id, "user_id": target_id}
+            print(f"[WS] Driver {target_id} online -> room {room}")
+            await sio.emit("DRIVER_SOCKET_READY", {"status": "ready", "driver_id": target_id, "room": room}, room=sid)
+            _asyncio.ensure_future(_async_update_driver_presence(target_id, lat, lng))
 
     @sio.event
     async def DRIVER_OFFLINE(sid, data):
+        data = data or {}
         driver_id = data.get('driver_id', '')
+        client = _sid_to_user.get(sid, {})
+        user_id = client.get("user_id") or driver_id
         if driver_id:
             await sio.leave_room(sid, f"driver:{driver_id}")
+        if user_id:
+            await sio.leave_room(sid, f"driver:{user_id}")
+            async def _mark_offline():
+                try:
+                    from common.database import async_session_maker
+                    from sqlalchemy import text as _stext
+                    async with async_session_maker() as _db:
+                        await _db.execute(
+                            _stext("UPDATE drivers SET is_online = FALSE, is_active = FALSE, status = 'OFFLINE', updated_at = NOW() WHERE user_id = CAST(:uid AS uuid) OR id = CAST(:did AS uuid)"),
+                            {"uid": str(user_id), "did": str(user_id)}
+                        )
+                        await _db.commit()
+                except Exception:
+                    pass
+            _asyncio.ensure_future(_mark_offline())
 
     # ── Customer joins their personal notification room ─────────────────
     @sio.event
@@ -744,6 +813,7 @@ try:
     # ── GPS location update (driver -> persist + broadcast to trip & ride rooms) ──
     @sio.event
     async def LOCATION_UPDATE(sid, data):
+        data = data or {}
         trip_id = data.get('trip_id', '')
         ride_id = data.get('ride_id', '') or trip_id
         if trip_id:
@@ -751,6 +821,14 @@ try:
         if ride_id:
             await sio.emit('LOCATION_UPDATE', data, room=f"ride:{ride_id}", skip_sid=sid)
             await sio.emit('ride:location', data, room=f"ride:{ride_id}", skip_sid=sid)
+        
+        client = _sid_to_user.get(sid, {})
+        driver_id = client.get("user_id") or data.get("driver_id")
+        lat = data.get("lat")
+        lng = data.get("lng")
+        if driver_id:
+            _asyncio.ensure_future(_async_update_driver_presence(driver_id, lat, lng))
+
         try:
             from common.utils.redis_client import get_redis
             r = await get_redis()
@@ -769,14 +847,15 @@ try:
     # ── Heartbeat & Driver Ping ─────────────────────────────────────────
     @sio.event
     async def heartbeat(sid, data):
+        data = data or {}
         client = _sid_to_user.get(sid, {})
-        driver_id = client.get("id") or client.get("user_id")
+        driver_id = client.get("user_id") or client.get("id") or data.get("driver_id")
+        lat = data.get("latitude") or data.get("lat")
+        lng = data.get("longitude") or data.get("lng")
         if driver_id and driver_id != "unknown":
             try:
                 from common.utils.redis_client import get_redis
                 r = await get_redis()
-                lat = data.get("latitude") or data.get("lat")
-                lng = data.get("longitude") or data.get("lng")
                 if lat and lng:
                     await r.setex(
                         f"driver:location:{driver_id}",
@@ -785,18 +864,20 @@ try:
                     )
             except Exception:
                 pass
+            _asyncio.ensure_future(_async_update_driver_presence(driver_id, lat, lng))
         await sio.emit("HEARTBEAT_ACK", {"ts": data.get("ts")}, room=sid)
 
     @sio.event
     async def DRIVER_PING(sid, data):
+        data = data or {}
         client = _sid_to_user.get(sid, {})
-        driver_id = client.get("id") or client.get("user_id") or data.get("driver_id")
+        driver_id = client.get("user_id") or client.get("id") or data.get("driver_id")
+        lat = data.get("lat") or data.get("latitude")
+        lng = data.get("lng") or data.get("longitude")
         if driver_id and driver_id != "unknown":
             try:
                 from common.utils.redis_client import get_redis
                 r = await get_redis()
-                lat = data.get("lat") or data.get("latitude")
-                lng = data.get("lng") or data.get("longitude")
                 if lat and lng:
                     await r.setex(
                         f"driver:location:{driver_id}",
@@ -805,6 +886,7 @@ try:
                     )
             except Exception:
                 pass
+            _asyncio.ensure_future(_async_update_driver_presence(driver_id, lat, lng))
         await sio.emit("PONG", {"ts": data.get("t") or data.get("ts")}, room=sid)
 
     # ── Customer GPS update -> corridor matching ────────────────────────

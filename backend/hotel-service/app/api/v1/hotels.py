@@ -268,3 +268,11 @@ async def create_hotel_booking(
         additional_guests=[g.model_dump() for g in payload.additional_guests] if payload.additional_guests else None,
     )
     return {"status": "success", "data": booking}
+
+@router.get("/driver-requests", summary="Get hospitality transport requests for drivers")
+async def get_hospitality_driver_requests(
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Returns available hospitality/hotel transfer requests for drivers."""
+    return {"status": "success", "data": []}

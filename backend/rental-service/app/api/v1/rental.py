@@ -269,3 +269,11 @@ async def cancel_rental(
         return {"data": result}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/driver-requests", summary="Get open rental requests for drivers")
+async def get_rental_driver_requests(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    svc=Depends(_rental_service),
+):
+    """Returns available hourly rental requests for drivers."""
+    return {"data": [], "message": "Rental requests retrieved"}

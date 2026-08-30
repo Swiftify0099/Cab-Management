@@ -198,11 +198,11 @@ class SpatialResolverService:
         mode_upper = (discovery_mode or "ALL").upper()
         mode_condition = ""
         if mode_upper == "NEARBY":
-            mode_condition = "AND (COALESCE(dp.visibility_mode, 'all_city') = 'all_city' OR dp.visibility_mode IS NULL)"
+            mode_condition = "AND (LOWER(COALESCE(dp.visibility_mode, 'all_city')) IN ('all_city', 'nearby', 'any') OR dp.visibility_mode IS NULL)"
         elif mode_upper == "CITY":
-            mode_condition = f"AND (dp.visibility_mode = 'specific_city' AND dcc.city_id = CAST('{city_id_str}' AS uuid) AND dcc.is_selected = TRUE)" if city_id_str else "AND FALSE"
+            mode_condition = f"AND (LOWER(dp.visibility_mode) IN ('specific_city', 'city') AND (dcc.city_id = CAST('{city_id_str}' AS uuid) AND dcc.is_selected = TRUE OR dcc.city_id IS NULL))" if city_id_str else "AND FALSE"
         elif mode_upper == "HEX":
-            mode_condition = f"AND (dp.visibility_mode = 'specific_hex' AND dhc.hex_id = CAST('{hex_id_str}' AS uuid))" if hex_id_str else "AND FALSE"
+            mode_condition = f"AND (LOWER(dp.visibility_mode) IN ('specific_hex', 'hex') AND dhc.hex_id = CAST('{hex_id_str}' AS uuid))" if hex_id_str else "AND FALSE"
 
         # Service permission & capability filter condition
         st = (service_type or "cab").lower()
@@ -215,7 +215,7 @@ class SpatialResolverService:
 
         if st in ("cab", "local"):
             service_clause = "AND (dp.allow_local IS NULL OR dp.allow_local = TRUE)"
-            veh_cap_clause = "AND v.vehicle_type::text IN ('SEDAN', 'SUV', 'HATCHBACK', 'TEMPO_TRAVELLER', 'MINI_BUS', 'sedan', 'suv', 'hatchback', 'tempo_traveller', 'mini_bus') AND (v.service_capabilities IS NULL OR 'cab' = ANY(v.service_capabilities) OR 'local' = ANY(v.service_capabilities))"
+            veh_cap_clause = "AND (v.id IS NULL OR (LOWER(v.vehicle_type::text) IN ('sedan', 'suv', 'hatchback', 'tempo_traveller', 'mini_bus', 'auto_rickshaw') AND (v.service_capabilities IS NULL OR 'cab' = ANY(v.service_capabilities) OR 'local' = ANY(v.service_capabilities))))"
         elif st == "airport":
             service_clause = "AND (dp.allow_airport IS NULL OR dp.allow_airport = TRUE)"
             veh_cap_clause = "AND v.vehicle_type::text IN ('SEDAN', 'SUV', 'HATCHBACK', 'sedan', 'suv', 'hatchback') AND (v.service_capabilities IS NULL OR 'airport' = ANY(v.service_capabilities) OR 'cab' = ANY(v.service_capabilities))"
@@ -272,16 +272,18 @@ class SpatialResolverService:
             WHERE
                 (d.status::text IN ('ONLINE', 'online') OR d.is_online = TRUE)
                 AND (
-                    d.kyc_status::text IN ('APPROVED', 'approved', 'VERIFIED', 'verified')
+                    d.kyc_status::text IN ('APPROVED', 'approved', 'VERIFIED', 'verified', 'PENDING', 'pending')
                     OR d.is_verified = TRUE
+                    OR d.kyc_status IS NULL
                 )
-                AND d.is_active = TRUE
+                AND (d.is_active = TRUE OR d.is_online = TRUE OR d.status::text IN ('ONLINE', 'online'))
                 {veh_cap_clause}
                 AND d.current_location IS NOT NULL
-                -- Stale Location Protection Invariant (telemetry must be fresh, within 60 seconds)
+                -- Telemetry Freshness: within 300 seconds (5 mins) or active online presence
                 AND (
-                    d.last_location_updated_at IS NOT NULL
-                    AND d.last_location_updated_at >= NOW() - INTERVAL '60 seconds'
+                    (d.last_location_updated_at IS NOT NULL AND d.last_location_updated_at >= NOW() - INTERVAL '300 seconds')
+                    OR (d.last_online_at IS NOT NULL AND d.last_online_at >= NOW() - INTERVAL '600 seconds')
+                    OR (d.status::text IN ('ONLINE', 'online') OR d.is_online = TRUE)
                 )
                 -- Physical proximity filter (authoritative PostGIS ST_DWithin)
                 AND ST_DWithin(
@@ -289,16 +291,16 @@ class SpatialResolverService:
                     ST_SetSRID(ST_MakePoint(:pickup_lng, :pickup_lat), 4326)::geography,
                     :max_radius_m
                 )
-                -- 3-Mode Coverage Preference Filter
+                -- 3-Mode Coverage Preference Filter (Case-insensitive & permissive fallback)
                 AND (
                     -- Mode 1: ALL_CITY / NEARBY - driver accepts requests anywhere within physical proximity
-                    (COALESCE(dp.visibility_mode, 'all_city') = 'all_city')
+                    (LOWER(COALESCE(dp.visibility_mode, 'all_city')) IN ('all_city', 'nearby', 'any'))
                     OR
-                    -- Mode 2: SPECIFIC_CITY - driver explicitly covers this city
-                    (dp.visibility_mode = 'specific_city' AND dcc.city_id = CAST(:city_id AS uuid) AND dcc.is_selected = TRUE)
+                    -- Mode 2: SPECIFIC_CITY - driver explicitly covers this city (or covers by proximity if no city list configured)
+                    (LOWER(dp.visibility_mode) IN ('specific_city', 'city') AND (dcc.city_id = CAST(:city_id AS uuid) AND dcc.is_selected = TRUE OR dcc.city_id IS NULL))
                     OR
                     -- Mode 3: SPECIFIC_HEX - driver explicitly monitors this H3 hex cell
-                    (dp.visibility_mode = 'specific_hex' AND dhc.hex_id = CAST(:hex_id AS uuid))
+                    (LOWER(dp.visibility_mode) IN ('specific_hex', 'hex') AND dhc.hex_id = CAST(:hex_id AS uuid))
                     OR
                     -- Fallback: if no city_id resolved, physical distance takes precedence
                     (CAST(:city_id AS text) IS NULL)

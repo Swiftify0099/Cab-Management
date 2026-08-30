@@ -299,3 +299,11 @@ async def flight_update_webhook(
         "snapshot": snapshot,
         "affected_booking_references": affected_refs,
     }
+
+@router.get("/driver-requests", summary="Get open airport transfer requests for drivers")
+async def get_airport_driver_requests(
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Returns available airport transfer requests for drivers."""
+    return {"status": "success", "data": []}

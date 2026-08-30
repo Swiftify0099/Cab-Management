@@ -22,6 +22,34 @@ export const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
+export const normalizeDocType = (docType: string): string => {
+  const map: Record<string, string> = {
+    driving_license: 'license',
+    license: 'license',
+    driver_license: 'license',
+    aadhaar: 'aadhaar',
+    aadhaar_card: 'aadhaar',
+    vehicle_rc: 'rc_book',
+    rc_book: 'rc_book',
+    rc: 'rc_book',
+    vehicle_insurance: 'insurance',
+    insurance: 'insurance',
+    pan_card: 'pan',
+    pan: 'pan',
+    permit: 'permit',
+    commercial_permit: 'permit',
+    fitness: 'fitness',
+    fitness_certificate: 'fitness',
+    puc: 'puc',
+    puc_certificate: 'puc',
+    police_verification: 'police_verification',
+    selfie: 'selfie',
+    vehicle_photo: 'vehicle_photo',
+    bank_account: 'bank_account',
+  }
+  return map[docType] || docType
+}
+
 // Request interceptor — attach real JWT Bearer token and handle FormData boundary
 api.interceptors.request.use(async (config) => {
   try {
@@ -30,7 +58,13 @@ api.interceptors.request.use(async (config) => {
       config.headers.Authorization = `Bearer ${token}`
     }
     if (config.data instanceof FormData) {
-      delete config.headers['Content-Type']
+      if (config.headers && typeof (config.headers as any).delete === 'function') {
+        ;(config.headers as any).delete('Content-Type')
+        ;(config.headers as any).delete('content-type')
+      } else if (config.headers) {
+        delete config.headers['Content-Type']
+        delete config.headers['content-type']
+      }
       config.transformRequest = [(data) => data]
     }
   } catch (err) {
@@ -157,17 +191,18 @@ export const driverApi = {
     phone?: string
     emergency_contact?: string
   }) => api.patch('/driver/me', data),
-  uploadPhoto: (formData: FormData) =>
-    api.post('/driver/me/photo', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    }),
+  uploadPhoto: (formData: FormData) => api.post('/driver/me/photo', formData),
   deletePhoto: () => api.delete('/driver/me/photo'),
   setupProfile: (data: any) => api.post('/driver/setup', data),
   setupVehicle: (data: any) => api.post('/driver/me/vehicle', data),
-  uploadDocument: (docType: string, formData: FormData) =>
-    api.post(`/driver/me/documents/${docType}`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    }),
+  uploadDocument: (docType: string, formData: FormData) => {
+    const norm = normalizeDocType(docType)
+    return api.post(`/driver/me/documents/${norm}`, formData)
+  },
+  getDocuments: () => api.get('/driver/me/documents'),
+  getOnboardingStatus: () => api.get('/driver/me/onboarding-status'),
+  completeSetup: () =>
+    api.post('/driver/setup/complete').catch(() => api.get('/driver/me/onboarding-status')),
   getStatus: () => api.get('/driver/status'),
   updateStatus: (status: 'online' | 'offline') =>
     api.patch('/driver/status', { status }),
@@ -179,16 +214,24 @@ export const driverApi = {
 // ── Dedicated Driver KYC & Document Lifecycle API ──────────────────────────
 export const kycApi = {
   getDashboard: () => api.get('/driver/kyc/dashboard').catch(() => api.get('/driver/verification/status')),
-  getDocumentDetails: (docType: string) => api.get(`/driver/kyc/documents/${docType}`),
-  getDocumentAccessUrl: (docType: string) => api.get(`/driver/kyc/documents/${docType}/access`),
-  uploadDocument: (docType: string, formData: FormData) =>
-    api.post(`/driver/kyc/documents/${docType}`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    }).catch(() =>
-      api.post(`/driver/me/documents/${docType}`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      })
-    ),
+  getDocumentDetails: (docType: string) => {
+    const norm = normalizeDocType(docType)
+    return api.get('/driver/me/documents').then(res => {
+      const docs = res.data?.data || res.data || []
+      const found = Array.isArray(docs) ? docs.find((d: any) => d.doc_type === norm) : null
+      return { data: { data: found } }
+    }).catch(() => api.get(`/driver/kyc/documents/${norm}`))
+  },
+  getDocumentAccessUrl: (docType: string) => {
+    const norm = normalizeDocType(docType)
+    return api.get(`/driver/kyc/documents/${norm}/access`).catch(() => api.get('/driver/me/documents'))
+  },
+  uploadDocument: (docType: string, formData: FormData) => {
+    const norm = normalizeDocType(docType)
+    return api.post(`/driver/me/documents/${norm}`, formData).catch(() =>
+      api.post(`/driver/kyc/documents/${norm}`, formData)
+    )
+  },
   getBankAccount: () => api.get('/driver/kyc/bank-account'),
   submitBankAccount: (data: {
     account_holder_name: string
@@ -209,10 +252,12 @@ export const vehicleApi = {
   deleteVehicle: (vehicleId: string) => api.delete(`/driver/vehicles/${vehicleId}`),
   activateVehicle: (vehicleId: string) => api.post(`/driver/vehicles/${vehicleId}/activate`),
   getVehicleDocuments: (vehicleId: string) => api.get(`/driver/vehicles/${vehicleId}/documents`),
-  uploadVehicleDocument: (vehicleId: string, docType: string, formData: FormData) =>
-    api.post(`/driver/vehicles/${vehicleId}/documents/${docType}`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    }),
+  uploadVehicleDocument: (vehicleId: string, docType: string, formData: FormData) => {
+    const norm = normalizeDocType(docType)
+    return api.post(`/driver/vehicles/${vehicleId}/documents/${norm}`, formData).catch(() =>
+      api.post(`/driver/me/documents/${norm}`, formData)
+    )
+  },
 }
 
 // ── On-Demand Ride Dispatch API ───────────────────────────────────────────

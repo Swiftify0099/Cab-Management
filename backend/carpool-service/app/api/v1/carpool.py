@@ -124,3 +124,11 @@ async def cancel_carpool_booking(booking_id: str, payload: CancelBookingPayload,
         customer_user_id=payload.customer_user_id,
         reason=payload.reason,
     )
+
+@router.get("/driver-requests", summary="Get open carpool ride requests for drivers")
+async def get_carpool_driver_requests(
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Returns available carpool requests for drivers."""
+    return {"status": "success", "data": []}

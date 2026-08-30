@@ -85,7 +85,6 @@ export async function ensureAndroidChannel() {
       sound: 'dr_siran',
       showBadge: true,
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-      bypassDnd: true,
     })
     await Notifications.setNotificationChannelAsync('parcel-requests', {
       name: 'Parcel Delivery Requests',
@@ -97,7 +96,6 @@ export async function ensureAndroidChannel() {
       sound: 'dr_siran',
       showBadge: true,
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-      bypassDnd: true,
     })
     await Notifications.setNotificationChannelAsync('transport-requests', {
       name: 'Intercity & Transport Requests',

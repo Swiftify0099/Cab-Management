@@ -437,7 +437,7 @@ class AvailabilityServiceClass {
 
     let newGpsStatus = this.stateData.gpsStatus
     if (accuracy !== undefined) {
-      newGpsStatus = accuracy < 15 ? 'EXCELLENT' : accuracy < 35 ? 'GOOD' : 'FAIR'
+      newGpsStatus = accuracy < 25 ? 'EXCELLENT' : accuracy < 75 ? 'GOOD' : accuracy < 150 ? 'FAIR' : 'LOST'
     }
 
     const positionUnchanged = latDelta < 0.00005 && lngDelta < 0.00005

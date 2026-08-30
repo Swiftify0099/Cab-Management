@@ -1,298 +1,869 @@
 /**
- * Driver Welcome Entry — pixel-perfect match with the provided design.
+ * Multi-Service Partner App — Unified Login & Auth Entry Screen
+ * All-in-One Partner Portal for Cabs, Parcels, Freight, Packers & Movers, Airport & Corporate Mobility.
  */
-import { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import {
-  View, Text, TouchableOpacity, StyleSheet, StatusBar,
-  TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, Alert, Dimensions, Image, Animated
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  StatusBar,
+  TextInput,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  Alert,
+  Dimensions,
+  Image,
+  Animated,
+  ScrollView,
+  Modal,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Feather } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { router } from 'expo-router'
-import * as SecureStore from 'expo-secure-store'
 import { authApi } from '../../src/api/client'
 
-const { width, height } = Dimensions.get('window')
+const { width } = Dimensions.get('window')
 
-export default function DriverPhoneScreen() {
-  const [showInput, setShowInput] = useState(false)
+const PARTNER_SERVICES = [
+  { id: 'CAB', label: 'Cabs & City Rides', icon: '🚖', perk: 'High Daily Trip Volume' },
+  { id: 'PARCEL', label: 'Parcel Delivery', icon: '📦', perk: 'Same-Day Fast Payouts' },
+  { id: 'TRANSPORT', label: 'Freight Logistics', icon: '🚚', perk: 'Commercial Heavy Cargo' },
+  { id: 'PACKERS_MOVERS', label: 'Packers & Movers', icon: '🏠', perk: 'High-Value Shifting Orders' },
+  { id: 'AIRPORT', label: 'Airport Transfers', icon: '✈️', perk: 'Guaranteed Airport Queues' },
+  { id: 'CORPORATE', label: 'Corporate Commute', icon: '🏢', perk: 'Fixed Monthly Rosters' },
+  { id: 'CARPOOL', label: 'Corridor Carpool', icon: '👥', perk: 'Shared Route Optimization' },
+  { id: 'HOSPITALITY', label: 'Hotel Chauffeur', icon: '👔', perk: 'VIP 5-Star Hotel Guests' },
+]
+
+export default function MultiServicePartnerLoginScreen() {
   const [phone, setPhone] = useState('')
   const [loading, setLoading] = useState(false)
+  const [selectedServiceIndex, setSelectedServiceIndex] = useState(0)
+  const [isLanguageModalVisible, setIsLanguageModalVisible] = useState(false)
+  const [selectedLanguage, setSelectedLanguage] = useState('English')
 
   // Animation values
-  const logoOpacity = useRef(new Animated.Value(0)).current
-  const logoTranslateY = useRef(new Animated.Value(20)).current
-  const busOpacity = useRef(new Animated.Value(0)).current
-  const busTranslateY = useRef(new Animated.Value(30)).current
-  const contentOpacity = useRef(new Animated.Value(0)).current
-  const contentTranslateY = useRef(new Animated.Value(20)).current
-  const footerOpacity = useRef(new Animated.Value(0)).current
-  const footerTranslateY = useRef(new Animated.Value(20)).current
-  const inputOpacity = useRef(new Animated.Value(0)).current
-  const inputTranslateY = useRef(new Animated.Value(-10)).current
+  const headerOpacity = useRef(new Animated.Value(0)).current
+  const heroScale = useRef(new Animated.Value(0.92)).current
+  const heroOpacity = useRef(new Animated.Value(0)).current
+  const cardTranslateY = useRef(new Animated.Value(30)).current
+  const cardOpacity = useRef(new Animated.Value(0)).current
+  const shakeAnim = useRef(new Animated.Value(0)).current
 
   useEffect(() => {
-    Animated.stagger(200, [
+    Animated.stagger(150, [
       Animated.parallel([
-        Animated.timing(logoOpacity, { toValue: 1, duration: 800, useNativeDriver: true }),
-        Animated.timing(logoTranslateY, { toValue: 0, duration: 800, useNativeDriver: true })
+        Animated.timing(headerOpacity, { toValue: 1, duration: 600, useNativeDriver: true }),
       ]),
       Animated.parallel([
-        Animated.timing(busOpacity, { toValue: 1, duration: 1000, useNativeDriver: true }),
-        Animated.timing(busTranslateY, { toValue: 0, duration: 1000, useNativeDriver: true })
+        Animated.timing(heroOpacity, { toValue: 1, duration: 700, useNativeDriver: true }),
+        Animated.spring(heroScale, { toValue: 1, friction: 7, tension: 40, useNativeDriver: true }),
       ]),
       Animated.parallel([
-        Animated.timing(contentOpacity, { toValue: 1, duration: 800, useNativeDriver: true }),
-        Animated.timing(contentTranslateY, { toValue: 0, duration: 800, useNativeDriver: true })
+        Animated.timing(cardOpacity, { toValue: 1, duration: 600, useNativeDriver: true }),
+        Animated.spring(cardTranslateY, { toValue: 0, friction: 8, tension: 40, useNativeDriver: true }),
       ]),
-      Animated.parallel([
-        Animated.timing(footerOpacity, { toValue: 1, duration: 800, useNativeDriver: true }),
-        Animated.timing(footerTranslateY, { toValue: 0, duration: 800, useNativeDriver: true })
-      ])
     ]).start()
   }, [])
 
-  useEffect(() => {
-    if (showInput) {
-      Animated.parallel([
-        Animated.timing(inputOpacity, { toValue: 1, duration: 400, useNativeDriver: true }),
-        Animated.timing(inputTranslateY, { toValue: 0, duration: 400, useNativeDriver: true })
-      ]).start()
-    }
-  }, [showInput])
+  // Shake animation on error
+  const triggerShake = () => {
+    Animated.sequence([
+      Animated.timing(shakeAnim, { toValue: 8, duration: 70, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -8, duration: 70, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 5, duration: 60, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 0, duration: 60, useNativeDriver: true }),
+    ]).start()
+  }
 
   const handleLogin = async () => {
-    if (!showInput) {
-      setShowInput(true)
+    const cleaned = phone.replace(/\D/g, '')
+    if (cleaned.length < 10) {
+      triggerShake()
+      Alert.alert(
+        'Invalid Mobile Number',
+        'Please enter a valid 10-digit mobile number to access your Partner Account.'
+      )
       return
     }
 
-    const cleaned = phone.replace(/\D/g, '')
-    if (cleaned.length < 10) {
-      Alert.alert('Invalid Mobile Number', 'Please enter a valid 10-digit mobile number to proceed.')
-      return
-    }
     setLoading(true)
     const fullPhone = `+91${cleaned}`
     try {
       await authApi.sendOtp(fullPhone)
       router.push({ pathname: '/auth/otp', params: { phone: fullPhone } })
     } catch (err: any) {
-      const detail = err?.response?.data?.detail || err?.response?.data?.message || 'Failed to send OTP. Please check your network and try again.'
-      Alert.alert('Login Notice', detail)
+      const detail =
+        err?.response?.data?.detail ||
+        err?.response?.data?.message ||
+        'Unable to send verification OTP. Please verify your connection and retry.'
+      Alert.alert('Partner Authentication', detail)
     } finally {
       setLoading(false)
     }
   }
 
-  const handleRegister = () => {
-    if (!showInput) {
-      setShowInput(true)
-    }
+  const handleRegisterNewPartner = () => {
+    router.push({ pathname: '/onboarding/profile' as any })
   }
+
+  const handleDemoFill = () => {
+    setPhone('9876543210')
+  }
+
+  const activeService = PARTNER_SERVICES[selectedServiceIndex]
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" backgroundColor="#0B0E1F" />
-      
-      {/* Absolute Background Gradient */}
+      <StatusBar barStyle="light-content" backgroundColor="#070A14" />
+
+      {/* Atmospheric Multi-Layered Gradient */}
       <LinearGradient
-        colors={['#0B0E1F', '#1C1938', '#0F1836', '#080C17']}
-        locations={[0, 0.4, 0.7, 1]}
+        colors={['#070A14', '#0E172F', '#091024', '#050811']}
+        locations={[0, 0.35, 0.75, 1]}
         style={StyleSheet.absoluteFill}
       />
 
-      <SafeAreaView style={styles.safeArea}>
-        {/* ── Top Logo ── */}
-        <Animated.View style={[styles.logoRow, { opacity: logoOpacity, transform: [{ translateY: logoTranslateY }] }]}>
-          <Text style={styles.logoIP}>iP</Text>
-          <View style={styles.logoTextWrap}>
-            <Text style={styles.logoLine1}>Intercity</Text>
-            <Text style={styles.logoLine2}>Partner</Text>
-          </View>
-        </Animated.View>
+      {/* Ambient background glow orbs */}
+      <View style={styles.glowOrb1} />
+      <View style={styles.glowOrb2} />
 
-        {/* ── Bus Image ── */}
-        <Animated.View style={[styles.busContainer, { opacity: busOpacity, transform: [{ translateY: busTranslateY }] }]}>
-          <Image 
-            source={require('../../assets/images/bus-3d.png')}
-            style={styles.busImage}
-            resizeMode="cover"
-          />
-        </Animated.View>
-
-        {/* ── Bottom Content ── */}
-        <KeyboardAvoidingView 
+      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+        <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.bottomSection}
+          style={{ flex: 1 }}
         >
-          <Animated.View style={{ width: '100%', alignItems: 'center', opacity: contentOpacity, transform: [{ translateY: contentTranslateY }] }}>
-            <Text style={styles.welcomeTitle}>Log In to Drive</Text>
-            <Text style={styles.welcomeSub}>
-              Enter your mobile number to continue
-            </Text>
-
-            {/* Input field */}
-            <View style={[styles.inputRow, showInput && styles.inputRowActive]}>
-              <View style={styles.dialCode}>
-                <Text style={styles.flagEmoji}>🇮🇳</Text>
-                <Text style={styles.dialCodeText}>+91</Text>
-                <Feather name="chevron-down" size={14} color="#94A3B8" style={{ marginLeft: 2 }} />
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* ── 1. Top Header & Partner Badge ── */}
+            <Animated.View style={[styles.headerRow, { opacity: headerOpacity }]}>
+              <View style={styles.brandBadgeWrap}>
+                <Image
+                  source={require('../../assets/icon.png')}
+                  style={styles.brandIconMini}
+                  resizeMode="cover"
+                />
+                <View>
+                  <Text style={styles.brandNameText}>CabBooking</Text>
+                  <View style={styles.partnerBadgeTag}>
+                    <Text style={styles.partnerBadgeTagText}>PARTNER PLATFORM</Text>
+                  </View>
+                </View>
               </View>
-              <TextInput
-                style={styles.input}
-                placeholder="Mobile Number"
-                placeholderTextColor="#64748B"
-                keyboardType="phone-pad"
-                value={phone}
-                onFocus={() => setShowInput(true)}
-                onChangeText={t => {
-                  setShowInput(true)
-                  setPhone(t.replace(/\D/g, '').slice(0, 10))
-                }}
-                maxLength={10}
-                selectionColor="#3B82F6"
-              />
-            </View>
 
-            {/* Continue / Login Button */}
-            <TouchableOpacity
-              style={[styles.loginBtn, loading && { opacity: 0.6 }]}
-              onPress={handleLogin}
-              disabled={loading}
-              activeOpacity={0.85}
+              <View style={styles.headerActions}>
+                <TouchableOpacity
+                  style={styles.langChip}
+                  onPress={() => setIsLanguageModalVisible(true)}
+                  activeOpacity={0.8}
+                >
+                  <Feather name="globe" size={13} color="#94A3B8" />
+                  <Text style={styles.langChipText}>{selectedLanguage}</Text>
+                  <Feather name="chevron-down" size={12} color="#64748B" />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.supportChip}
+                  onPress={() =>
+                    Alert.alert(
+                      '24x7 Partner Helpline',
+                      'Dedicated Toll-Free Support for Fleet Owners & Drivers:\n\n📞 1800-CAB-PARTNER\n✉️ partner-support@cabbooking.com'
+                    )
+                  }
+                  activeOpacity={0.8}
+                >
+                  <Feather name="phone-call" size={13} color="#38BDF8" />
+                </TouchableOpacity>
+              </View>
+            </Animated.View>
+
+            {/* ── 2. Multi-Service Hero Platform Showcase ── */}
+            <Animated.View
+              style={[
+                styles.heroBannerWrap,
+                {
+                  opacity: heroOpacity,
+                  transform: [{ scale: heroScale }],
+                },
+              ]}
             >
+              <Image
+                source={require('../../assets/images/partner-multi-hero.jpg')}
+                style={styles.heroImage}
+                resizeMode="cover"
+              />
               <LinearGradient
-                colors={['#2563EB', '#3B82F6']}
-                start={{ x: 0, y: 0.5 }}
-                end={{ x: 1, y: 0.5 }}
-                style={styles.loginBtnGradient}
+                colors={['transparent', 'rgba(7, 10, 20, 0.95)']}
+                locations={[0.4, 1]}
+                style={StyleSheet.absoluteFill}
+              />
+
+              {/* Dynamic Partner Vertical Ticker */}
+              <View style={styles.heroOverlayContent}>
+                <View style={styles.heroLivePill}>
+                  <View style={styles.livePulseDot} />
+                  <Text style={styles.heroLivePillText}>9 MOBILITY & FREIGHT VERTICALS</Text>
+                </View>
+                <Text style={styles.heroTitleText}>One Partner App, Endless Earnings</Text>
+                <Text style={styles.heroSubText}>
+                  {activeService.icon} {activeService.label} • {activeService.perk}
+                </Text>
+              </View>
+            </Animated.View>
+
+            {/* ── 3. Multi-Service Quick Selector Ribbon ── */}
+            <View style={styles.servicesRibbon}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.servicesRibbonContent}
               >
-                {loading ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.loginBtnText}>Continue</Text>
-                )}
-              </LinearGradient>
-            </TouchableOpacity>
-
-            {/* Register Link */}
-            <View style={styles.registerRow}>
-              <Text style={styles.registerPrompt}>Don't have an account? </Text>
-              <TouchableOpacity onPress={handleRegister} activeOpacity={0.7}>
-                <Text style={styles.registerLink}>Register Driver</Text>
-              </TouchableOpacity>
+                {PARTNER_SERVICES.map((s, idx) => {
+                  const isSelected = idx === selectedServiceIndex
+                  return (
+                    <TouchableOpacity
+                      key={s.id}
+                      style={[
+                        styles.serviceChip,
+                        isSelected && styles.serviceChipSelected,
+                      ]}
+                      onPress={() => setSelectedServiceIndex(idx)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.serviceChipIcon}>{s.icon}</Text>
+                      <Text
+                        style={[
+                          styles.serviceChipLabel,
+                          isSelected && styles.serviceChipLabelSelected,
+                        ]}
+                      >
+                        {s.label}
+                      </Text>
+                    </TouchableOpacity>
+                  )
+                })}
+              </ScrollView>
             </View>
-          </Animated.View>
-        </KeyboardAvoidingView>
 
-        {/* ── Footer ── */}
-        <Animated.View style={[styles.footerContainer, { opacity: footerOpacity, transform: [{ translateY: footerTranslateY }] }]}>
-          <View style={styles.footer}>
-            <TouchableOpacity style={styles.footerChip}>
-              <Feather name="globe" size={14} color="#FFFFFF" />
-              <Text style={styles.footerChipText}>English</Text>
-              <Feather name="chevron-down" size={14} color="#FFFFFF" />
-            </TouchableOpacity>
-            <TouchableOpacity><Text style={styles.footerLink}>Help</Text></TouchableOpacity>
-            <TouchableOpacity><Text style={styles.footerLink}>Terms</Text></TouchableOpacity>
-          </View>
-        </Animated.View>
+            {/* ── 4. Floating Glassmorphic Login Card ── */}
+            <Animated.View
+              style={[
+                styles.loginCard,
+                {
+                  opacity: cardOpacity,
+                  transform: [{ translateY: cardTranslateY }, { translateX: shakeAnim }],
+                },
+              ]}
+            >
+              <Text style={styles.loginCardTitle}>Partner Portal Sign In</Text>
+              <Text style={styles.loginCardSubtitle}>
+                Enter your registered mobile number to access active dispatches, fleet earnings & live trips.
+              </Text>
+
+              {/* Phone Input Box */}
+              <View style={styles.inputContainer}>
+                <Text style={styles.inputLabel}>MOBILE NUMBER</Text>
+                <View
+                  style={[
+                    styles.inputFieldWrap,
+                    phone.length === 10 && styles.inputFieldWrapValid,
+                  ]}
+                >
+                  <View style={styles.dialCodeBox}>
+                    <Text style={styles.flagIcon}>🇮🇳</Text>
+                    <Text style={styles.dialCodeText}>+91</Text>
+                    <Feather name="chevron-down" size={13} color="#94A3B8" style={{ marginLeft: 2 }} />
+                  </View>
+
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="Enter 10-digit number"
+                    placeholderTextColor="#64748B"
+                    keyboardType="phone-pad"
+                    maxLength={10}
+                    value={phone}
+                    onChangeText={t => setPhone(t.replace(/\D/g, '').slice(0, 10))}
+                    returnKeyType="done"
+                    onSubmitEditing={handleLogin}
+                    selectionColor="#3B82F6"
+                  />
+
+                  {phone.length > 0 && (
+                    <TouchableOpacity
+                      onPress={() => setPhone('')}
+                      style={styles.clearBtn}
+                      activeOpacity={0.7}
+                    >
+                      <Feather name="x-circle" size={18} color="#64748B" />
+                    </TouchableOpacity>
+                  )}
+
+                  {phone.length === 10 && (
+                    <View style={styles.checkBadge}>
+                      <Feather name="check" size={14} color="#10B981" />
+                    </View>
+                  )}
+                </View>
+              </View>
+
+              {/* Primary Login Button */}
+              <TouchableOpacity
+                style={[styles.primaryBtn, loading && { opacity: 0.7 }]}
+                onPress={handleLogin}
+                disabled={loading}
+                activeOpacity={0.88}
+              >
+                <LinearGradient
+                  colors={['#2563EB', '#1D4ED8']}
+                  start={{ x: 0, y: 0.5 }}
+                  end={{ x: 1, y: 0.5 }}
+                  style={styles.primaryBtnGradient}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <View style={styles.primaryBtnContent}>
+                      <Text style={styles.primaryBtnText}>Continue to Dashboard</Text>
+                      <Feather name="arrow-right" size={18} color="#FFFFFF" />
+                    </View>
+                  )}
+                </LinearGradient>
+              </TouchableOpacity>
+
+              {/* Quick Demo Helper in DEV / Fast QA */}
+              <View style={styles.helperActionsRow}>
+                <TouchableOpacity
+                  style={styles.demoFillBtn}
+                  onPress={handleDemoFill}
+                  activeOpacity={0.75}
+                >
+                  <Feather name="zap" size={12} color="#FBBF24" />
+                  <Text style={styles.demoFillText}>Quick Demo Fill (9876543210)</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* New Partner Registration CTA */}
+              <View style={styles.registerRow}>
+                <Text style={styles.registerPromptText}>Looking to partner with us? </Text>
+                <TouchableOpacity onPress={handleRegisterNewPartner} activeOpacity={0.7}>
+                  <Text style={styles.registerLinkText}>Register as Partner →</Text>
+                </TouchableOpacity>
+              </View>
+            </Animated.View>
+
+            {/* ── 5. Trust & Footer Security Badges ── */}
+            <View style={styles.footerWrap}>
+              <View style={styles.trustBadgeRow}>
+                <Feather name="shield" size={13} color="#10B981" />
+                <Text style={styles.trustBadgeText}>
+                  Bank-Grade Encryption • Instant UPI Settlements
+                </Text>
+              </View>
+
+              <View style={styles.footerLinksRow}>
+                <TouchableOpacity
+                  onPress={() =>
+                    Alert.alert(
+                      'Partner Agreement',
+                      'CabBooking Partner Network operates under authorized transport licensing with standard merchant service agreements.'
+                    )
+                  }
+                >
+                  <Text style={styles.footerLink}>Terms</Text>
+                </TouchableOpacity>
+                <Text style={styles.footerDot}>•</Text>
+                <TouchableOpacity
+                  onPress={() =>
+                    Alert.alert(
+                      'Privacy & Security',
+                      'Your personal, vehicle, and bank credentials are encrypted with 256-Bit SSL security.'
+                    )
+                  }
+                >
+                  <Text style={styles.footerLink}>Privacy</Text>
+                </TouchableOpacity>
+                <Text style={styles.footerDot}>•</Text>
+                <TouchableOpacity
+                  onPress={() =>
+                    Alert.alert(
+                      'Partner Services',
+                      'Available Verticals: Cab, Parcel, Goods Freight, Packers & Movers, Airport, Corporate, Carpool & Hospitality.'
+                    )
+                  }
+                >
+                  <Text style={styles.footerLink}>Services</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
+
+      {/* Language Selector Modal */}
+      <Modal
+        visible={isLanguageModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsLanguageModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalBackdrop}
+          activeOpacity={1}
+          onPress={() => setIsLanguageModalVisible(false)}
+        >
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>Choose Preferred Language</Text>
+            {['English', 'Hindi (हिंदी)', 'Bengali (বাংলা)', 'Tamil (தமிழ்)', 'Telugu (తెలుగు)'].map((l) => (
+              <TouchableOpacity
+                key={l}
+                style={[
+                  styles.modalItem,
+                  selectedLanguage.startsWith(l.split(' ')[0]) && styles.modalItemSelected,
+                ]}
+                onPress={() => {
+                  setSelectedLanguage(l.split(' ')[0])
+                  setIsLanguageModalVisible(false)
+                }}
+              >
+                <Text
+                  style={[
+                    styles.modalItemText,
+                    selectedLanguage.startsWith(l.split(' ')[0]) && styles.modalItemTextSelected,
+                  ]}
+                >
+                  {l}
+                </Text>
+                {selectedLanguage.startsWith(l.split(' ')[0]) && (
+                  <Feather name="check" size={16} color="#38BDF8" />
+                )}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0B0E1F' },
-  safeArea: { flex: 1, justifyContent: 'space-between' },
-
-  logoRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    marginTop: 16, zIndex: 10,
+  root: {
+    flex: 1,
+    backgroundColor: '#070A14',
   },
-  logoIP: {
-    color: '#D4AF37', fontSize: 26, fontWeight: '900', fontStyle: 'italic', marginRight: 8,
+  safeArea: {
+    flex: 1,
   },
-  logoTextWrap: { marginLeft: 2 },
-  logoLine1: { color: '#FFFFFF', fontSize: 18, fontWeight: '800', lineHeight: 20 },
-  logoLine2: { color: '#E2E8F0', fontSize: 14, lineHeight: 16 },
-
-  busContainer: {
-    width: width,
-    height: height * 0.35,
-    marginTop: 10,
+  scroll: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 24,
+  },
+  glowOrb1: {
+    position: 'absolute',
+    top: -60,
+    right: -60,
+    width: 280,
+    height: 280,
+    borderRadius: 140,
+    backgroundColor: 'rgba(37, 99, 235, 0.15)',
+  },
+  glowOrb2: {
+    position: 'absolute',
+    bottom: 40,
+    left: -80,
+    width: 300,
+    height: 300,
+    borderRadius: 150,
+    backgroundColor: 'rgba(245, 158, 11, 0.08)',
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+  },
+  brandBadgeWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  brandIconMini: {
+    width: 38,
+    height: 38,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+  },
+  brandNameText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  partnerBadgeTag: {
+    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    alignSelf: 'flex-start',
+    marginTop: 2,
+  },
+  partnerBadgeTagText: {
+    color: '#38BDF8',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  langChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    gap: 5,
+  },
+  langChipText: {
+    color: '#E2E8F0',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  supportChip: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.25)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  busImage: {
+  heroBannerWrap: {
+    width: '100%',
+    height: 190,
+    borderRadius: 22,
+    overflow: 'hidden',
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    position: 'relative',
+    backgroundColor: '#0B1226',
+  },
+  heroImage: {
     width: '100%',
     height: '100%',
   },
-
-  bottomSection: {
-    paddingHorizontal: 24,
-    paddingBottom: 16,
+  heroOverlayContent: {
+    position: 'absolute',
+    bottom: 12,
+    left: 14,
+    right: 14,
+  },
+  heroLivePill: {
+    flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.4)',
+    marginBottom: 6,
+    gap: 6,
   },
-  welcomeTitle: {
-    color: '#FFFFFF', fontSize: 28, fontWeight: '800',
-    textAlign: 'center', marginBottom: 6,
+  livePulseDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
   },
-  welcomeSub: {
-    color: '#9CA3AF', fontSize: 14, lineHeight: 20, 
-    textAlign: 'center', marginBottom: 24,
+  heroLivePillText: {
+    color: '#34D399',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.8,
   },
-
-  inputRow: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 16, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.12)',
-    paddingHorizontal: 16, height: 56, marginBottom: 18, width: '100%',
+  heroTitleText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '900',
+    letterSpacing: 0.3,
   },
-  inputRowActive: {
+  heroSubText: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  servicesRibbon: {
+    marginVertical: 14,
+  },
+  servicesRibbonContent: {
+    gap: 8,
+    paddingRight: 10,
+  },
+  serviceChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    gap: 6,
+  },
+  serviceChipSelected: {
+    backgroundColor: 'rgba(37, 99, 235, 0.2)',
     borderColor: '#3B82F6',
-    backgroundColor: 'rgba(59,130,246,0.08)',
-    shadowColor: '#3B82F6', shadowOpacity: 0.3, shadowRadius: 8, elevation: 4,
   },
-  dialCode: {
-    flexDirection: 'row', alignItems: 'center',
-    marginRight: 12, borderRightWidth: 1, borderRightColor: 'rgba(255,255,255,0.15)',
-    paddingRight: 12,
+  serviceChipIcon: {
+    fontSize: 14,
   },
-  flagEmoji: { fontSize: 18, marginRight: 6 },
-  dialCodeText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
-  input: { flex: 1, color: '#FFFFFF', fontSize: 17, fontWeight: '600' },
-
-  loginBtn: { 
-    width: '100%', borderRadius: 16, overflow: 'hidden', marginBottom: 18,
-    shadowColor: '#2563EB', shadowOpacity: 0.4, shadowRadius: 10, elevation: 6,
+  serviceChipLabel: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '600',
   },
-  loginBtnGradient: { height: 54, alignItems: 'center', justifyContent: 'center' },
-  loginBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.5 },
-
-  registerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 4 },
-  registerPrompt: { color: '#94A3B8', fontSize: 14 },
-  registerLink: { color: '#DCB260', fontSize: 14, fontWeight: '700', textDecorationLine: 'underline' },
-
-  footerContainer: {
-    alignItems: 'center',
+  serviceChipLabelSelected: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  loginCard: {
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    borderRadius: 24,
+    padding: 20,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.4,
+    shadowRadius: 20,
+    elevation: 8,
+  },
+  loginCardTitle: {
+    color: '#FFFFFF',
+    fontSize: 22,
+    fontWeight: '900',
+    letterSpacing: 0.3,
+  },
+  loginCardSubtitle: {
+    color: '#94A3B8',
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 6,
     marginBottom: 20,
-    paddingHorizontal: 24,
+  },
+  inputContainer: {
+    marginBottom: 18,
+  },
+  inputLabel: {
+    color: '#94A3B8',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+    marginBottom: 8,
+  },
+  inputFieldWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    height: 56,
+    paddingHorizontal: 14,
+  },
+  inputFieldWrapValid: {
+    borderColor: '#3B82F6',
+    backgroundColor: 'rgba(59, 130, 246, 0.08)',
+  },
+  dialCodeBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRightWidth: 1,
+    borderRightColor: 'rgba(255, 255, 255, 0.15)',
+    paddingRight: 10,
+    marginRight: 10,
+  },
+  flagIcon: {
+    fontSize: 18,
+    marginRight: 6,
+  },
+  dialCodeText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  textInput: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  clearBtn: {
+    padding: 4,
+    marginRight: 4,
+  },
+  checkBadge: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  primaryBtn: {
+    borderRadius: 16,
+    overflow: 'hidden',
+    shadowColor: '#2563EB',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  primaryBtnGradient: {
+    height: 54,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  primaryBtnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  primaryBtnText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+  },
+  helperActionsRow: {
+    alignItems: 'center',
+    marginTop: 14,
+  },
+  demoFillBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.25)',
+    gap: 6,
+  },
+  demoFillText: {
+    color: '#FBBF24',
+    fontSize: 11.5,
+    fontWeight: '700',
+  },
+  registerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 18,
+  },
+  registerPromptText: {
+    color: '#94A3B8',
+    fontSize: 13,
+  },
+  registerLinkText: {
+    color: '#38BDF8',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  footerWrap: {
+    marginTop: 24,
+    alignItems: 'center',
+    gap: 10,
+  },
+  trustBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  trustBadgeText: {
+    color: '#94A3B8',
+    fontSize: 11.5,
+    fontWeight: '600',
+  },
+  footerLinksRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  footerLink: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  footerDot: {
+    color: '#475569',
+    fontSize: 10,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  modalBox: {
     width: '100%',
+    backgroundColor: '#0F172A',
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
   },
-  footer: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 50,
-    paddingHorizontal: 16, paddingVertical: 10, width: '100%',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+  modalTitle: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: '800',
+    marginBottom: 16,
+    textAlign: 'center',
   },
-  footerChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 20, 
-    paddingHorizontal: 10, paddingVertical: 4,
+  modalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    marginBottom: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
   },
-  footerChipText: { color: '#FFFFFF', fontSize: 12, fontWeight: '600' },
-  footerLink: { color: '#94A3B8', fontSize: 13, fontWeight: '500' },
+  modalItemSelected: {
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+    borderWidth: 1,
+    borderColor: '#38BDF8',
+  },
+  modalItemText: {
+    color: '#CBD5E1',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  modalItemTextSelected: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
 })
-

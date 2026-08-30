@@ -164,7 +164,13 @@ export default function SavedAddressesScreen() {
         </AppText>
         <TouchableOpacity
           style={[styles.addTopBtn, { backgroundColor: `${theme.colors.primary}18` }]}
-          onPress={() => router.push('/profile/address-picker' as any)}
+          onPress={() => {
+    if (addresses.length >= 5) {
+      Alert.alert('Maximum Limit Reached', 'You can save up to 5 addresses. Please delete an existing address to add a new one.');
+      return;
+    }
+    router.push('/profile/address-picker' as any);
+  }}
         >
           <Feather name="plus" size={20} color={theme.colors.primary} />
         </TouchableOpacity>
@@ -195,7 +201,7 @@ export default function SavedAddressesScreen() {
               {tab === 'all'
                 ? `All (${addresses.length + routes.length})`
                 : tab === 'places'
-                ? `Places (${addresses.length})`
+                ? `Places (${addresses.length}/5)`
                 : `Routes (${routes.length})`}
             </AppText>
           </TouchableOpacity>

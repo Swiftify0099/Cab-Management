@@ -108,26 +108,9 @@ export function useStartupPermissions(): {
 
     let notifStatus: PermissionStatus['notifications'] = 'granted'
     try {
-      if (Platform.OS === 'android') {
-        const { PermissionsAndroid, Platform: RNPlatform } = require('react-native')
-        if (RNPlatform.Version >= 33) {
-          const result = await PermissionsAndroid.request(
-            PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
-            {
-              title: 'Notification Permission',
-              message: 'Allow CabBooking to send you ride alerts and trip updates.',
-              buttonNeutral: 'Ask Me Later',
-              buttonNegative: 'Deny',
-              buttonPositive: 'Allow',
-            }
-          ).catch(() => PermissionsAndroid.RESULTS.DENIED)
-          notifStatus = result === PermissionsAndroid.RESULTS.GRANTED ? 'granted' : 'denied'
-        } else {
-          notifStatus = 'granted'
-        }
-      } else {
-        notifStatus = 'granted'
-      }
+      const Notifications = require('expo-notifications')
+      const notifRes = await Notifications.requestPermissionsAsync().catch(() => ({ status: 'denied' }))
+      notifStatus = notifRes.status === 'granted' ? 'granted' : 'denied'
     } catch {
       notifStatus = 'denied'
     }

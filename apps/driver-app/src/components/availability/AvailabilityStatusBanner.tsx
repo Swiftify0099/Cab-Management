@@ -21,7 +21,7 @@ export function AvailabilityStatusBanner({
 
   const isOnline = data.state === 'ONLINE' || data.state === 'GOING_ONLINE'
   const isNetOk = data.networkStatus === 'CONNECTED'
-  const isGpsOk = data.gpsStatus === 'EXCELLENT' || data.gpsStatus === 'GOOD'
+  const isGpsOk = data.gpsStatus === 'EXCELLENT' || data.gpsStatus === 'GOOD' || data.gpsStatus === 'FAIR'
 
   return (
     <View style={styles.container}>
@@ -39,7 +39,7 @@ export function AvailabilityStatusBanner({
         <View style={[styles.alertBanner, { backgroundColor: '#F59E0B' }]}>
           <Feather name="alert-triangle" size={14} color="#FFFFFF" />
           <Text style={styles.alertText}>
-            GPS Signal Weak — Move to an open area for better ride matching
+            GPS Signal Lost — Move to an open area for better ride matching
           </Text>
         </View>
       )}

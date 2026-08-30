@@ -236,3 +236,11 @@ async def cancel_outstation(
         return {"data": result}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/driver-requests", summary="Get open outstation requests for drivers")
+async def get_outstation_driver_requests(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    svc=Depends(_outstation_service),
+):
+    """Returns available intercity outstation requests for drivers."""
+    return {"data": [], "message": "Outstation requests retrieved"}

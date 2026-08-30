@@ -23,6 +23,7 @@ import { LinearGradient } from 'expo-linear-gradient'
 import { router } from 'expo-router'
 import { useTheme } from '../src/contexts/ThemeContext'
 import { parcelApi, profileApi } from '../src/api/client'
+import LocationPickerModal, { SelectedLocationData } from '../src/components/map/LocationPickerModal'
 import { PromotionsSheet } from '../src/components/promotions/PromotionsSheet'
 
 const CATEGORIES = [
@@ -52,6 +53,15 @@ const PRIORITIES = [
 export default function ParcelBookingScreen() {
   const { theme, isDark } = useTheme()
   const [currentStep, setCurrentStep] = useState<number>(1)
+  const [pickerMode, setPickerMode] = useState<'sender' | 'receiver' | null>(null)
+  const [savedAddresses, setSavedAddresses] = useState<any[]>([])
+
+  useEffect(() => {
+    profileApi.getAddresses().then((res) => {
+      const addrs = res.data?.data || res.data || []
+      if (Array.isArray(addrs)) setSavedAddresses(addrs)
+    }).catch(() => {})
+  }, [])
 
   // Step 1: Addresses & Contacts
   const [senderName, setSenderName] = useState('')
@@ -334,13 +344,22 @@ export default function ParcelBookingScreen() {
 
                   <View style={styles.inputGroup}>
                     <Text style={[styles.inputLabel, { color: isDark ? '#94A3B8' : '#64748B' }]}>Pickup Address</Text>
-                    <TextInput
-                      style={[styles.input, { backgroundColor: isDark ? '#0B0F19' : '#F1F5F9', color: isDark ? '#F8FAFC' : '#0F172A' }]}
-                      value={senderAddress}
-                      onChangeText={setSenderAddress}
-                      placeholder="Enter pickup address, landmark..."
-                      placeholderTextColor={isDark ? '#475569' : '#94A3B8'}
-                    />
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <TextInput
+                        style={[styles.input, { flex: 1, backgroundColor: isDark ? '#0B0F19' : '#F1F5F9', color: isDark ? '#F8FAFC' : '#0F172A' }]}
+                        value={senderAddress}
+                        onChangeText={setSenderAddress}
+                        placeholder="Enter pickup address, landmark..."
+                        placeholderTextColor={isDark ? '#475569' : '#94A3B8'}
+                      />
+                      <TouchableOpacity
+                        style={{ backgroundColor: '#10B98120', paddingHorizontal: 12, height: 46, borderRadius: 12, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 4 }}
+                        onPress={() => setPickerMode('sender')}
+                      >
+                        <Feather name="map-pin" size={14} color="#10B981" />
+                        <Text style={{ color: '#10B981', fontWeight: '700', fontSize: 12 }}>Map</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
 
                   <View style={styles.row}>

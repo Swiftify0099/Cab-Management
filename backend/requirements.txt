@@ -22,3 +22,4 @@ razorpay==1.4.1
 shapely==2.0.6
 setuptools
 cloudinary>=1.40.0
+h3>=4.0.0

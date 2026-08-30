@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "CabBooking Driver",
+    "name": "CabBooking Partner",
     "slug": "cabooking-driver",
     "scheme": "cabooking-driver",
     "version": "1.0.0",
@@ -11,7 +11,7 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0F172A"
+      "backgroundColor": "#0B0E1F"
     },
     "ios": {
       "supportsTablet": false,
@@ -29,8 +29,7 @@
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "backgroundColor": "#F59E0B"
+        "backgroundColor": "#0B0E1F"
       },
       "permissions": [
         "ACCESS_FINE_LOCATION",
@@ -66,6 +65,14 @@
       "expo-font",
       "expo-status-bar",
       "expo-audio",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "The app accesses your photos to allow you to upload KYC documents and profile photos.",
+          "cameraPermission": "The app accesses your camera to capture KYC document photos and live selfies."
+        }
+      ],
+      "expo-document-picker",
       [
         "expo-location",
         {

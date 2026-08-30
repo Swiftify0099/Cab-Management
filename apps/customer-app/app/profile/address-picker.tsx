@@ -26,6 +26,7 @@ import MapView, { PROVIDER_GOOGLE, Region } from 'react-native-maps'
 import * as Location from 'expo-location'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { profileApi } from '../../src/api/client'
+import { reverseGeocodeCoord, geocodeAddress, getPlaceAutocomplete } from '../../src/services/googleMaps'
 import { useTheme } from '../../src/contexts/ThemeContext'
 import { useTranslation } from '../../src/i18n'
 import {
@@ -164,21 +165,9 @@ export default function AddressPickerScreen() {
   const fetchAddressFromCoords = async (lat: number, lng: number) => {
     setLoadingAddress(true)
     try {
-      if (GOOGLE_API_KEY) {
-        const res = await fetch(
-          `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_API_KEY}`
-        )
-        const data = await res.json()
-        if (data.results?.length > 0) {
-          setAddressText(data.results[0].formatted_address)
-          return
-        }
-      }
-      const places = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng })
-      if (places.length > 0) {
-        const p = places[0]
-        const parts = [p.name, p.street, p.district, p.city, p.region, p.country].filter(Boolean)
-        setAddressText(parts.join(', '))
+      const formatted = await reverseGeocodeCoord(lat, lng)
+      if (formatted) {
+        setAddressText(formatted)
       }
     } catch {
       // Fallback
@@ -197,27 +186,19 @@ export default function AddressPickerScreen() {
 
   const handleSearchChange = (text: string) => {
     setSearchQuery(text)
-    if (!text.trim()) {
+    if (!text.trim() || text.length < 2) {
       setPredictions([])
       return
     }
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current)
     searchTimeoutRef.current = setTimeout(async () => {
-      if (!GOOGLE_API_KEY) return
       try {
-        const res = await fetch(
-          `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(
-            text
-          )}&key=${GOOGLE_API_KEY}&components=country:in`
-        )
-        const data = await res.json()
-        if (data.status === 'OK') {
-          setPredictions(data.predictions)
-        }
+        const results = await getPlaceAutocomplete(text)
+        setPredictions(results)
       } catch (e) {
         console.warn('Autocomplete error', e)
       }
-    }, 400)
+    }, 350)
   }
 
   const handleSelectPrediction = async (placeId: string, description: string) => {

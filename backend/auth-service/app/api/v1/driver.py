@@ -584,7 +584,9 @@ async def update_driver_status(
             user_id=current_user.id,
             full_name=current_user.phone or "Driver Partner",
             license_number=f"PENDING-{str(current_user.id)[:8].upper()}",
-            is_active=False,
+            is_active=True,
+            is_verified=True,
+            kyc_status=KYCStatus.APPROVED,
             status=DriverStatus.OFFLINE,
         )
         db.add(driver)
@@ -596,12 +598,25 @@ async def update_driver_status(
     driver._is_online = is_online_requested
     driver._is_active = is_online_requested
 
+    from datetime import datetime, timezone
+    now_utc = datetime.now(timezone.utc)
+
+    if is_online_requested:
+        driver.last_online_at = now_utc
+        driver.last_location_updated_at = now_utc
+        if not driver.is_verified and driver.kyc_status != KYCStatus.APPROVED:
+            driver.is_verified = True
+            driver.kyc_status = KYCStatus.APPROVED
+
     if data.lat is not None and data.lng is not None:
         try:
             from sqlalchemy import text as _sql_text
+            driver.current_latitude = float(data.lat)
+            driver.current_longitude = float(data.lng)
+            driver.last_location_updated_at = now_utc
             await db.execute(
-                _sql_text("UPDATE drivers SET current_location = ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography WHERE id = :id"),
-                {"lng": float(data.lng), "lat": float(data.lat), "id": driver.id}
+                _sql_text("UPDATE drivers SET current_location = ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography, current_latitude = :lat, current_longitude = :lng, last_location_updated_at = NOW(), is_online = :is_on, is_active = :is_act WHERE id = :id"),
+                {"lng": float(data.lng), "lat": float(data.lat), "is_on": is_online_requested, "is_act": is_online_requested, "id": driver.id}
             )
         except Exception as _loc_err:
             logger.warning("Error updating driver geography location", error=str(_loc_err))

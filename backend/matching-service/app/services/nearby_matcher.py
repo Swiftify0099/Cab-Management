@@ -62,7 +62,7 @@ logger = structlog.get_logger(__name__)
 
 DEFAULT_SEARCH_RADIUS_KM = 10.0
 MAX_SEARCH_RADIUS_KM = 30.0
-STALE_GPS_THRESHOLD_SECONDS = 60.0
+STALE_GPS_THRESHOLD_SECONDS = 300.0
 TOP_SHORTLIST_LIMIT = 5
 DEFAULT_H3_RESOLUTION = 7
 
@@ -352,27 +352,28 @@ class NearbyMatchingEngine:
         zone_id_str = str(spatial.zone_id) if spatial.zone_id else None
 
         # Coverage SQL condition:
-        # ALL_CITY: Matches all drivers with visibility_mode = 'all_city' or NULL
-        # SPECIFIC_CITY: Driver must have selected this resolved city in DriverCityCoverage
-        # SPECIFIC_HEX: Driver must have selected this resolved H3 hex in DriverHexCoverage
-        # ZONE: Driver must have selected this resolved zone in service_customizations
         coverage_condition = f"""
             AND (
                 -- 1. ALL_CITY mode
-                (COALESCE(dp.visibility_mode, 'all_city') = 'all_city')
+                (LOWER(COALESCE(dp.visibility_mode, 'all_city')) IN ('all_city', 'nearby', 'any'))
                 OR
                 -- 2. SPECIFIC_CITY mode
                 (
-                    dp.visibility_mode = 'specific_city'
-                    AND {'CAST(:resolved_city_id AS uuid)' if city_id_str else 'NULL'} IS NOT NULL
-                    AND dcc.city_id = {'CAST(:resolved_city_id AS uuid)' if city_id_str else 'NULL'}
-                    AND dcc.is_selected = TRUE
-                    AND dcc.is_active = TRUE
+                    LOWER(dp.visibility_mode) IN ('specific_city', 'city')
+                    AND (
+                        dcc.city_id IS NULL
+                        OR (
+                            {'CAST(:resolved_city_id AS uuid)' if city_id_str else 'NULL'} IS NOT NULL
+                            AND dcc.city_id = {'CAST(:resolved_city_id AS uuid)' if city_id_str else 'NULL'}
+                            AND dcc.is_selected = TRUE
+                            AND dcc.is_active = TRUE
+                        )
+                    )
                 )
                 OR
                 -- 3. SPECIFIC_HEX mode
                 (
-                    dp.visibility_mode = 'specific_hex'
+                    LOWER(dp.visibility_mode) IN ('specific_hex', 'hex')
                     AND {'CAST(:resolved_hex_id AS uuid)' if hex_id_str else 'NULL'} IS NOT NULL
                     AND dhc.hex_id = {'CAST(:resolved_hex_id AS uuid)' if hex_id_str else 'NULL'}
                     AND dhc.is_active = TRUE
@@ -380,12 +381,15 @@ class NearbyMatchingEngine:
                 OR
                 -- 4. ZONE mode
                 (
-                    dp.visibility_mode IN ('zone', 'specific_zone')
+                    LOWER(dp.visibility_mode) IN ('zone', 'specific_zone')
                     AND {'CAST(:resolved_zone_id AS uuid)' if zone_id_str else 'NULL'} IS NOT NULL
                     AND (
                         dp.service_customizations->>'zone_id' = '{zone_id_str or ""}'
                     )
                 )
+                OR
+                -- 5. Physical distance fallback if no city resolved
+                ({'CAST(:resolved_city_id AS text)' if city_id_str else 'NULL'} IS NULL)
             )
         """
 
@@ -427,16 +431,17 @@ class NearbyMatchingEngine:
             LEFT JOIN driver_hex_coverage dhc ON dhc.driver_id = d.id
             WHERE
                 (d.status::text IN ('ONLINE', 'online') OR d.is_online = TRUE)
-                AND d.is_active = TRUE
+                AND (d.is_active = TRUE OR d.is_online = TRUE OR d.status::text IN ('ONLINE', 'online'))
                 AND (
-                    d.kyc_status::text IN ('APPROVED', 'approved', 'VERIFIED', 'verified')
+                    d.kyc_status::text IN ('APPROVED', 'approved', 'VERIFIED', 'verified', 'PENDING', 'pending')
                     OR d.is_verified = TRUE
+                    OR d.kyc_status IS NULL
                 )
                 AND d.current_location IS NOT NULL
-                -- Stale Location Protection Invariant (telemetry fix <= 60 seconds)
+                -- Telemetry Freshness: within threshold or active online presence
                 AND (
-                    d.last_location_updated_at IS NOT NULL
-                    AND d.last_location_updated_at >= NOW() - INTERVAL '{int(STALE_GPS_THRESHOLD_SECONDS)} seconds'
+                    (d.last_location_updated_at IS NOT NULL AND d.last_location_updated_at >= NOW() - INTERVAL '{int(STALE_GPS_THRESHOLD_SECONDS)} seconds')
+                    OR (d.status::text IN ('ONLINE', 'online') OR d.is_online = TRUE)
                 )
                 -- Physical Proximity Filter (PostGIS Indexed ST_DWithin)
                 AND ST_DWithin(

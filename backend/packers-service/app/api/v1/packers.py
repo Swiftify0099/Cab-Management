@@ -183,6 +183,7 @@ async def get_my_moving_orders(
 
 
 @router.get("/open-requests", summary="Open relocation marketplace for mover bidding")
+@router.get("/driver-requests", summary="Open relocation marketplace for mover bidding")
 async def get_open_requests(
     db: AsyncSession = Depends(get_db),
     pickup_lat: Optional[float] = Query(None),

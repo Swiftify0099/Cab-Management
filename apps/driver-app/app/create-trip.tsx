@@ -51,19 +51,7 @@ export const isUUID = (val?: string | null): boolean => {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim())
 }
 
-let MapView: any = null
-let Marker: any = null
-let Polyline: any = null
-let Polygon: any = null
-try {
-  const maps = require('react-native-maps')
-  MapView = maps.default
-  Marker = maps.Marker
-  Polyline = maps.Polyline
-  Polygon = maps.Polygon
-} catch (e) {
-  console.warn('[CreateTrip] react-native-maps not available:', e)
-}
+import MapView, { Marker, Polyline, Polygon, PROVIDER_GOOGLE, PROVIDER_DEFAULT } from 'react-native-maps'
 
 interface SavedLocationItem {
   id: string

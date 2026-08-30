@@ -213,6 +213,8 @@ async def get_my_parcels(
     response_model=SuccessResponse,
     summary="Driver: Get available parcel delivery requests",
 )
+@router.get("/driver-requests", response_model=SuccessResponse)
+@router.get("/requests", response_model=SuccessResponse)
 async def get_driver_requests(
     db: AsyncSession = Depends(get_db),
     current_user: AuthenticatedUser = Depends(get_current_user),
@@ -220,6 +222,58 @@ async def get_driver_requests(
     service = ParcelService(db)
     requests = await service.get_driver_available_requests(current_user.user_id_str)
     return SuccessResponse(success=True, message="Delivery requests retrieved", data=requests)
+
+
+@router.get("/driver/my-parcels", response_model=SuccessResponse)
+@router.get("/driver-my-parcels", response_model=SuccessResponse)
+async def get_driver_my_parcels(
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    from common.models.all_models import Driver, Parcel, ParcelStatus
+    from sqlalchemy import select, or_
+    from uuid import UUID
+
+    d_res = await db.execute(select(Driver).where(Driver.user_id == UUID(current_user.user_id_str)))
+    driver = d_res.scalar_one_or_none()
+    if not driver:
+        return SuccessResponse(success=True, message="No parcels", data=[])
+
+    p_res = await db.execute(
+        select(Parcel)
+        .where(
+            Parcel.driver_id == driver.id,
+            Parcel.status.in_([
+                ParcelStatus.DRIVER_ASSIGNED,
+                ParcelStatus.AT_PICKUP,
+                ParcelStatus.IN_TRANSIT,
+                ParcelStatus.AT_DESTINATION,
+            ])
+        )
+    )
+    parcels = p_res.scalars().all()
+    data = [
+        {
+            "id": str(p.id),
+            "tracking_number": p.tracking_number,
+            "status": p.status.value,
+            "sender_name": p.sender_name,
+            "sender_phone": p.sender_phone,
+            "sender_address": p.sender_address,
+            "receiver_name": p.receiver_name,
+            "receiver_phone": p.receiver_phone,
+            "receiver_address": p.receiver_address,
+            "weight_kg": p.weight_kg,
+            "fare": float(p.fare),
+            "driver_earning": float(p.driver_earning),
+            "is_fragile": p.is_fragile,
+            "pickup_otp": p.pickup_otp,
+            "delivery_otp": p.delivery_otp,
+        }
+        for p in parcels
+    ]
+    return SuccessResponse(success=True, message="My assigned parcels", data=data)
+
 
 
 @router.get(
@@ -429,67 +483,3 @@ async def cancel_parcel(
         reason=reason,
     )
     return SuccessResponse(success=True, message="Parcel cancelled", data=result)
-
-
-# ── Driver App Backward Compatibility Aliases ────────────────────────
-
-@router.get("/driver/my-parcels", response_model=SuccessResponse)
-@router.get("/driver-my-parcels", response_model=SuccessResponse)
-async def get_driver_my_parcels(
-    db: AsyncSession = Depends(get_db),
-    current_user: AuthenticatedUser = Depends(get_current_user),
-):
-    from common.models.all_models import Driver, Parcel, ParcelStatus
-    from sqlalchemy import select, or_
-    from uuid import UUID
-
-    d_res = await db.execute(select(Driver).where(Driver.user_id == UUID(current_user.user_id_str)))
-    driver = d_res.scalar_one_or_none()
-    if not driver:
-        return SuccessResponse(success=True, message="No parcels", data=[])
-
-    p_res = await db.execute(
-        select(Parcel)
-        .where(
-            Parcel.driver_id == driver.id,
-            Parcel.status.in_([
-                ParcelStatus.DRIVER_ASSIGNED,
-                ParcelStatus.AT_PICKUP,
-                ParcelStatus.IN_TRANSIT,
-                ParcelStatus.AT_DESTINATION,
-            ])
-        )
-    )
-    parcels = p_res.scalars().all()
-    data = [
-        {
-            "id": str(p.id),
-            "tracking_number": p.tracking_number,
-            "status": p.status.value,
-            "sender_name": p.sender_name,
-            "sender_phone": p.sender_phone,
-            "sender_address": p.sender_address,
-            "receiver_name": p.receiver_name,
-            "receiver_phone": p.receiver_phone,
-            "receiver_address": p.receiver_address,
-            "weight_kg": p.weight_kg,
-            "fare": float(p.fare),
-            "driver_earning": float(p.driver_earning),
-            "is_fragile": p.is_fragile,
-            "pickup_otp": p.pickup_otp,
-            "delivery_otp": p.delivery_otp,
-        }
-        for p in parcels
-    ]
-    return SuccessResponse(success=True, message="My assigned parcels", data=data)
-
-
-@router.get("/driver-requests", response_model=SuccessResponse)
-async def get_driver_requests_alias(
-    db: AsyncSession = Depends(get_db),
-    current_user: AuthenticatedUser = Depends(get_current_user),
-):
-    service = ParcelService(db)
-    requests = await service.get_driver_available_requests(current_user.user_id_str)
-    return SuccessResponse(success=True, message="Delivery requests retrieved", data=requests)
-

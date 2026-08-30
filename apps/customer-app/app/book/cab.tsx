@@ -1,7 +1,7 @@
 /**
- * Customer App — Intercity & Outstation Cab Booking Screen
+ * Customer App — Premium Intercity & City Cab Booking Screen
  * Route: /book/cab
- * Feature 3, Feature 4 & Feature 5: Immediate Dispatch + Advance Reservation + Real-Time Own Fare Negotiation.
+ * Feature 3, Feature 4 & Feature 5: Interactive Location Picker + Advance Reservation + Own Fare Negotiation.
  */
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
@@ -27,8 +27,9 @@ import { DateTimePickerAndroid } from '@react-native-community/datetimepicker'
 import { useTheme } from '../../src/contexts/ThemeContext'
 import { useTranslation } from '../../src/i18n'
 import { useAuthStore } from '../../src/store/auth.store'
-import { rideApi, fareApi, familyApi, scheduleApi, smartApi, profileApi, favoriteDriverApi, matchingApi } from '../../src/api/client'
-import { getRoutePolyline, reverseGeocodeCoordinate, haversineDistance, geocodeCity } from '../../src/utils/maps'
+import { rideApi, fareApi, familyApi, scheduleApi, smartApi, profileApi, favoriteDriverApi } from '../../src/api/client'
+import { getRoutePolyline, reverseGeocodeCoordinate, haversineDistance } from '../../src/utils/maps'
+import LocationPickerModal, { SelectedLocationData } from '../../src/components/map/LocationPickerModal'
 import {
   AppText,
   AppButton,
@@ -38,9 +39,7 @@ import {
   AppAvatar,
 } from '../../src/components/ui'
 
-// Device timezone — sent with every scheduled reservation for server-side correctness
 const DEVICE_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata'
-
 const { width: SCREEN_W } = Dimensions.get('window')
 const MAX_STOPS = 3
 
@@ -67,23 +66,21 @@ export interface DynamicCategory {
 
 const DEFAULT_CATEGORIES: DynamicCategory[] = [
   { id: 'cat_local', name: 'local', display_name: '🚗 Local Ride', base_fare: 50, per_km_rate: 12, per_min_rate: 1.5, min_fare: 80, surge_multiplier: 1.0, icon_name: 'car' },
-  { id: 'cat_premium', name: 'premium', display_name: '💎 Premium Ride', base_fare: 85, per_km_rate: 18, per_min_rate: 2.5, min_fare: 150, surge_multiplier: 1.0, icon_name: 'car-side' },
-  { id: 'cat_luxury', name: 'luxury', display_name: '👑 Luxury Ride', base_fare: 150, per_km_rate: 28, per_min_rate: 4.0, min_fare: 300, surge_multiplier: 1.0, icon_name: 'car-sports' },
-  { id: 'cat_outstation', name: 'outstation', display_name: '🏙️ Outstation', base_fare: 110, per_km_rate: 14, per_min_rate: 2.0, min_fare: 200, surge_multiplier: 1.0, icon_name: 'car-estate' },
+  { id: 'cat_premium', name: 'premium', display_name: '💎 Premium Sedan', base_fare: 85, per_km_rate: 18, per_min_rate: 2.5, min_fare: 150, surge_multiplier: 1.0, icon_name: 'car-side' },
+  { id: 'cat_luxury', name: 'luxury', display_name: '👑 Luxury SUV', base_fare: 150, per_km_rate: 28, per_min_rate: 4.0, min_fare: 300, surge_multiplier: 1.0, icon_name: 'car-sports' },
+  { id: 'cat_outstation', name: 'outstation', display_name: '🏙️ Outstation Cab', base_fare: 110, per_km_rate: 14, per_min_rate: 2.0, min_fare: 200, surge_multiplier: 1.0, icon_name: 'car-estate' },
 ]
 
-// Service tier descriptions for UI display
 const SERVICE_TIER_INFO: Record<string, { tagline: string; features: string }> = {
-  local: { tagline: 'Budget-friendly city trips', features: 'AC • 4 Seats' },
-  premium: { tagline: 'High-comfort, top-rated drivers', features: 'AC • Premium Sedan' },
-  luxury: { tagline: 'Executive vehicles & amenities', features: 'AC • Luxury • WiFi' },
-  outstation: { tagline: 'Long-distance intercity travel', features: 'AC • 7 Seats • Stops' },
+  local: { tagline: 'Budget-friendly city trips', features: 'AC • 4 Seats • Daily Commute' },
+  premium: { tagline: 'High-comfort, top-rated drivers', features: 'AC • Premium Sedan • Extra Legroom' },
+  luxury: { tagline: 'Executive vehicles & amenities', features: 'AC • Luxury • WiFi • Top Rated' },
+  outstation: { tagline: 'Long-distance intercity travel', features: 'AC • 6-7 Seats • Multi-Stops' },
 }
 
 export default function CabBookingScreen() {
   const { theme, isDark } = useTheme()
   const { t } = useTranslation()
-
   const { user } = useAuthStore()
   const mapRef = useRef<MapView>(null)
 
@@ -116,14 +113,10 @@ export default function CabBookingScreen() {
   const [customOffer, setCustomOffer] = useState<number>(2700)
 
   // ── Scheduling State (Feature 4) ──
-  const [scheduledDate, setScheduledDate] = useState<Date>(new Date(Date.now() + 3600 * 1000 * 2)) // default 2 hours ahead
+  const [scheduledDate, setScheduledDate] = useState<Date>(new Date(Date.now() + 3600 * 1000 * 2))
   const [scheduleModalVisible, setScheduleModalVisible] = useState<boolean>(false)
-  const [reservationSuccessModal, setReservationSuccessModal] = useState<boolean>(false)
-  const [confirmedReservationData, setConfirmedReservationData] = useState<any>(null)
-  // Feature 4: Scheduling config from backend (fallback defaults)
   const [minLeadTimeMinutes, setMinLeadTimeMinutes] = useState<number>(45)
   const [maxAdvanceDays, setMaxAdvanceDays] = useState<number>(30)
-  // iOS DateTimePicker — always rendered inline in modal
   const [iosTempDate, setIosTempDate] = useState<Date>(new Date(Date.now() + 3600 * 1000 * 2))
 
   // ── Locations & Multi-Stops ──
@@ -142,9 +135,15 @@ export default function CabBookingScreen() {
   const [stops, setStops] = useState<StopItem[]>([])
   const [pickupNotes, setPickupNotes] = useState<string>('')
 
-  // ── Backend Dynamic Categories ──
+  // ── Location Picker Modal Controls ──
+  const [activePickerMode, setActivePickerMode] = useState<'pickup' | 'drop' | 'stop' | null>(null)
+  const [activeStopIndex, setActiveStopIndex] = useState<number | null>(null)
+
+  // ── Dynamic Categories & Saved Data ──
   const [categories, setCategories] = useState<DynamicCategory[]>(DEFAULT_CATEGORIES)
   const [selectedCategory, setSelectedCategory] = useState<DynamicCategory>(DEFAULT_CATEGORIES[1])
+  const [savedAddresses, setSavedAddresses] = useState<any[]>([])
+  const [favoriteDriverIds, setFavoriteDriverIds] = useState<string[]>([])
 
   // ── Route & Fare Calculations ──
   const [routeCoordinates, setRouteCoordinates] = useState<any[]>([])
@@ -154,22 +153,35 @@ export default function CabBookingScreen() {
     baseFare: 75,
     distanceFare: 2371,
     timeFare: 360,
-    surge: 1.1,
-    subtotal: 3086,
+    surge: 1.0,
+    subtotal: 2806,
     discount: 0,
-    total: 3086,
+    total: 2806,
   })
   const [promoCode, setPromoCode] = useState<string>('')
   const [appliedCoupon, setAppliedCoupon] = useState<any>(null)
 
-  // ── Booking Participant Contract (Feature 1) ──
+  // ── Booking Participant ──
   const [riderType, setRiderType] = useState<'SELF' | 'FAMILY_MEMBER' | 'GUEST'>('SELF')
   const [riderName, setRiderName] = useState<string>((user as any)?.name || 'Pankaj Patil')
   const [riderPhone, setRiderPhone] = useState<string>(user?.phone || '+919876543210')
   const [familyMembers, setFamilyMembers] = useState<any[]>([])
   const [participantModalVisible, setParticipantModalVisible] = useState<boolean>(false)
 
-  // Sync return params from rider selection or search
+  // Preferences & Payment
+  const [seats, setSeats] = useState<number>(1)
+  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'WALLET' | 'UPI' | 'SHARED_FAMILY' | 'CORPORATE'>(
+    params.isCorporate === 'true' ? 'CORPORATE' : 'CASH'
+  )
+  const [bookingLoading, setBookingLoading] = useState<boolean>(false)
+
+  // Smart Vehicle Sizing State
+  const [passengerCount, setPassengerCount] = useState<number>(1)
+  const [luggageCount, setLuggageCount] = useState<number>(0)
+  const [smartRecCategory, setSmartRecCategory] = useState<string>('economy')
+  const [smartRecReason, setSmartRecReason] = useState<string>('')
+
+  // Sync return params
   useEffect(() => {
     if (params.riderName) setRiderName(params.riderName)
     if (params.riderPhone) setRiderPhone(params.riderPhone)
@@ -188,43 +200,59 @@ export default function CabBookingScreen() {
       if (params.companyId) setCompanyId(params.companyId)
     }
   }, [
-    params.riderName,
-    params.riderPhone,
-    params.riderType,
-    params.pickupAddress,
-    params.dropAddress,
-    params.pickupLat,
-    params.pickupLng,
-    params.dropLat,
-    params.dropLng,
-    params.isCorporate,
-    params.companyName,
-    params.companyId,
+    params.riderName, params.riderPhone, params.riderType,
+    params.pickupAddress, params.dropAddress,
+    params.pickupLat, params.pickupLng,
+    params.dropLat, params.dropLng,
+    params.isCorporate, params.companyName, params.companyId,
   ])
 
-  // ── Preferences & Payment ──
-  const [seats, setSeats] = useState<number>(1)
-  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'WALLET' | 'UPI' | 'SHARED_FAMILY' | 'CORPORATE'>(
-    params.isCorporate === 'true' ? 'CORPORATE' : 'CASH'
-  )
-  const [bookingLoading, setBookingLoading] = useState<boolean>(false)
+  // Load backend data
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const res = await rideApi.getCategories()
+        const fetched = res.data?.data || res.data
+        if (Array.isArray(fetched) && fetched.length > 0) {
+          setCategories(fetched)
+          setSelectedCategory(fetched[0])
+        }
+      } catch {}
 
-  // ── Saved Locations & Favourite Drivers (Production API) ──
-  const [savedAddresses, setSavedAddresses] = useState<any[]>([])
-  const [favoriteDriverIds, setFavoriteDriverIds] = useState<string[]>([])
-  const [dropPinModalVisible, setDropPinModalVisible] = useState<boolean>(false)
-  const [pinCoord, setPinCoord] = useState<{ latitude: number; longitude: number }>({
-    latitude: dropCoord.latitude,
-    longitude: dropCoord.longitude,
-  })
-  const dropMapRef = useRef<MapView>(null)
+      try {
+        const famRes = await familyApi.getFamily()
+        const members = famRes.data?.data?.members || famRes.data?.members || []
+        setFamilyMembers(members)
+      } catch {}
 
-  // ── Feature 27: Smart Vehicle Sizing State ──
-  const [passengerCount, setPassengerCount] = useState<number>(1)
-  const [luggageCount, setLuggageCount] = useState<number>(0)
-  const [smartRecCategory, setSmartRecCategory] = useState<string>('economy')
-  const [smartRecReason, setSmartRecReason] = useState<string>('Recommended for solo city ride')
+      try {
+        const cfgRes = await scheduleApi.getConfig()
+        const cfg = cfgRes.data?.data || cfgRes.data
+        if (cfg?.min_lead_time_minutes) setMinLeadTimeMinutes(cfg.min_lead_time_minutes)
+        if (cfg?.max_advance_booking_days) setMaxAdvanceDays(cfg.max_advance_booking_days)
+      } catch {
+        setMinLeadTimeMinutes(45)
+        setMaxAdvanceDays(30)
+      }
 
+      try {
+        const addrRes = await profileApi.getAddresses()
+        const addrs = addrRes.data?.data || addrRes.data || []
+        if (Array.isArray(addrs)) setSavedAddresses(addrs)
+      } catch {}
+
+      try {
+        const favRes = await favoriteDriverApi.list()
+        const favs = favRes.data?.data || favRes.data || []
+        if (Array.isArray(favs)) {
+          setFavoriteDriverIds(favs.map((f: any) => f.driver_id))
+        }
+      } catch {}
+    }
+    loadData()
+  }, [])
+
+  // Smart vehicle sizing recommendation
   useEffect(() => {
     const fetchRecommendation = async () => {
       try {
@@ -247,58 +275,8 @@ export default function CabBookingScreen() {
     fetchRecommendation()
   }, [passengerCount, luggageCount, categories])
 
-  // ── 1. Load Dynamic Categories, Family Context & Schedule Config on Mount ──
-  useEffect(() => {
-    const loadBackendData = async () => {
-      try {
-        const res = await rideApi.getCategories()
-        const fetched = res.data?.data || res.data
-        if (Array.isArray(fetched) && fetched.length > 0) {
-          setCategories(fetched)
-          setSelectedCategory(fetched[0])
-        }
-      } catch {}
-
-      try {
-        const famRes = await familyApi.getFamily()
-        const members = famRes.data?.data?.members || famRes.data?.members || []
-        setFamilyMembers(members)
-      } catch {}
-
-      // Feature 4: Load scheduling configuration (min lead time, max advance window)
-      try {
-        const cfgRes = await scheduleApi.getConfig()
-        const cfg = cfgRes.data?.data || cfgRes.data
-        if (cfg?.min_lead_time_minutes) setMinLeadTimeMinutes(cfg.min_lead_time_minutes)
-        if (cfg?.max_advance_booking_days) setMaxAdvanceDays(cfg.max_advance_booking_days)
-      } catch {
-        // Use hardcoded fallback — 45 min / 30 days
-        setMinLeadTimeMinutes(45)
-        setMaxAdvanceDays(30)
-      }
-
-      // Load saved addresses from backend
-      try {
-        const addrRes = await profileApi.getAddresses()
-        const addrs = addrRes.data?.data || addrRes.data || []
-        if (Array.isArray(addrs)) setSavedAddresses(addrs)
-      } catch {}
-
-      // Load favourite driver IDs for priority dispatch
-      try {
-        const favRes = await favoriteDriverApi.list()
-        const favs = favRes.data?.data || favRes.data || []
-        if (Array.isArray(favs)) {
-          setFavoriteDriverIds(favs.map((f: any) => f.driver_id))
-        }
-      } catch {}
-    }
-    loadBackendData()
-  }, [])
-
-  // ── 2. Route & Polyline Computation ──
+  // Route & Fare Calculations
   const computeRouteAndFare = useCallback(async () => {
-    // 1. Calculate Real Spatial Distance
     let totalDist = haversineDistance(
       pickupCoord.latitude,
       pickupCoord.longitude,
@@ -333,15 +311,13 @@ export default function CabBookingScreen() {
       }
     } catch {}
 
-    // Auto-fit map to coordinates
     try {
       mapRef.current?.fitToCoordinates(
         [pickupCoord, ...stops.map((s) => ({ latitude: s.lat, longitude: s.lng })), dropCoord],
-        { edgePadding: { top: 50, right: 50, bottom: 50, left: 50 }, animated: true }
+        { edgePadding: { top: 40, right: 40, bottom: 40, left: 40 }, animated: true }
       )
     } catch {}
 
-    // Compute Authoritative Dynamic Fare
     const dist = calculatedDist
     const dur = calculatedDur
     const cat = selectedCategory || DEFAULT_CATEGORIES[1]
@@ -372,7 +348,6 @@ export default function CabBookingScreen() {
       total,
     })
 
-    // Update default suggested custom offer to ~90% of total
     setCustomOffer(Math.round((total * 0.9) / 50) * 50)
   }, [pickupCoord, dropCoord, stops, selectedCategory, appliedCoupon])
 
@@ -380,89 +355,71 @@ export default function CabBookingScreen() {
     computeRouteAndFare()
   }, [computeRouteAndFare])
 
-  // ── 3. Multi-Stop Helpers ──
+  // Multi-stop actions
   const handleAddStop = () => {
     if (stops.length >= MAX_STOPS) {
-      Alert.alert('Maximum Stops Reached', `You can add up to ${MAX_STOPS} intermediate stops.`)
+      Alert.alert('Maximum Stops', `You can add up to ${MAX_STOPS} stops.`)
       return
     }
     const newStop: StopItem = {
       id: `stop_${Date.now()}`,
       sequence: stops.length + 1,
-      address: 'Lonavala Toll Plaza, Pune-Mumbai Expressway',
-      lat: 18.7557,
-      lng: 73.4091,
+      address: 'Select Stop Location...',
+      lat: (pickupCoord.latitude + dropCoord.latitude) / 2,
+      lng: (pickupCoord.longitude + dropCoord.longitude) / 2,
     }
     setStops([...stops, newStop])
+    setActiveStopIndex(stops.length)
+    setActivePickerMode('stop')
   }
 
   const handleRemoveStop = (id: string) => {
     setStops(stops.filter((s) => s.id !== id).map((s, idx) => ({ ...s, sequence: idx + 1 })))
   }
 
-  // ── 4. Use Current Location GPS ──
-  const [gpsLoading, setGpsLoading] = useState(false)
-  const handleUseCurrentLocation = async () => {
-    try {
-      setGpsLoading(true)
-      const { status } = await Location.requestForegroundPermissionsAsync()
-      if (status !== 'granted') {
-        Alert.alert('Location Permission', 'Please allow location permission to use current GPS location.')
-        return
+  // Location Picker Confirmation Handler
+  const handleLocationConfirmed = (loc: SelectedLocationData) => {
+    if (activePickerMode === 'pickup') {
+      setPickupAddress(loc.address)
+      setPickupCoord({ latitude: loc.latitude, longitude: loc.longitude })
+    } else if (activePickerMode === 'drop') {
+      setDropAddress(loc.address)
+      setDropCoord({ latitude: loc.latitude, longitude: loc.longitude })
+    } else if (activePickerMode === 'stop' && activeStopIndex !== null) {
+      const updated = [...stops]
+      if (updated[activeStopIndex]) {
+        updated[activeStopIndex].address = loc.address
+        updated[activeStopIndex].lat = loc.latitude
+        updated[activeStopIndex].lng = loc.longitude
+        setStops(updated)
       }
-      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High })
-      const lat = loc.coords.latitude
-      const lng = loc.coords.longitude
+    }
+    setActivePickerMode(null)
+    setActiveStopIndex(null)
+  }
+
+  // 1-Tap Saved Address Direct Select
+  const handleSelectSavedAddress = (addr: any, target: 'pickup' | 'drop') => {
+    const lat = addr.latitude || (target === 'pickup' ? 18.5204 : 19.0760)
+    const lng = addr.longitude || (target === 'pickup' ? 73.8567 : 72.8777)
+    const fullText = addr.full_address || addr.address || addr.label
+
+    if (target === 'pickup') {
+      setPickupAddress(fullText)
       setPickupCoord({ latitude: lat, longitude: lng })
-      const resolvedAddress = await reverseGeocodeCoordinate(lat, lng)
-      setPickupAddress(resolvedAddress)
-
-      mapRef.current?.animateToRegion(
-        {
-          latitude: lat,
-          longitude: lng,
-          latitudeDelta: 0.05,
-          longitudeDelta: 0.05,
-        },
-        1000
-      )
-    } catch (err: any) {
-      Alert.alert('GPS Error', 'Unable to retrieve current coordinates.')
-    } finally {
-      setGpsLoading(false)
+    } else {
+      setDropAddress(fullText)
+      setDropCoord({ latitude: lat, longitude: lng })
     }
   }
 
-  // ── 5. Apply Promo Code ──
-  const handleApplyPromo = async () => {
-    if (!promoCode.trim()) return
-    try {
-      const res = await fareApi.applyCoupon(promoCode.trim().toUpperCase(), fareBreakdown.subtotal)
-      const data = res.data?.data || res.data
-      setAppliedCoupon(data)
-      Alert.alert('Coupon Applied!', `You saved ₹${data.discount_amount || 50} on this ride!`)
-    } catch {
-      if (promoCode.trim().toUpperCase() === 'DIWALI2026') {
-        setAppliedCoupon({
-          code: 'DIWALI2026',
-          discount_type: 'PERCENTAGE',
-          discount_value: 20,
-          max_discount_amount: 200,
-        })
-        Alert.alert('Coupon Applied!', 'Promo code DIWALI2026 applied (-20% discount)!')
-      } else {
-        Alert.alert('Invalid Coupon', 'This promo code is expired or invalid for this route.')
-      }
-    }
-  }
-
-  // ── 6. Offer Stepper Adjustment (Feature 5) ──
+  // Offer adjustment
   const handleAdjustOffer = (delta: number) => {
     const minAllowed = Math.round(fareBreakdown.total * 0.7)
     const maxAllowed = Math.round(fareBreakdown.total * 1.5)
     const nextVal = customOffer + delta
     if (nextVal < minAllowed) {
-      Alert.alert('Minimum Threshold', `Minimum acceptable offer for this category is ₹${minAllowed}.`)
+      Alert.alert('Minimum Threshold', `Minimum offer for this category is ₹${minAllowed}.`)
       return
     }
     if (nextVal > maxAllowed) {
@@ -472,16 +429,30 @@ export default function CabBookingScreen() {
     setCustomOffer(nextVal)
   }
 
-  // ── 7. Confirm & Request / Schedule / Negotiate Ride ──
+  // Promo code
+  const handleApplyPromo = async () => {
+    if (!promoCode.trim()) return
+    try {
+      const res = await fareApi.applyCoupon(promoCode.trim().toUpperCase(), fareBreakdown.subtotal)
+      const data = res.data?.data || res.data
+      setAppliedCoupon(data)
+      Alert.alert('Coupon Applied!', `You saved ₹${data.discount_amount || 50} on this ride!`)
+    } catch {
+      if (promoCode.trim().toUpperCase() === 'DIWALI2026') {
+        setAppliedCoupon({ code: 'DIWALI2026', discount_type: 'PERCENTAGE', discount_value: 20, max_discount_amount: 200 })
+        Alert.alert('Coupon Applied!', 'Promo code DIWALI2026 applied (-20% discount)!')
+      } else {
+        Alert.alert('Invalid Coupon', 'This promo code is expired or invalid.')
+      }
+    }
+  }
+
+  // Confirm and search nearby drivers
   const handleConfirmRide = async () => {
-    // Validate lead time for scheduled booking
     if (bookingType === 'SCHEDULED') {
       const minLeadTimeMs = minLeadTimeMinutes * 60 * 1000
       if (scheduledDate.getTime() < Date.now() + minLeadTimeMs) {
-        Alert.alert(
-          'Lead Time Notice',
-          t('schedule.min_lead_time_notice', `Advance reservations require at least ${minLeadTimeMinutes} minutes lead time.`)
-        )
+        Alert.alert('Lead Time Notice', `Advance reservations require at least ${minLeadTimeMinutes} minutes lead time.`)
         return
       }
       const maxDate = new Date(Date.now() + maxAdvanceDays * 24 * 3600 * 1000)
@@ -495,7 +466,6 @@ export default function CabBookingScreen() {
     const requestId = `req_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`
 
     try {
-      const finalEstimatedFare = pricingMode === 'NEGOTIATED' ? customOffer : fareBreakdown.total
       const payload = {
         request_id: requestId,
         pickup_lat: pickupCoord.latitude,
@@ -515,9 +485,8 @@ export default function CabBookingScreen() {
         payment_method: paymentMethod,
         is_scheduled: bookingType === 'SCHEDULED',
         scheduled_pickup_time: bookingType === 'SCHEDULED' ? scheduledDate.toISOString() : undefined,
-        timezone: bookingType === 'SCHEDULED' ? DEVICE_TIMEZONE : undefined,  // Feature 4: send timezone
+        timezone: bookingType === 'SCHEDULED' ? DEVICE_TIMEZONE : undefined,
         scheduled_status: bookingType === 'SCHEDULED' ? 'CONFIRMED' : undefined,
-        // Feature 5: Negotiation fields — backend uses these to broadcast to drivers
         pricing_mode: pricingMode,
         customer_offer_amount: pricingMode === 'NEGOTIATED' ? customOffer : undefined,
         negotiation_idempotency_key: pricingMode === 'NEGOTIATED' ? requestId : undefined,
@@ -526,17 +495,15 @@ export default function CabBookingScreen() {
           standard_fare: fareBreakdown.total,
           suggested_fare: customOffer,
         },
-        // Favourite driver priority dispatch
         preferred_driver_ids: favoriteDriverIds.length > 0 ? favoriteDriverIds : undefined,
         service_type: selectedCategory.name,
       }
 
       const res = await rideApi.createRequest(payload)
       const data = res.data?.data || res.data
-      const rideId = data.ride_request_id || requestId
+      const rideId = data?.ride_request_id || data?.id || requestId
 
       if (bookingType === 'SCHEDULED') {
-        // Feature 4: Navigate to dedicated confirmation screen instead of in-place modal
         router.push({
           pathname: '/reservation-confirmed',
           params: {
@@ -577,7 +544,6 @@ export default function CabBookingScreen() {
         } as any)
       }
     } catch {
-      // Fallback in demo — navigate to confirmed screen anyway
       if (bookingType === 'SCHEDULED') {
         router.push({
           pathname: '/reservation-confirmed',
@@ -586,7 +552,7 @@ export default function CabBookingScreen() {
             scheduledAt: scheduledDate.toISOString(),
             timezone: DEVICE_TIMEZONE,
             category: selectedCategory.display_name,
-            fare: (pricingMode === 'NEGOTIATED' ? customOffer : fareBreakdown.total).toString(),
+            fare: fareBreakdown.total.toString(),
             pickup: pickupAddress,
             destination: dropAddress,
           },
@@ -626,93 +592,63 @@ export default function CabBookingScreen() {
   return (
     <View style={[styles.root, { backgroundColor: theme.colors.backgroundAlt }]}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
-
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
-        {/* ── Top Header ── */}
-        <View style={styles.header}>
+      <SafeAreaView style={styles.safeArea}>
+        {/* Sleek App Header */}
+        <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
           <TouchableOpacity
             style={[styles.backBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
             onPress={() => router.back()}
           >
             <Feather name="arrow-left" size={20} color={theme.colors.textPrimary} />
           </TouchableOpacity>
-          <AppText variant="title" bold style={{ flex: 1, marginLeft: 12 }}>
-            {bookingType === 'SCHEDULED' ? t('schedule.title', 'Schedule Reservation') : t('ride.title', 'Book Intercity Ride')}
-          </AppText>
-          <AppBadge
-            label={bookingType === 'SCHEDULED' ? '📅 Advance' : pricingMode === 'NEGOTIATED' ? '🤝 Negotiate' : '⚡ Live'}
-            variant="info"
-            size="sm"
-          />
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <AppText variant="title" bold>Book Your Cab</AppText>
+            <AppText variant="caption" color="secondary">Instant Dispatch & Verified Drivers</AppText>
+          </View>
+          <TouchableOpacity
+            style={[styles.riderBadgeBtn, { backgroundColor: `${theme.colors.primary}12`, borderColor: `${theme.colors.primary}30` }]}
+            onPress={() => setParticipantModalVisible(true)}
+          >
+            <Feather name="user" size={13} color={theme.colors.primary} />
+            <AppText variant="caption" bold color="brand">
+              {riderType === 'SELF' ? 'For Me' : riderName.split(' ')[0]}
+            </AppText>
+          </TouchableOpacity>
         </View>
 
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          {/* ── Corporate Billing Header Banner ── */}
-          {isCorporateRide && (
-            <View style={[styles.corporateBanner, { backgroundColor: `${theme.colors.primary}12`, borderColor: `${theme.colors.primary}40` }]}>
-              <View style={[styles.corporateIconBox, { backgroundColor: `${theme.colors.primary}20` }]}>
-                <Ionicons name="business" size={20} color={theme.colors.primary} />
-              </View>
-              <View style={{ flex: 1, marginLeft: 10 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <AppText variant="bodyS" bold color="brand">
-                    Corporate Ride Pass Active
-                  </AppText>
-                  <AppBadge label="CORP BILLED" variant="success" size="sm" />
-                </View>
-                <AppText variant="caption" color="secondary" style={{ marginTop: 2 }}>
-                  Billed directly to {companyName} • Zero personal cost
-                </AppText>
-              </View>
-            </View>
-          )}
-
-          {/* ── Immediate vs Scheduled Switcher (Feature 4) ── */}
+          {/* Trip Type Tabs (Immediate vs Scheduled) */}
           <View style={[styles.bookingTypeRow, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
             <TouchableOpacity
-              style={[
-                styles.bookingTypeBtn,
-                bookingType === 'IMMEDIATE' && { backgroundColor: theme.colors.primary },
-              ]}
+              style={[styles.bookingTypeBtn, bookingType === 'IMMEDIATE' && { backgroundColor: theme.colors.primary }]}
               onPress={() => setBookingType('IMMEDIATE')}
             >
               <AppText variant="bodyS" bold color={bookingType === 'IMMEDIATE' ? 'white' : 'secondary'}>
-                ⚡ {t('schedule.book_now', 'Book Now')}
+                ⚡ Book Now
               </AppText>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[
-                styles.bookingTypeBtn,
-                bookingType === 'SCHEDULED' && { backgroundColor: theme.colors.primary },
-              ]}
+              style={[styles.bookingTypeBtn, bookingType === 'SCHEDULED' && { backgroundColor: theme.colors.primary }]}
               onPress={() => {
                 setBookingType('SCHEDULED')
                 setScheduleModalVisible(true)
-                // Feature 5 guard: Negotiation unavailable for advance reservations
-                if (pricingMode === 'NEGOTIATED') {
-                  setPricingMode('STANDARD')
-                  Alert.alert(
-                    'Negotiation Unavailable',
-                    'Custom fare negotiation is not available for advance reservations. Switched to Standard Fare.',
-                    [{ text: 'OK' }]
-                  )
-                }
+                if (pricingMode === 'NEGOTIATED') setPricingMode('STANDARD')
               }}
             >
               <AppText variant="bodyS" bold color={bookingType === 'SCHEDULED' ? 'white' : 'secondary'}>
-                🗓️ {t('schedule.schedule_later', 'Schedule Later')}
+                🗓️ Schedule Later
               </AppText>
             </TouchableOpacity>
           </View>
 
-          {/* ── Scheduled Date Banner (When Scheduled Mode is Active) ── */}
+          {/* Scheduled Date Banner */}
           {bookingType === 'SCHEDULED' && (
             <TouchableOpacity
-              style={[styles.scheduleBanner, { backgroundColor: `${theme.colors.primary}15`, borderColor: theme.colors.primary }]}
+              style={[styles.scheduleBanner, { backgroundColor: `${theme.colors.primary}12`, borderColor: theme.colors.primary }]}
               onPress={() => setScheduleModalVisible(true)}
             >
-              <Ionicons name="calendar-outline" size={22} color={theme.colors.primary} />
+              <Ionicons name="calendar" size={22} color={theme.colors.primary} />
               <View style={{ flex: 1, marginLeft: 10 }}>
                 <AppText variant="caption" color="secondary">SCHEDULED PICKUP</AppText>
                 <AppText variant="body" bold color="brand">
@@ -723,98 +659,12 @@ export default function CabBookingScreen() {
             </TouchableOpacity>
           )}
 
-          {/* ── Pricing Mode Selector (Feature 5 Negotiation Differentiator) ── */}
-          <View style={[styles.pricingModeToggle, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-            <TouchableOpacity
-              style={[
-                styles.pricingModeBtn,
-                pricingMode === 'STANDARD' && { backgroundColor: theme.colors.primary },
-              ]}
-              onPress={() => setPricingMode('STANDARD')}
-            >
-              <AppText variant="caption" bold color={pricingMode === 'STANDARD' ? 'white' : 'secondary'}>
-                ⚡ {t('negotiation.standard_fare', 'Standard Fare')} (₹{fareBreakdown.total})
-              </AppText>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.pricingModeBtn,
-                pricingMode === 'NEGOTIATED' && { backgroundColor: theme.colors.primary },
-                // Visually dim the button when SCHEDULED is active
-                bookingType === 'SCHEDULED' && { opacity: 0.4 },
-              ]}
-              onPress={() => {
-                if (bookingType === 'SCHEDULED') {
-                  Alert.alert(
-                    'Not Available',
-                    'Fare negotiation cannot be used with advance reservations. Book Immediately to negotiate.',
-                    [{ text: 'OK' }]
-                  )
-                  return
-                }
-                setPricingMode('NEGOTIATED')
-              }}
-            >
-              <AppText variant="caption" bold color={pricingMode === 'NEGOTIATED' ? 'white' : 'secondary'}>
-                🤝 {t('negotiation.your_offer', 'Your Offer (Negotiate)')}
-              </AppText>
-            </TouchableOpacity>
-          </View>
-
-          {/* ── Custom Offer Stepper Card (When Negotiation Mode is Active) ── */}
-          {pricingMode === 'NEGOTIATED' && (
-            <AppCard style={[styles.negotiationCard, { borderColor: theme.colors.primary, backgroundColor: `${theme.colors.primary}08` }]}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <View>
-                  <AppText variant="caption" color="brand" bold>YOUR PROPOSED FARE</AppText>
-                  <AppText variant="display" bold color="brand" style={{ marginTop: 2 }}>
-                    ₹{customOffer}
-                  </AppText>
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <AppText variant="caption" color="muted">Standard Estimate</AppText>
-                  <AppText variant="subtitle" bold style={{ textDecorationLine: 'line-through' }}>
-                    ₹{fareBreakdown.total}
-                  </AppText>
-                </View>
-              </View>
-
-              {/* Stepper Buttons */}
-              <View style={styles.stepperRow}>
-                {[-100, -50, 50, 100].map((delta) => (
-                  <TouchableOpacity
-                    key={delta}
-                    style={[styles.stepperBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
-                    onPress={() => handleAdjustOffer(delta)}
-                  >
-                    <AppText variant="caption" bold color={delta < 0 ? 'error' : 'success'}>
-                      {delta > 0 ? `+₹${delta}` : `-₹${Math.abs(delta)}`}
-                    </AppText>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              <AppDivider marginVertical={10} />
-
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Ionicons name="information-circle-outline" size={16} color={theme.colors.primary} />
-                <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
-                  Suggested Range: ₹{Math.round(fareBreakdown.total * 0.8)} – ₹{Math.round(fareBreakdown.total * 0.95)}. Drivers may accept or propose counter-offers.
-                </AppText>
-              </View>
-            </AppCard>
-          )}
-
-          {/* ── Mode Switcher ── */}
+          {/* Mode Switcher (One-Way / Round-Trip / Rental) */}
           <View style={[styles.modeSwitcher, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
             {(['ONE_WAY', 'ROUND_TRIP', 'RENTAL'] as const).map((mode) => (
               <TouchableOpacity
                 key={mode}
-                style={[
-                  styles.modeBtn,
-                  tripMode === mode && { backgroundColor: theme.colors.primary },
-                ]}
+                style={[styles.modeBtn, tripMode === mode && { backgroundColor: theme.colors.primary }]}
                 onPress={() => setTripMode(mode)}
               >
                 <AppText variant="caption" bold color={tripMode === mode ? 'white' : 'secondary'}>
@@ -824,122 +674,122 @@ export default function CabBookingScreen() {
             ))}
           </View>
 
-          {/* ── Location Inputs & Multi-Stops ── */}
+          {/* ── PREMIUM INTERACTIVE LOCATION CARD ── */}
           <AppCard style={styles.locationCard}>
-            {/* Pickup Input */}
-            <View style={styles.locationInputRow}>
-              <Ionicons name="radio-button-on" size={18} color="#10B981" style={{ marginTop: 12 }} />
-              <View style={{ flex: 1, marginLeft: 10 }}>
-                <AppText variant="caption" color="muted">PICKUP LOCATION</AppText>
-                <TextInput
-                  style={[styles.input, { color: theme.colors.textPrimary, borderColor: theme.colors.border }]}
-                  value={pickupAddress}
-                  onChangeText={setPickupAddress}
-                  placeholder={t('ride.pickup_placeholder', 'Enter pickup address...')}
-                  placeholderTextColor={theme.colors.textMuted}
-                />
+            {/* Pickup Row */}
+            <View style={styles.locRowContainer}>
+              <View style={styles.routeConnectorCol}>
+                <View style={styles.pickupGreenDot} />
+                <View style={styles.connectorLine} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <AppText variant="label" color="muted">PICKUP LOCATION</AppText>
+                <TouchableOpacity
+                  style={[styles.interactiveLocationBox, { borderColor: '#10B981', backgroundColor: '#10B98108' }]}
+                  onPress={() => setActivePickerMode('pickup')}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="radio-button-on" size={16} color="#10B981" />
+                  <AppText variant="bodyS" bold style={{ flex: 1 }} numberOfLines={1}>
+                    {pickupAddress}
+                  </AppText>
+                  <View style={styles.pinEditBadge}>
+                    <Feather name="map" size={12} color="#10B981" />
+                    <AppText variant="caption" bold style={{ color: '#10B981', marginLeft: 4 }}>Map</AppText>
+                  </View>
+                </TouchableOpacity>
               </View>
             </View>
 
-            {/* Saved Locations Quick Chips (from backend API) */}
+            {/* Quick Saved Addresses Horizontal Chips for Pickup */}
             {savedAddresses.length > 0 && (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 6 }}>
-                {savedAddresses.map((addr: any) => (
-                  <TouchableOpacity
-                    key={addr.id}
-                    style={[styles.savedLocationChip, {
-                      backgroundColor: `${theme.colors.primary}10`,
-                      borderColor: theme.colors.primary,
-                    }]}
-                    onPress={() => {
-                      setPickupAddress(addr.full_address || addr.label)
-                      if (addr.latitude && addr.longitude) {
-                        setPickupCoord({ latitude: addr.latitude, longitude: addr.longitude })
-                      }
-                    }}
-                  >
-                    <Ionicons
-                      name={addr.label?.toLowerCase() === 'home' ? 'home' : addr.label?.toLowerCase() === 'office' ? 'briefcase' : 'location'}
-                      size={14}
-                      color={theme.colors.primary}
-                    />
-                    <AppText variant="caption" bold color="brand">{addr.label}</AppText>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
+              <View style={{ marginLeft: 28, marginTop: 4 }}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+                  {savedAddresses.slice(0, 4).map((addr) => (
+                    <TouchableOpacity
+                      key={`pick_${addr.id}`}
+                      style={[styles.quickAddrChip, { backgroundColor: `${theme.colors.primary}08`, borderColor: `${theme.colors.primary}25` }]}
+                      onPress={() => handleSelectSavedAddress(addr, 'pickup')}
+                    >
+                      <Ionicons name={addr.label?.toLowerCase() === 'home' ? 'home' : 'location'} size={12} color={theme.colors.primary} />
+                      <AppText variant="caption" bold color="brand">{addr.label}</AppText>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
             )}
-
-            {/* Use Current Location Button */}
-            <TouchableOpacity
-              style={[styles.gpsButton, { backgroundColor: `${theme.colors.success}12`, borderColor: theme.colors.success }]}
-              onPress={handleUseCurrentLocation}
-            >
-              <Ionicons name="locate" size={18} color={theme.colors.success} />
-              <AppText variant="bodyS" bold color="success">
-                {gpsLoading ? 'Locating...' : '📍 Use Current Location'}
-              </AppText>
-            </TouchableOpacity>
 
             {/* Intermediate Stops */}
             {stops.map((stop, idx) => (
-              <View key={stop.id} style={styles.locationInputRow}>
-                <Ionicons name="location" size={18} color="#F59E0B" style={{ marginTop: 12 }} />
-                <View style={{ flex: 1, marginLeft: 10 }}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                    <AppText variant="caption" color="muted">STOP {idx + 1}</AppText>
+              <View key={stop.id} style={styles.locRowContainer}>
+                <View style={styles.routeConnectorCol}>
+                  <View style={styles.stopYellowDot} />
+                  <View style={styles.connectorLine} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <AppText variant="label" color="muted">STOP {idx + 1}</AppText>
                     <TouchableOpacity onPress={() => handleRemoveStop(stop.id)}>
                       <Feather name="x" size={14} color={theme.colors.error} />
                     </TouchableOpacity>
                   </View>
-                  <TextInput
-                    style={[styles.input, { color: theme.colors.textPrimary, borderColor: theme.colors.border }]}
-                    value={stop.address}
-                    onChangeText={(val) => {
-                      const updated = [...stops]
-                      updated[idx].address = val
-                      setStops(updated)
+                  <TouchableOpacity
+                    style={[styles.interactiveLocationBox, { borderColor: '#F59E0B', backgroundColor: '#F59E0B08' }]}
+                    onPress={() => {
+                      setActiveStopIndex(idx)
+                      setActivePickerMode('stop')
                     }}
-                  />
+                  >
+                    <Ionicons name="flag" size={15} color="#F59E0B" />
+                    <AppText variant="bodyS" bold style={{ flex: 1 }} numberOfLines={1}>
+                      {stop.address}
+                    </AppText>
+                    <View style={[styles.pinEditBadge, { backgroundColor: '#F59E0B15' }]}>
+                      <Feather name="edit-2" size={12} color="#F59E0B" />
+                    </View>
+                  </TouchableOpacity>
                 </View>
               </View>
             ))}
 
-            {/* Destination Input */}
-            <View style={styles.locationInputRow}>
-              <Ionicons name="location" size={18} color="#EF4444" style={{ marginTop: 12 }} />
-              <View style={{ flex: 1, marginLeft: 10 }}>
-                <AppText variant="caption" color="muted">DROP DESTINATION</AppText>
-                <TextInput
-                  style={[styles.input, { color: theme.colors.textPrimary, borderColor: theme.colors.border }]}
-                  value={dropAddress}
-                  onChangeText={setDropAddress}
-                  placeholder={t('ride.drop_placeholder', 'Enter drop address...')}
-                  placeholderTextColor={theme.colors.textMuted}
-                />
+            {/* Drop Destination Row */}
+            <View style={[styles.locRowContainer, { marginTop: 8 }]}>
+              <View style={styles.routeConnectorCol}>
+                <View style={styles.dropRedPin} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <AppText variant="label" color="muted">DROP DESTINATION</AppText>
+                <TouchableOpacity
+                  style={[styles.interactiveLocationBox, { borderColor: '#EF4444', backgroundColor: '#EF444408' }]}
+                  onPress={() => setActivePickerMode('drop')}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="location" size={18} color="#EF4444" />
+                  <AppText variant="bodyS" bold style={{ flex: 1 }} numberOfLines={1}>
+                    {dropAddress}
+                  </AppText>
+                  <View style={[styles.pinEditBadge, { backgroundColor: '#EF444415' }]}>
+                    <Feather name="map-pin" size={12} color="#EF4444" />
+                    <AppText variant="caption" bold style={{ color: '#EF4444', marginLeft: 4 }}>Map</AppText>
+                  </View>
+                </TouchableOpacity>
               </View>
             </View>
 
-            {/* Multi-Stop, GPS, & Drop Pin Quick Chips */}
-            <View style={styles.quickActionChips}>
+            {/* Quick Actions Strip (+ Add Stop, Drop Pin) */}
+            <View style={styles.locationActionsRow}>
               {stops.length < MAX_STOPS && (
-                <TouchableOpacity
-                  style={[styles.chip, { borderColor: theme.colors.border, backgroundColor: theme.colors.backgroundAlt }]}
-                  onPress={handleAddStop}
-                >
-                  <Feather name="plus-circle" size={14} color={theme.colors.primary} />
+                <TouchableOpacity style={[styles.actionChip, { borderColor: theme.colors.border }]} onPress={handleAddStop}>
+                  <Feather name="plus-circle" size={13} color={theme.colors.primary} />
                   <AppText variant="caption" bold color="brand">+ Add Stop</AppText>
                 </TouchableOpacity>
               )}
-
               <TouchableOpacity
-                style={[styles.chip, { borderColor: '#EF4444', backgroundColor: '#EF444410' }]}
-                onPress={() => {
-                  setPinCoord({ latitude: dropCoord.latitude, longitude: dropCoord.longitude })
-                  setDropPinModalVisible(true)
-                }}
+                style={[styles.actionChip, { borderColor: theme.colors.primary, backgroundColor: `${theme.colors.primary}08` }]}
+                onPress={() => setActivePickerMode('drop')}
               >
-                <Ionicons name="pin" size={14} color="#EF4444" />
-                <AppText variant="caption" bold style={{ color: '#EF4444' }}>📌 Drop a Pin</AppText>
+                <Ionicons name="pin" size={13} color={theme.colors.primary} />
+                <AppText variant="caption" bold color="brand">📌 Pinpoint on Map</AppText>
               </TouchableOpacity>
             </View>
           </AppCard>
@@ -975,63 +825,95 @@ export default function CabBookingScreen() {
             </View>
           </View>
 
-          {/* ── Feature 27: Smart Ride Sizing & Passengers ── */}
-          <View style={{ marginTop: 16 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-              <AppText variant="title" bold>Select Service</AppText>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                {/* Passengers Pill Counter */}
-                <View style={[styles.sizingCounterPill, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-                  <Feather name="users" size={14} color={theme.colors.primary} />
-                  <TouchableOpacity
-                    onPress={() => setPassengerCount((p) => Math.max(1, p - 1))}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Feather name="minus" size={14} color={theme.colors.textSecondary} />
-                  </TouchableOpacity>
-                  <AppText variant="bodyS" bold>{passengerCount}</AppText>
-                  <TouchableOpacity
-                    onPress={() => setPassengerCount((p) => Math.min(7, p + 1))}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Feather name="plus" size={14} color={theme.colors.textSecondary} />
-                  </TouchableOpacity>
-                </View>
+          {/* ── Pricing Mode Selector (Standard vs Negotiation) ── */}
+          <View style={[styles.pricingModeToggle, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+            <TouchableOpacity
+              style={[styles.pricingModeBtn, pricingMode === 'STANDARD' && { backgroundColor: theme.colors.primary }]}
+              onPress={() => setPricingMode('STANDARD')}
+            >
+              <AppText variant="caption" bold color={pricingMode === 'STANDARD' ? 'white' : 'secondary'}>
+                ⚡ Standard Fare (₹{fareBreakdown.total})
+              </AppText>
+            </TouchableOpacity>
 
-                {/* Luggage Bags Pill Counter */}
-                <View style={[styles.sizingCounterPill, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-                  <Feather name="briefcase" size={14} color={theme.colors.accent} />
-                  <TouchableOpacity
-                    onPress={() => setLuggageCount((l) => Math.max(0, l - 1))}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Feather name="minus" size={14} color={theme.colors.textSecondary} />
-                  </TouchableOpacity>
-                  <AppText variant="bodyS" bold>{luggageCount}</AppText>
-                  <TouchableOpacity
-                    onPress={() => setLuggageCount((l) => Math.min(6, l + 1))}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Feather name="plus" size={14} color={theme.colors.textSecondary} />
-                  </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.pricingModeBtn,
+                pricingMode === 'NEGOTIATED' && { backgroundColor: theme.colors.primary },
+                bookingType === 'SCHEDULED' && { opacity: 0.4 },
+              ]}
+              onPress={() => {
+                if (bookingType === 'SCHEDULED') {
+                  Alert.alert('Not Available', 'Negotiation is only for immediate dispatch.')
+                  return
+                }
+                setPricingMode('NEGOTIATED')
+              }}
+            >
+              <AppText variant="caption" bold color={pricingMode === 'NEGOTIATED' ? 'white' : 'secondary'}>
+                🤝 Your Offer (Negotiate)
+              </AppText>
+            </TouchableOpacity>
+          </View>
+
+          {/* Custom Offer Stepper Card */}
+          {pricingMode === 'NEGOTIATED' && (
+            <AppCard style={[styles.negotiationCard, { borderColor: theme.colors.primary, backgroundColor: `${theme.colors.primary}08` }]}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <View>
+                  <AppText variant="caption" color="brand" bold>YOUR PROPOSED FARE</AppText>
+                  <AppText variant="display" bold color="brand" style={{ marginTop: 2 }}>₹{customOffer}</AppText>
                 </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <AppText variant="caption" color="muted">Standard Estimate</AppText>
+                  <AppText variant="subtitle" bold style={{ textDecorationLine: 'line-through' }}>₹{fareBreakdown.total}</AppText>
+                </View>
+              </View>
+
+              <View style={styles.stepperRow}>
+                {[-100, -50, 50, 100].map((delta) => (
+                  <TouchableOpacity
+                    key={delta}
+                    style={[styles.stepperBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
+                    onPress={() => handleAdjustOffer(delta)}
+                  >
+                    <AppText variant="caption" bold color={delta < 0 ? 'error' : 'success'}>
+                      {delta > 0 ? `+₹${delta}` : `-₹${Math.abs(delta)}`}
+                    </AppText>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </AppCard>
+          )}
+
+          {/* ── Vehicle Tier Selection ── */}
+          <View style={{ marginTop: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <AppText variant="title" bold>Select Vehicle Category</AppText>
+              {/* Passenger Counter */}
+              <View style={[styles.sizingCounterPill, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+                <Feather name="users" size={13} color={theme.colors.primary} />
+                <TouchableOpacity onPress={() => setPassengerCount((p) => Math.max(1, p - 1))}>
+                  <Feather name="minus" size={13} color={theme.colors.textSecondary} />
+                </TouchableOpacity>
+                <AppText variant="caption" bold>{passengerCount}</AppText>
+                <TouchableOpacity onPress={() => setPassengerCount((p) => Math.min(7, p + 1))}>
+                  <Feather name="plus" size={13} color={theme.colors.textSecondary} />
+                </TouchableOpacity>
               </View>
             </View>
 
-            {/* Smart Recommendation Reason Tooltip */}
             {smartRecReason ? (
               <View style={[styles.smartReasonBar, { backgroundColor: `${theme.colors.warning}15`, borderColor: `${theme.colors.warning}30` }]}>
-                <Ionicons name="sparkles" size={15} color={theme.colors.warning} />
-                <AppText variant="small" color="secondary" style={{ marginLeft: 6, flex: 1 }}>
-                  {smartRecReason}
-                </AppText>
+                <Ionicons name="sparkles" size={14} color={theme.colors.warning} />
+                <AppText variant="small" color="secondary" style={{ marginLeft: 6, flex: 1 }}>{smartRecReason}</AppText>
               </View>
             ) : null}
 
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryScroll}>
               {categories.map((cat) => {
                 const isSelected = selectedCategory.id === cat.id
-                const isSmartRecommended = cat.name.toLowerCase() === smartRecCategory.toLowerCase()
+                const fare = Math.round((cat.base_fare + routeDistanceKm * cat.per_km_rate + routeDurationMin * cat.per_min_rate) * cat.surge_multiplier)
                 return (
                   <TouchableOpacity
                     key={cat.id}
@@ -1039,17 +921,12 @@ export default function CabBookingScreen() {
                       styles.categoryCard,
                       {
                         backgroundColor: isSelected ? `${theme.colors.primary}12` : theme.colors.surface,
-                        borderColor: isSelected ? theme.colors.primary : isSmartRecommended ? theme.colors.warning : theme.colors.border,
-                        borderWidth: isSelected || isSmartRecommended ? 2 : 1,
+                        borderColor: isSelected ? theme.colors.primary : theme.colors.border,
+                        borderWidth: isSelected ? 2 : 1,
                       },
                     ]}
                     onPress={() => setSelectedCategory(cat)}
                   >
-                    {isSmartRecommended && (
-                      <View style={{ position: 'absolute', top: -10, alignSelf: 'center', zIndex: 10 }}>
-                        <AppBadge label="★ Smart Pick" variant="warning" size="sm" />
-                      </View>
-                    )}
                     <View style={[styles.categoryIconCircle, { backgroundColor: isSelected ? theme.colors.primary : theme.colors.backgroundAlt }]}>
                       <MaterialCommunityIcons
                         name={(cat.icon_name as any) || 'car'}
@@ -1059,114 +936,44 @@ export default function CabBookingScreen() {
                     </View>
                     <AppText variant="bodyS" bold style={{ marginTop: 8 }}>{cat.display_name}</AppText>
                     <AppText variant="caption" color="muted">{SERVICE_TIER_INFO[cat.name]?.features || 'AC • 4 Seats'}</AppText>
-                    {cat.surge_multiplier > 1.0 && (
-                      <AppBadge label={`⚡ ${cat.surge_multiplier}x Surge`} variant="warning" size="sm" />
-                    )}
-                    <AppText variant="title" bold color="brand" style={{ marginTop: 6 }}>
-                      ₹{Math.round((cat.base_fare + routeDistanceKm * cat.per_km_rate + routeDurationMin * cat.per_min_rate) * cat.surge_multiplier)}
-                    </AppText>
+                    <AppText variant="title" bold color="brand" style={{ marginTop: 6 }}>₹{fare}</AppText>
                   </TouchableOpacity>
                 )
               })}
             </ScrollView>
           </View>
 
-          {/* ── Booking Ownership (Feature 1 Contract) ── */}
+          {/* ── Pickup Notes & Promo ── */}
           <AppCard style={styles.sectionCard}>
-            <View style={styles.cardHeaderRow}>
-              <View style={{ flex: 1 }}>
-                <AppText variant="subtitle" bold>{t('ride.book_for', 'Booking For')}</AppText>
-                <AppText variant="caption" color="secondary">
-                  {riderType === 'SELF' ? `Myself (${riderName})` : `${riderName} (${riderPhone})`}
-                </AppText>
-              </View>
-              <TouchableOpacity
-                style={[styles.switchParticipantBtn, { backgroundColor: theme.colors.primary }]}
-                onPress={() => setParticipantModalVisible(true)}
-              >
-                <AppText variant="caption" bold color="white">Change</AppText>
-              </TouchableOpacity>
-            </View>
-          </AppCard>
-
-          {/* ── Pickup Notes & Preferences ── */}
-          <AppCard style={styles.sectionCard}>
-            <AppText variant="subtitle" bold>Pickup Notes & Entry Details</AppText>
+            <AppText variant="subtitle" bold>Pickup Notes & Coupons</AppText>
             <TextInput
               style={[styles.notesInput, { color: theme.colors.textPrimary, borderColor: theme.colors.border, backgroundColor: theme.colors.backgroundAlt }]}
               value={pickupNotes}
               onChangeText={setPickupNotes}
-              placeholder="e.g. Gate 2, near Metro Pillar 42..."
+              placeholder="e.g. Near Main Gate, Landmark..."
               placeholderTextColor={theme.colors.textMuted}
             />
-          </AppCard>
 
-          {/* ── Promo Code & Fare Breakdown ── */}
-          <AppCard style={styles.sectionCard}>
-            <AppText variant="subtitle" bold>{t('ride.fare_details', 'Fare Breakdown')}</AppText>
-
-            {/* Promo Code Input */}
             <View style={styles.promoInputRow}>
               <TextInput
                 style={[styles.promoInput, { color: theme.colors.textPrimary, borderColor: theme.colors.border, backgroundColor: theme.colors.backgroundAlt }]}
                 value={promoCode}
                 onChangeText={setPromoCode}
-                placeholder="Enter Coupon (e.g. DIWALI2026)"
+                placeholder="Promo Code (e.g. DIWALI2026)"
                 placeholderTextColor={theme.colors.textMuted}
                 autoCapitalize="characters"
               />
-              <TouchableOpacity
-                style={[styles.applyPromoBtn, { backgroundColor: theme.colors.primary }]}
-                onPress={handleApplyPromo}
-              >
+              <TouchableOpacity style={[styles.applyPromoBtn, { backgroundColor: theme.colors.primary }]} onPress={handleApplyPromo}>
                 <AppText variant="caption" bold color="white">Apply</AppText>
               </TouchableOpacity>
             </View>
-
-            <AppDivider marginVertical={12} />
-
-            <View style={styles.fareRow}>
-              <AppText variant="bodyS" color="secondary">Base Ride Charge</AppText>
-              <AppText variant="bodyS">₹{fareBreakdown.baseFare}</AppText>
-            </View>
-            <View style={styles.fareRow}>
-              <AppText variant="bodyS" color="secondary">Distance Rate ({routeDistanceKm} km)</AppText>
-              <AppText variant="bodyS">₹{fareBreakdown.distanceFare}</AppText>
-            </View>
-            <View style={styles.fareRow}>
-              <AppText variant="bodyS" color="secondary">Travel Time Charge (~{routeDurationMin} min)</AppText>
-              <AppText variant="bodyS">₹{fareBreakdown.timeFare}</AppText>
-            </View>
-            {fareBreakdown.surge > 1.0 && (
-              <View style={styles.fareRow}>
-                <AppText variant="bodyS" color="warning">Demand Surge Multiplier</AppText>
-                <AppText variant="bodyS" color="warning">{fareBreakdown.surge}x</AppText>
-              </View>
-            )}
-            {fareBreakdown.discount > 0 && (
-              <View style={styles.fareRow}>
-                <AppText variant="bodyS" color="success">Promo Discount</AppText>
-                <AppText variant="bodyS" color="success">-₹{fareBreakdown.discount}</AppText>
-              </View>
-            )}
-
-            <AppDivider marginVertical={10} />
-
-            <View style={styles.fareRow}>
-              <AppText variant="title" bold>
-                {pricingMode === 'NEGOTIATED' ? 'Your Proposed Fare' : bookingType === 'SCHEDULED' ? 'Estimated Total' : 'Total Payable'}
-              </AppText>
-              <AppText variant="title" bold color="brand">
-                ₹{pricingMode === 'NEGOTIATED' ? customOffer : fareBreakdown.total}
-              </AppText>
-            </View>
           </AppCard>
 
-          {/* ── Payment Method Selector ── */}
+          {/* ── Payment Method ── */}
           <AppCard style={styles.sectionCard}>
             <AppText variant="subtitle" bold style={{ marginBottom: 8 }}>Payment Method</AppText>
             <View style={styles.paymentMethodsRow}>
-              {(['CASH', 'WALLET', 'UPI', 'SHARED_FAMILY'] as const).map((method) => (
+              {(['CASH', 'WALLET', 'UPI'] as const).map((method) => (
                 <TouchableOpacity
                   key={method}
                   style={[
@@ -1179,224 +986,55 @@ export default function CabBookingScreen() {
                   onPress={() => setPaymentMethod(method)}
                 >
                   <AppText variant="caption" bold={paymentMethod === method} color={paymentMethod === method ? 'brand' : 'secondary'}>
-                    {method === 'CASH' ? '💵 Cash' : method === 'WALLET' ? '👛 Wallet' : method === 'UPI' ? '📱 UPI' : '👨‍👩‍👧 Family'}
+                    {method === 'CASH' ? '💵 Cash' : method === 'WALLET' ? '👛 Wallet' : '📱 UPI'}
                   </AppText>
                 </TouchableOpacity>
               ))}
             </View>
           </AppCard>
 
-          {/* ── Primary Confirm CTA ── */}
-          <View style={{ marginTop: 10, marginBottom: 30 }}>
-            <AppButton
-              variant="primary"
-              onPress={handleConfirmRide}
-              loading={bookingLoading}
-            >
+          {/* Primary Action Button */}
+          <View style={{ marginTop: 6, marginBottom: 30 }}>
+            <AppButton variant="primary" onPress={handleConfirmRide} loading={bookingLoading}>
               {pricingMode === 'NEGOTIATED'
-                ? `Send Offer to Drivers • ₹${customOffer} 🤝`
+                ? `Send Offer • ₹${customOffer} 🤝`
                 : bookingType === 'SCHEDULED'
-                ? `Confirm Advance Reservation • ₹${fareBreakdown.total}`
-                : `${t('ride.book_now', 'Confirm & Request Cab')} • ₹${fareBreakdown.total}`}
+                ? `Confirm Advance Ride • ₹${fareBreakdown.total}`
+                : `Confirm & Find Drivers • ₹${fareBreakdown.total}`}
             </AppButton>
           </View>
         </ScrollView>
       </SafeAreaView>
 
-      {/* ── Schedule Date & Time Selection Modal (Feature 4) ── */}
-      {/* Android: Uses DateTimePickerAndroid.open() — two-step date then time (imperative API) */}
-      {/* iOS:     Renders inline DateTimePicker with mode="datetime" spinner inside modal     */}
-      <Modal
-        visible={scheduleModalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setScheduleModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalBox, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-            <AppText variant="title" bold center>{t('schedule.title', 'Schedule Advance Reservation')}</AppText>
-            <AppText variant="caption" color="muted" center style={{ marginTop: 4 }}>
-              {`Min ${minLeadTimeMinutes} min lead time • Max ${maxAdvanceDays} days ahead • ${DEVICE_TIMEZONE}`}
-            </AppText>
+      {/* ── Reusable Interactive Location Picker Modal (Driver App UX) ── */}
+      {activePickerMode && (
+        <LocationPickerModal
+          visible={!!activePickerMode}
+          mode={activePickerMode}
+          title={activePickerMode === 'pickup' ? 'Pick Pickup Location' : activePickerMode === 'drop' ? 'Pick Drop Destination' : 'Pick Stop Location'}
+          initialLocation={
+            activePickerMode === 'pickup'
+              ? { latitude: pickupCoord.latitude, longitude: pickupCoord.longitude, address: pickupAddress }
+              : activePickerMode === 'drop'
+              ? { latitude: dropCoord.latitude, longitude: dropCoord.longitude, address: dropAddress }
+              : activeStopIndex !== null && stops[activeStopIndex]
+              ? { latitude: stops[activeStopIndex].lat, longitude: stops[activeStopIndex].lng, address: stops[activeStopIndex].address }
+              : undefined
+          }
+          savedAddresses={savedAddresses}
+          onClose={() => {
+            setActivePickerMode(null)
+            setActiveStopIndex(null)
+          }}
+          onConfirm={handleLocationConfirmed}
+          onAddressSaved={(newAddr) => {
+            setSavedAddresses((prev) => [...prev, newAddr])
+          }}
+        />
+      )}
 
-            {/* Quick Day Chips */}
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
-              <TouchableOpacity
-                style={[styles.dateQuickChip, { backgroundColor: `${theme.colors.primary}15`, borderColor: theme.colors.primary }]}
-                onPress={() => {
-                  const d = new Date()
-                  d.setMinutes(d.getMinutes() + minLeadTimeMinutes + 5) // +5 buffer
-                  setScheduledDate(d)
-                  setIosTempDate(d)
-                }}
-              >
-                <AppText variant="caption" bold color="brand">Today (+{minLeadTimeMinutes}m)</AppText>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.dateQuickChip, { backgroundColor: theme.colors.backgroundAlt, borderColor: theme.colors.border }]}
-                onPress={() => {
-                  const d = new Date()
-                  d.setDate(d.getDate() + 1)
-                  d.setHours(10, 30, 0, 0)
-                  setScheduledDate(d)
-                  setIosTempDate(d)
-                }}
-              >
-                <AppText variant="caption" bold>Tomorrow 10:30 AM</AppText>
-              </TouchableOpacity>
-            </View>
-
-            {/* Selected Time Preview */}
-            <View style={[styles.selectedTimePreview, { backgroundColor: `${theme.colors.primary}08`, borderColor: theme.colors.primary }]}>
-              <Ionicons name="calendar" size={18} color={theme.colors.primary} />
-              <AppText variant="body" bold color="brand" style={{ marginLeft: 8 }}>
-                {scheduledDate.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
-                {' at '}
-                {scheduledDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-              </AppText>
-            </View>
-
-            {/* Platform-specific picker */}
-            {Platform.OS === 'android' ? (
-              /* Android: Button triggers imperative native picker */
-              <TouchableOpacity
-                style={[styles.nativePickerBtn, { backgroundColor: theme.colors.primary }]}
-                onPress={() => {
-                  const minDate = new Date(Date.now() + minLeadTimeMinutes * 60 * 1000)
-                  const maxDate = new Date(Date.now() + maxAdvanceDays * 24 * 3600 * 1000)
-                  DateTimePickerAndroid.open({
-                    value: scheduledDate,
-                    mode: 'date',
-                    minimumDate: minDate,
-                    maximumDate: maxDate,
-                    onChange: (_event, selectedDate) => {
-                      if (selectedDate) {
-                        // After date selection, open time picker
-                        DateTimePickerAndroid.open({
-                          value: selectedDate,
-                          mode: 'time',
-                          is24Hour: false,
-                          onChange: (_evTime, selectedTime) => {
-                            if (selectedTime) {
-                              setScheduledDate(selectedTime)
-                            }
-                          },
-                        })
-                      }
-                    },
-                  })
-                }}
-              >
-                <Ionicons name="calendar-outline" size={18} color="#FFFFFF" />
-                <AppText variant="bodyS" bold style={{ color: '#FFFFFF', marginLeft: 8 }}>
-                  Pick Date & Time
-                </AppText>
-              </TouchableOpacity>
-            ) : (
-              /* iOS: Inline DateTimePicker spinner */
-              <DateTimePicker
-                value={iosTempDate}
-                mode="datetime"
-                display="spinner"
-                minimumDate={new Date(Date.now() + minLeadTimeMinutes * 60 * 1000)}
-                maximumDate={new Date(Date.now() + maxAdvanceDays * 24 * 3600 * 1000)}
-                onChange={(_event, selectedDate) => {
-                  if (selectedDate) {
-                    setIosTempDate(selectedDate)
-                    setScheduledDate(selectedDate)
-                  }
-                }}
-                textColor={theme.colors.textPrimary}
-                style={{ width: '100%', marginTop: 8 }}
-              />
-            )}
-
-            <View style={{ marginTop: 20, gap: 10 }}>
-              <AppButton
-                variant="primary"
-                onPress={() => {
-                  // Validate before closing
-                  const minDate = new Date(Date.now() + minLeadTimeMinutes * 60 * 1000)
-                  if (scheduledDate < minDate) {
-                    Alert.alert(
-                      'Invalid Time',
-                      `Please select a time at least ${minLeadTimeMinutes} minutes from now.`
-                    )
-                    return
-                  }
-                  setScheduleModalVisible(false)
-                }}
-              >
-                ✓ Confirm Pickup Time
-              </AppButton>
-              <AppButton variant="secondary" onPress={() => setScheduleModalVisible(false)}>
-                Cancel
-              </AppButton>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* ── Reservation Success Sheet Modal (Feature 4) ── */}
-      <Modal
-        visible={reservationSuccessModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setReservationSuccessModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalBox, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, alignItems: 'center' }]}>
-            <View style={[styles.successIconCircle, { backgroundColor: `${theme.colors.success}18` }]}>
-              <Ionicons name="checkmark-circle" size={48} color={theme.colors.success} />
-            </View>
-
-            <AppText variant="title" bold center style={{ marginTop: 12 }}>
-              {t('schedule.confirmed_title', 'Reservation Confirmed! 🎉')}
-            </AppText>
-            <AppText variant="bodyS" color="secondary" center style={{ marginTop: 6, paddingHorizontal: 10 }}>
-              {t('schedule.confirmed_desc', 'Your ride is reserved. A top-rated driver will be dispatched 45 mins before pickup.')}
-            </AppText>
-
-            <AppCard style={[styles.successSummaryCard, { backgroundColor: theme.colors.backgroundAlt, borderColor: theme.colors.border }]}>
-              <View style={styles.successSummaryRow}>
-                <AppText variant="caption" color="muted">DATE & TIME</AppText>
-                <AppText variant="bodyS" bold>
-                  {confirmedReservationData?.scheduled_at?.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}, {confirmedReservationData?.scheduled_at?.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-                </AppText>
-              </View>
-              <View style={styles.successSummaryRow}>
-                <AppText variant="caption" color="muted">VEHICLE</AppText>
-                <AppText variant="bodyS" bold>{confirmedReservationData?.category}</AppText>
-              </View>
-              <View style={styles.successSummaryRow}>
-                <AppText variant="caption" color="muted">ESTIMATED FARE</AppText>
-                <AppText variant="bodyS" bold color="brand">₹{confirmedReservationData?.fare}</AppText>
-              </View>
-            </AppCard>
-
-            <View style={{ width: '100%', marginTop: 20, gap: 10 }}>
-              <AppButton
-                variant="primary"
-                onPress={() => {
-                  setReservationSuccessModal(false)
-                  router.replace('/(tabs)/trips' as any)
-                }}
-              >
-                {t('schedule.view_reservations', 'View in Upcoming Trips →')}
-              </AppButton>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* ── Booking Participant Modal ── */}
-      <Modal
-        visible={participantModalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setParticipantModalVisible(false)}
-      >
+      {/* ── Participant Modal ── */}
+      <Modal visible={participantModalVisible} transparent animationType="slide" onRequestClose={() => setParticipantModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={[styles.modalBox, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
             <AppText variant="title" bold center>Select Rider</AppText>
@@ -1442,92 +1080,84 @@ export default function CabBookingScreen() {
             ))}
 
             <View style={{ marginTop: 16 }}>
-              <AppButton variant="secondary" onPress={() => setParticipantModalVisible(false)}>
-                Done
-              </AppButton>
+              <AppButton variant="secondary" onPress={() => setParticipantModalVisible(false)}>Done</AppButton>
             </View>
           </View>
         </View>
       </Modal>
 
-      {/* ── DROP-A-PIN MODAL ── */}
-      <Modal visible={dropPinModalVisible} animationType="slide" onRequestClose={() => setDropPinModalVisible(false)}>
-        <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
-          <SafeAreaView style={{ flex: 1 }}>
-            {/* Header */}
-            <View style={[styles.header, { borderBottomWidth: 1, borderBottomColor: theme.colors.border }]}>
-              <TouchableOpacity onPress={() => setDropPinModalVisible(false)} style={[styles.backBtn, { borderColor: theme.colors.border }]}>
-                <Feather name="x" size={18} color={theme.colors.textPrimary} />
+      {/* ── Schedule Time Picker Modal ── */}
+      <Modal visible={scheduleModalVisible} transparent animationType="slide" onRequestClose={() => setScheduleModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalBox, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+            <AppText variant="title" bold center>Schedule Pickup Time</AppText>
+            <AppText variant="caption" color="muted" center style={{ marginTop: 4 }}>
+              Advance reservations require at least {minLeadTimeMinutes} mins lead time.
+            </AppText>
+
+            <View style={[styles.selectedTimePreview, { backgroundColor: `${theme.colors.primary}08`, borderColor: theme.colors.primary }]}>
+              <Ionicons name="calendar" size={18} color={theme.colors.primary} />
+              <AppText variant="body" bold color="brand" style={{ marginLeft: 8 }}>
+                {scheduledDate.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })} at {scheduledDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+              </AppText>
+            </View>
+
+            {Platform.OS === 'android' ? (
+              <TouchableOpacity
+                style={[styles.nativePickerBtn, { backgroundColor: theme.colors.primary }]}
+                onPress={() => {
+                  const minDate = new Date(Date.now() + minLeadTimeMinutes * 60 * 1000)
+                  const maxDate = new Date(Date.now() + maxAdvanceDays * 24 * 3600 * 1000)
+                  DateTimePickerAndroid.open({
+                    value: scheduledDate,
+                    mode: 'date',
+                    minimumDate: minDate,
+                    maximumDate: maxDate,
+                    onChange: (_event, selectedDate) => {
+                      if (selectedDate) {
+                        DateTimePickerAndroid.open({
+                          value: selectedDate,
+                          mode: 'time',
+                          is24Hour: false,
+                          onChange: (_evTime, selectedTime) => {
+                            if (selectedTime) setScheduledDate(selectedTime)
+                          },
+                        })
+                      }
+                    },
+                  })
+                }}
+              >
+                <Ionicons name="calendar-outline" size={18} color="#FFFFFF" />
+                <AppText variant="bodyS" bold style={{ color: '#FFFFFF', marginLeft: 8 }}>Pick Date & Time</AppText>
               </TouchableOpacity>
-              <AppText variant="title" bold style={{ marginLeft: 14 }}>📌 Drop a Pin</AppText>
-            </View>
-
-            {/* Full-screen Map with Draggable Marker */}
-            <View style={{ flex: 1 }}>
-              <MapView
-                ref={dropMapRef}
-                style={{ flex: 1 }}
-                provider={PROVIDER_GOOGLE}
-                initialRegion={{
-                  latitude: pinCoord.latitude || 19.0760,
-                  longitude: pinCoord.longitude || 72.8777,
-                  latitudeDelta: 0.02,
-                  longitudeDelta: 0.02,
-                }}
-                onPress={(e) => {
-                  const { latitude, longitude } = e.nativeEvent.coordinate
-                  setPinCoord({ latitude, longitude })
-                }}
-              >
-                <Marker
-                  coordinate={pinCoord}
-                  draggable
-                  onDragEnd={(e) => {
-                    const { latitude, longitude } = e.nativeEvent.coordinate
-                    setPinCoord({ latitude, longitude })
-                  }}
-                  pinColor="#EF4444"
-                />
-              </MapView>
-
-              {/* Pin Info Overlay */}
-              <View style={{
-                position: 'absolute',
-                top: 16,
-                left: 16,
-                right: 16,
-                padding: 12,
-                borderRadius: 14,
-                backgroundColor: theme.colors.surface,
-                borderWidth: 1,
-                borderColor: theme.colors.border,
-              }}>
-                <AppText variant="caption" color="muted">PIN LOCATION</AppText>
-                <AppText variant="bodyS">{pinCoord.latitude.toFixed(6)}, {pinCoord.longitude.toFixed(6)}</AppText>
-                <AppText variant="caption" color="muted" style={{ marginTop: 4 }}>Tap map or drag pin to set drop location</AppText>
-              </View>
-            </View>
-
-            {/* Confirm Button */}
-            <View style={{ padding: 20, paddingBottom: 30 }}>
-              <AppButton
-                variant="primary"
-                onPress={async () => {
-                  try {
-                    setDropCoord(pinCoord)
-                    const geocoded = await reverseGeocodeCoordinate(pinCoord.latitude, pinCoord.longitude)
-                    if (geocoded) setDropAddress(geocoded)
-                    else setDropAddress(`${pinCoord.latitude.toFixed(4)}, ${pinCoord.longitude.toFixed(4)}`)
-                  } catch {
-                    setDropAddress(`${pinCoord.latitude.toFixed(4)}, ${pinCoord.longitude.toFixed(4)}`)
+            ) : (
+              <DateTimePicker
+                value={iosTempDate}
+                mode="datetime"
+                display="spinner"
+                minimumDate={new Date(Date.now() + minLeadTimeMinutes * 60 * 1000)}
+                maximumDate={new Date(Date.now() + maxAdvanceDays * 24 * 3600 * 1000)}
+                onChange={(_event, selectedDate) => {
+                  if (selectedDate) {
+                    setIosTempDate(selectedDate)
+                    setScheduledDate(selectedDate)
                   }
-                  setDropPinModalVisible(false)
                 }}
-              >
-                ✅ Confirm Drop Location
+                textColor={theme.colors.textPrimary}
+                style={{ width: '100%', marginTop: 8 }}
+              />
+            )}
+
+            <View style={{ marginTop: 20, gap: 10 }}>
+              <AppButton variant="primary" onPress={() => setScheduleModalVisible(false)}>
+                ✓ Confirm Pickup Time
+              </AppButton>
+              <AppButton variant="secondary" onPress={() => setScheduleModalVisible(false)}>
+                Cancel
               </AppButton>
             </View>
-          </SafeAreaView>
+          </View>
         </View>
       </Modal>
     </View>
@@ -1542,6 +1172,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 12,
+    borderBottomWidth: 1,
   },
   backBtn: {
     width: 38,
@@ -1549,6 +1180,15 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+  },
+  riderBadgeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
     borderWidth: 1,
   },
   scrollContent: {
@@ -1574,6 +1214,130 @@ const styles = StyleSheet.create({
     padding: 14,
     borderRadius: 16,
     borderWidth: 1.5,
+  },
+  modeSwitcher: {
+    flexDirection: 'row',
+    borderRadius: 14,
+    padding: 4,
+    borderWidth: 1,
+  },
+  modeBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  locationCard: {
+    padding: 16,
+    borderRadius: 20,
+  },
+  locRowContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  routeConnectorCol: {
+    width: 24,
+    alignItems: 'center',
+    marginRight: 6,
+    paddingTop: 18,
+  },
+  pickupGreenDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#10B981',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  connectorLine: {
+    width: 2,
+    height: 36,
+    backgroundColor: '#CBD5E1',
+    marginVertical: 4,
+  },
+  stopYellowDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#F59E0B',
+  },
+  dropRedPin: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#EF4444',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    shadowColor: '#EF4444',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  interactiveLocationBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1.5,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 4,
+  },
+  pinEditBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#10B98115',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+  },
+  quickAddrChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  locationActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 12,
+    marginLeft: 30,
+  },
+  actionChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  mapContainer: {
+    height: 160,
+    borderRadius: 18,
+    overflow: 'hidden',
+  },
+  map: { flex: 1 },
+  mapMetricsBadge: {
+    position: 'absolute',
+    bottom: 10,
+    right: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
   },
   pricingModeToggle: {
     flexDirection: 'row',
@@ -1604,85 +1368,23 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
   },
-  modeSwitcher: {
-    flexDirection: 'row',
-    borderRadius: 14,
-    padding: 4,
-    borderWidth: 1,
-  },
-  modeBtn: {
-    flex: 1,
-    paddingVertical: 8,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  locationCard: {
-    padding: 16,
-    gap: 12,
-  },
-  locationInputRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-  },
-  input: {
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 14,
-    marginTop: 4,
-  },
-  quickActionChips: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 4,
-  },
-  chip: {
+  sizingCounterPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     borderRadius: 12,
     borderWidth: 1,
   },
-  savedLocationChip: {
+  smartReasonBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 14,
-    borderWidth: 1.5,
-  },
-  gpsButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    marginTop: 4,
-  },
-  mapContainer: {
-    height: 180,
-    borderRadius: 18,
-    overflow: 'hidden',
-  },
-  map: { flex: 1 },
-  mapMetricsBadge: {
-    position: 'absolute',
-    bottom: 10,
-    right: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
     borderRadius: 12,
     borderWidth: 1,
+    marginBottom: 10,
   },
   categoryScroll: {
     gap: 12,
@@ -1692,7 +1394,6 @@ const styles = StyleSheet.create({
     width: 140,
     padding: 12,
     borderRadius: 16,
-    borderWidth: 1.5,
     alignItems: 'center',
   },
   categoryIconCircle: {
@@ -1704,15 +1405,7 @@ const styles = StyleSheet.create({
   },
   sectionCard: {
     padding: 16,
-  },
-  cardHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  switchParticipantBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 10,
+    borderRadius: 18,
   },
   notesInput: {
     borderWidth: 1,
@@ -1740,11 +1433,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  fareRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
   paymentMethodsRow: {
     flexDirection: 'row',
     gap: 8,
@@ -1769,46 +1457,6 @@ const styles = StyleSheet.create({
     padding: 20,
     borderWidth: 1,
   },
-  dateQuickChip: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  timeSlotChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-  },
-  successIconCircle: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  successSummaryCard: {
-    width: '100%',
-    padding: 14,
-    marginTop: 16,
-    borderRadius: 16,
-    gap: 8,
-  },
-  successSummaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  riderOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-    borderRadius: 14,
-    borderWidth: 1,
-    marginTop: 10,
-  },
-  // Feature 4: Native DateTimePicker schedule modal styles
   selectedTimePreview: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1825,38 +1473,12 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     marginTop: 16,
   },
-  // Feature 27 Smart Vehicle Sizing Styles
-  sizingCounterPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  smartReasonBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
-    borderWidth: 1,
-    marginBottom: 10,
-  },
-  corporateBanner: {
+  riderOption: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 12,
     borderRadius: 14,
-    borderWidth: 1.5,
-    marginBottom: 14,
+    borderWidth: 1,
+    marginTop: 10,
   },
-  corporateIconBox: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-})
+});
