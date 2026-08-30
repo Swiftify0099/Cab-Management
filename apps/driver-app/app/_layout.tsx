@@ -9,6 +9,7 @@
  *  5. PermissionGate — displayed as an overlay if permissions are pending
  *  6. GlobalIncomingRequestOverlay — safely renders incoming ride requests
  */
+import '../global.css'
 import React, { useEffect } from 'react'
 import { View, StyleSheet } from 'react-native'
 import { Stack } from 'expo-router'
