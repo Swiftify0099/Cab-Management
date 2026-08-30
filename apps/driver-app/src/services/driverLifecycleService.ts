@@ -24,8 +24,8 @@ class DriverLifecycleServiceClass {
     if (this.isInitialized) return
     this.isInitialized = true
 
-    // 1. Initial State Restoration
-    AvailabilityService.restorePersistedState().catch(() => {})
+    // State is already restored by AvailabilityService constructor (deferred)
+    // Calling restorePersistedState() here would race with the deferred init.
 
     // 2. Listen to App Lifecycle Transitions
     this.appStateSubscription = AppState.addEventListener('change', this.handleAppStateChange)

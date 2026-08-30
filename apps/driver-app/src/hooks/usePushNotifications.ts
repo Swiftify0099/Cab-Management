@@ -111,7 +111,7 @@ async function registerForPushNotificationsAsync(): Promise<string | undefined> 
         lightColor: '#10B981',
         enableVibrate: true,
         enableLights: true,
-        sound: 'drsiran.mp3',
+        sound: 'dr_siran.mp3',
         showBadge: true,
         lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
         bypassDnd: true,

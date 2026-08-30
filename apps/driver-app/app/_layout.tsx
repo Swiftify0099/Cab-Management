@@ -23,7 +23,15 @@ import { ThemeProvider } from '../src/theme'
 import '../src/services/driverBackgroundLocationService'
 import { DriverLifecycleService } from '../src/services/driverLifecycleService'
 import { useDriverSocket } from '../src/hooks/useDriverSocket'
-import IncomingRequestScreen from './incoming-request'
+// IncomingRequestScreen is lazy-loaded to prevent react-native-maps from
+// initializing at module scope (crashes Android 14 before JS bridge is ready).
+let _IncomingRequestScreen: any = null
+function getIncomingRequestScreen() {
+  if (!_IncomingRequestScreen) {
+    _IncomingRequestScreen = require('./incoming-request').default
+  }
+  return _IncomingRequestScreen
+}
 
 // Keep splash visible until initial render is ready
 SplashScreen.preventAutoHideAsync().catch(() => {})
@@ -33,6 +41,7 @@ function GlobalIncomingRequestOverlay() {
 
   if (!incomingRequest) return null
 
+  const IncomingRequestScreen = getIncomingRequestScreen()
   return (
     <IncomingRequestScreen
       request={incomingRequest}

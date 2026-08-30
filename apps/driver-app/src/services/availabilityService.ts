@@ -74,7 +74,13 @@ class AvailabilityServiceClass {
   private disconnectTimeout: ReturnType<typeof setTimeout> | null = null
 
   constructor() {
-    this.restorePersistedState()
+    // NOTE: restorePersistedState() is deferred to the next event-loop tick.
+    // Calling it synchronously in the constructor means it runs at module-scope
+    // initialization (before the React bridge + AsyncStorage are ready),
+    // which crashes Hermes on production APK with an unhandled promise rejection.
+    setTimeout(() => {
+      this.restorePersistedState().catch(() => {})
+    }, 0)
   }
 
   public async restorePersistedState() {

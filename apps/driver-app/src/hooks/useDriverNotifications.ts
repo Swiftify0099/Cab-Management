@@ -82,7 +82,7 @@ export async function ensureAndroidChannel() {
       lightColor: '#10B981',
       enableVibrate: true,
       enableLights: true,
-      sound: 'drsiran',
+      sound: 'dr_siran',
       showBadge: true,
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
       bypassDnd: true,
@@ -94,7 +94,7 @@ export async function ensureAndroidChannel() {
       lightColor: '#F59E0B',
       enableVibrate: true,
       enableLights: true,
-      sound: 'drsiran',
+      sound: 'dr_siran',
       showBadge: true,
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
       bypassDnd: true,
@@ -105,7 +105,7 @@ export async function ensureAndroidChannel() {
       vibrationPattern: [0, 500, 250, 500, 250, 500],
       lightColor: '#0EA5E9',
       enableVibrate: true,
-      sound: 'drsiran',
+      sound: 'dr_siran',
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
     })
     await Notifications.setNotificationChannelAsync('hotel-transfers', {
@@ -114,7 +114,7 @@ export async function ensureAndroidChannel() {
       vibrationPattern: [0, 500, 250, 500],
       lightColor: '#8B5CF6',
       enableVibrate: true,
-      sound: 'drsiran',
+      sound: 'dr_siran',
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
     })
     await Notifications.setNotificationChannelAsync('trips', {
@@ -156,7 +156,7 @@ export async function triggerActionableRideNotification(params: {
       content: {
         title: params.title || 'New Ride Request! 🚖',
         body: params.body || 'Tap to view details or choose Accept/Reject.',
-        sound: 'drsiran.mp3',
+        sound: 'dr_siran.mp3',
         priority: Notifications.AndroidNotificationPriority.MAX,
         categoryIdentifier: params.isParcel ? 'PARCEL_REQUEST' : 'INCOMING_RIDE',
         data: params.data || {},

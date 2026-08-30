@@ -156,7 +156,10 @@ class DriverSocketServiceClass {
       this.state.incomingRequest = queue[0] ?? null
       this.notify()
     })
-    this.init()
+    // NOTE: init() is NOT called here intentionally.
+    // init() is async and reads SecureStore — calling it at module-scope
+    // (before the JS bridge is fully ready) causes crashes on production APK.
+    // It is called explicitly by useDriverSocket() inside a useEffect instead.
   }
 
   public async resolveDriverId(): Promise<string> {

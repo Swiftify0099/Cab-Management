@@ -26,8 +26,8 @@ export const DRIVER_SIRENS: SirenOption[] = [
     name: 'Driver Siren Alert',
     subtitle: 'Dynamic loud driver siren (Recommended)',
     icon: 'volume-2',
-    file: require('../../assets/audio/drSiran.mp3'),
-    nativeSoundName: 'drsiran',
+    file: require('../../assets/audio/dr_siran.mp3'),
+    nativeSoundName: 'dr_siran',
   },
   {
     id: 'standard_siren',
@@ -89,7 +89,13 @@ class DriverSoundServiceImpl {
   private initialized: boolean = false
 
   constructor() {
-    this.init()
+    // NOTE: init() reads AsyncStorage and must be deferred.
+    // Calling it synchronously at module-scope causes a Hermes crash in
+    // production APK because AsyncStorage is not ready before the JS bridge
+    // finishes initialization.
+    setTimeout(() => {
+      this.init().catch(() => {})
+    }, 0)
   }
 
   public async init(): Promise<void> {

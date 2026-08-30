@@ -89,7 +89,7 @@ TaskManager.defineTask(DRIVER_BACKGROUND_LOCATION_TASK, async ({ data, error }: 
                 content: {
                   title: `🚖 New Ride Request: ₹${offer.trip?.fare || offer.fare || 0}!`,
                   body: `Pickup: ${offer.trip?.from || offer.pickup?.address || 'Pickup'} → Drop: ${offer.trip?.to || offer.destination?.address || 'Drop'}`,
-                  sound: 'drsiran.mp3',
+                  sound: 'dr_siran.mp3',
                   priority: Notifications.AndroidNotificationPriority.MAX,
                   categoryIdentifier: offer.service_type === 'parcel' ? 'PARCEL_REQUEST' : 'INCOMING_RIDE',
                   data: {
