@@ -56,12 +56,8 @@ class DriverLifecycleServiceClass {
       }
     } else if (nextAppState === 'background' || nextAppState === 'inactive') {
       // ── Moving to Background ──────────────────────────────────────────────
-      if (isOnline) {
-        const isRunning = await DriverBackgroundLocationService.isRunning()
-        if (!isRunning) {
-          await DriverBackgroundLocationService.startBackgroundTracking()
-        }
-      }
+      // Note: Android 14 prohibits starting foreground services from the background.
+      // The background service is already initiated when driver toggles "Go Online" in foreground.
     }
   }
 

@@ -96,10 +96,7 @@ class AvailabilityServiceClass {
         }
 
         if (isOnline) {
-          // Proactively start background service & socket heartbeat on restore
-          const { DriverBackgroundLocationService } = require('./driverBackgroundLocationService')
-          DriverBackgroundLocationService.startBackgroundTracking().catch(() => {})
-
+          // Sync socket and REST state on restore without starting foreground services blindly on boot
           const { DriverSocketService } = require('./driverSocketService')
           DriverSocketService.ensureConnected().catch(() => {})
 

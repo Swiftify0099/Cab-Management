@@ -98,8 +98,9 @@ export function useStartupPermissions(): {
     let bgStatus: PermissionStatus['backgroundLocation'] = 'unavailable'
     if (locationGranted) {
       try {
-        const bgRes = await Location.getBackgroundPermissionsAsync().catch(() => ({ status: 'denied' }))
-        bgStatus = bgRes.status === 'granted' ? 'granted' : 'denied'
+        // Silently check if background location is already granted (do NOT prompt concurrently)
+        const bgRes = await Location.getBackgroundPermissionsAsync().catch(() => ({ status: 'undetermined' }))
+        bgStatus = bgRes.status === 'granted' ? 'granted' : 'pending'
       } catch {
         bgStatus = 'unavailable'
       }

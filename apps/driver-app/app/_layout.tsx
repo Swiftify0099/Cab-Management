@@ -58,19 +58,21 @@ function AppContent() {
   useDriverNotifications()
 
   useEffect(() => {
+    console.log('[BOOT-01] AppContent mounted, initializing DriverLifecycleService')
     try {
       DriverLifecycleService.init()
     } catch (e) {
-      console.warn('[RootLayout] DriverLifecycleService.init error:', e)
+      console.warn('[BOOT-WARN] DriverLifecycleService.init error:', e)
     }
   }, [])
 
   useEffect(() => {
     // Hide splash screen once initial check completes
     if (!status.isChecking) {
+      console.log('[BOOT-02] Permission check completed, allCriticalGranted:', status.allCriticalGranted)
       SplashScreen.hideAsync().catch(() => {})
     }
-  }, [status.isChecking])
+  }, [status.isChecking, status.allCriticalGranted])
 
   const showPermissionGate = !status.isChecking && !status.allCriticalGranted
 

@@ -177,33 +177,39 @@ export function useDriverNotifications() {
   const responseListenerRef = useRef<any>(null)
 
   const requestPermissionsAndRegister = useCallback(async () => {
-    await ensureNotificationCategories()
-    await ensureAndroidChannel()
-
-    if (!Device.isDevice) {
-      console.warn('[DriverNotifications] Push notifications require a physical device.')
-      return
-    }
-
-    const { status: existingStatus } = await Notifications.getPermissionsAsync()
-    let finalStatus = existingStatus
-
-    if (existingStatus !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync()
-      finalStatus = status
-    }
-
-    if (finalStatus !== 'granted') {
-      console.warn('[DriverNotifications] Notification permission denied')
-      return
-    }
-
     try {
-      const devicePushToken = await Notifications.getDevicePushTokenAsync()
-      const token = devicePushToken.data as string
-      await registerTokenWithBackend(token)
-    } catch (e: any) {
-      console.warn('[DriverNotifications] FCM registration check:', e?.message || e)
+      await ensureNotificationCategories().catch(() => {})
+      await ensureAndroidChannel().catch(() => {})
+
+      if (!Device.isDevice) {
+        console.log('[DriverNotifications] Push notifications require a physical device.')
+        return
+      }
+
+      const existingStatus = await Notifications.getPermissionsAsync().catch(() => ({ status: 'undetermined' }))
+      let finalStatus = existingStatus.status
+
+      if (existingStatus.status !== 'granted') {
+        const req = await Notifications.requestPermissionsAsync().catch(() => ({ status: 'denied' }))
+        finalStatus = req.status
+      }
+
+      if (finalStatus !== 'granted') {
+        console.log('[DriverNotifications] Notification permission not granted')
+        return
+      }
+
+      try {
+        const devicePushToken = await Notifications.getDevicePushTokenAsync()
+        const token = devicePushToken.data as string
+        if (token) {
+          await registerTokenWithBackend(token)
+        }
+      } catch (e: any) {
+        console.warn('[DriverNotifications] FCM registration check:', e?.message || e)
+      }
+    } catch (err: any) {
+      console.warn('[DriverNotifications] Setup error (handled):', err?.message || err)
     }
   }, [])
 

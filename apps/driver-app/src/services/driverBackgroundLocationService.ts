@@ -121,27 +121,21 @@ class DriverBackgroundLocationServiceClass {
 
   public async startBackgroundTracking(): Promise<boolean> {
     try {
-      // 1. Check foreground location permission
+      // 1. Check foreground location permission (mandatory before starting)
       const { status: fgStatus } = await Location.getForegroundPermissionsAsync().catch(() => ({ status: 'denied' }))
       if (fgStatus !== 'granted') {
-        const { status: reqFg } = await Location.requestForegroundPermissionsAsync().catch(() => ({ status: 'denied' }))
-        if (reqFg !== 'granted') return false
+        console.warn('[DriverBackgroundService] Foreground location permission not granted, skipping background tracking')
+        return false
       }
 
-      // 2. Request background permission (Android: "Allow all the time")
-      const { status: bgStatus } = await Location.getBackgroundPermissionsAsync().catch(() => ({ status: 'denied' }))
-      if (bgStatus !== 'granted') {
-        await Location.requestBackgroundPermissionsAsync().catch(() => {})
-      }
-
-      // 3. Check if task is already running
+      // 2. Check if task is already running
       const hasStarted = await Location.hasStartedLocationUpdatesAsync(DRIVER_BACKGROUND_LOCATION_TASK).catch(() => false)
       if (hasStarted) {
         this.isTrackingStarted = true
         return true
       }
 
-      // 4. Build platform-specific options (distanceInterval: 0 ensures ticks even when vehicle is parked/stationary)
+      // 3. Build platform-specific options
       const locationOptions: Location.LocationTaskOptions = {
         accuracy: Location.Accuracy.Balanced,
         timeInterval: 5000,       // 5-second interval
@@ -155,14 +149,10 @@ class DriverBackgroundLocationServiceClass {
           notificationBody: 'Searching for nearby passenger and parcel rides...',
           notificationColor: '#10B981',
           killServiceOnDestroy: false,
-          // ── CRITICAL FIX: Required for Android 14+ (API 34+) ──────────────
-          // Without this, the OS kills the foreground service when the app
-          // is backgrounded because Android 14 enforces strict service types.
-          ...(Platform.OS === 'android' ? { notificationTitle: 'CabBooking Partner • You are Online' } : {}),
         },
       }
 
-      // Android 14+ requires foregroundServiceType on the task options
+      // Android 14+ requires foregroundServiceType on task options
       if (Platform.OS === 'android') {
         // @ts-ignore — foregroundServiceType is a valid Android-only option
         locationOptions.foregroundService!.foregroundServiceType = 'location'
@@ -171,11 +161,12 @@ class DriverBackgroundLocationServiceClass {
       await Location.startLocationUpdatesAsync(DRIVER_BACKGROUND_LOCATION_TASK, locationOptions)
 
       this.isTrackingStarted = true
-      await AsyncStorage.setItem('@driver_bg_tracking_active', 'true')
+      await AsyncStorage.setItem('@driver_bg_tracking_active', 'true').catch(() => {})
       console.log('[DriverBackgroundService] Background location updates started (Android foregroundServiceType: location)')
       return true
-    } catch (err) {
-      console.warn('[DriverBackgroundService] Failed to start background updates:', err)
+    } catch (err: any) {
+      console.warn('[DriverBackgroundService] Failed to start background updates (handled safely):', err?.message || err)
+      this.isTrackingStarted = false
       return false
     }
   }

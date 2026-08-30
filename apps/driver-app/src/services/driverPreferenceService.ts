@@ -43,7 +43,9 @@ class DriverPreferenceServiceClass {
   private cachedPreferences: DriverPreferencesData = { ...DEFAULT_PREFERENCES }
 
   constructor() {
-    this.loadFromCache()
+    setTimeout(() => {
+      this.loadFromCache().catch(() => {})
+    }, 0)
   }
 
   private async loadFromCache() {
