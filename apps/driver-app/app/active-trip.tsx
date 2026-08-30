@@ -95,6 +95,7 @@ export default function ActiveTripScreen() {
   }>()
 
   const { isDark: systemIsDark } = useTheme()
+  const mapRef = useRef<MapView | null>(null)
   const [activeRideId, setActiveRideId] = useState<string>(bookingId || '')
   const [loadingActiveTrip, setLoadingActiveTrip] = useState<boolean>(!bookingId)
 

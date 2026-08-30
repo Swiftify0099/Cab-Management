@@ -33,23 +33,13 @@ export class BatteryOptimizationService {
     if (Platform.OS !== 'android') return
 
     try {
-      // Direct intent to prompt system whitelist dialog
-      await Linking.sendIntent('android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS', [
-        { key: 'data', value: `package:${PACKAGE_NAME}` },
-      ])
+      await Linking.sendIntent('android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS').catch(async () => {
+        await Linking.openSettings().catch(() => {})
+      })
     } catch {
       try {
-        // Fallback to battery optimization list
-        await Linking.sendIntent('android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS')
-      } catch {
-        // Fallback to app details settings
-        await Linking.openSettings().catch(() => {
-          Alert.alert(
-            'Battery Settings',
-            'Please open Settings > Apps > CabBooking Driver > Battery > Select "Unrestricted".'
-          )
-        })
-      }
+        await Linking.openSettings().catch(() => {})
+      } catch {}
     }
   }
 

@@ -82,7 +82,7 @@ export async function ensureAndroidChannel() {
       lightColor: '#10B981',
       enableVibrate: true,
       enableLights: true,
-      sound: 'drsiran.mp3',
+      sound: 'drsiran',
       showBadge: true,
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
       bypassDnd: true,
@@ -94,7 +94,7 @@ export async function ensureAndroidChannel() {
       lightColor: '#F59E0B',
       enableVibrate: true,
       enableLights: true,
-      sound: 'drsiran.mp3',
+      sound: 'drsiran',
       showBadge: true,
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
       bypassDnd: true,
@@ -105,7 +105,7 @@ export async function ensureAndroidChannel() {
       vibrationPattern: [0, 500, 250, 500, 250, 500],
       lightColor: '#0EA5E9',
       enableVibrate: true,
-      sound: 'drsiran.mp3',
+      sound: 'drsiran',
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
     })
     await Notifications.setNotificationChannelAsync('hotel-transfers', {
@@ -114,7 +114,7 @@ export async function ensureAndroidChannel() {
       vibrationPattern: [0, 500, 250, 500],
       lightColor: '#8B5CF6',
       enableVibrate: true,
-      sound: 'drsiran.mp3',
+      sound: 'drsiran',
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
     })
     await Notifications.setNotificationChannelAsync('trips', {

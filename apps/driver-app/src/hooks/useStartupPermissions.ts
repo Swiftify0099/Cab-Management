@@ -1,20 +1,14 @@
 /**
  * useStartupPermissions Hook
  * ─────────────────────────────────────────────────────────────
- * Requests ALL required permissions on first app launch:
- *  1. Location (foreground + background)
+ * Requests required permissions on startup:
+ *  1. Location (foreground)
  *  2. Push Notifications
  *  3. Camera
  *  4. Media Library (Gallery)
  *  5. Contacts (for emergency contacts feature)
  *
- * Returns a status object so the UI can show a gate screen
- * until critical permissions (location) are granted.
- *
- * NOTE: expo-notifications is imported lazily (inside the function)
- * to avoid a module-init crash when the native module hasn't been
- * compiled yet — which would cause expo-router to receive undefined
- * for the layout module and throw "Cannot read property 'ErrorBoundary'".
+ * Robust error handling so no platform exception can crash the app.
  */
 import { useState, useEffect, useCallback } from 'react'
 import { Platform } from 'react-native'
@@ -77,13 +71,16 @@ export function useStartupPermissions(): {
         location: fg.status === 'granted' ? 'granted' : 'pending',
         isChecking: false,
       }))
-    } catch {
+    } catch (e) {
+      console.warn('[useStartupPermissions] checkExisting error:', e)
       setStatus(prev => ({ ...prev, isChecking: false }))
     }
   }, [])
 
   const skipGate = useCallback(async () => {
-    await AsyncStorage.setItem('permissions_gate_dismissed', 'true')
+    try {
+      await AsyncStorage.setItem('permissions_gate_dismissed', 'true')
+    } catch {}
     setStatus(prev => ({ ...prev, allCriticalGranted: true, isChecking: false }))
   }, [])
 
@@ -92,8 +89,8 @@ export function useStartupPermissions(): {
 
     let locationGranted = false
     try {
-      const { status: fgStatus } = await Location.requestForegroundPermissionsAsync()
-      locationGranted = fgStatus === 'granted'
+      const fgRes = await Location.requestForegroundPermissionsAsync().catch(() => ({ status: 'denied' }))
+      locationGranted = fgRes.status === 'granted'
     } catch {
       locationGranted = false
     }
@@ -101,14 +98,14 @@ export function useStartupPermissions(): {
     let bgStatus: PermissionStatus['backgroundLocation'] = 'unavailable'
     if (locationGranted) {
       try {
-        const { status: bg } = await Location.requestBackgroundPermissionsAsync()
-        bgStatus = bg === 'granted' ? 'granted' : 'denied'
+        const bgRes = await Location.getBackgroundPermissionsAsync().catch(() => ({ status: 'denied' }))
+        bgStatus = bgRes.status === 'granted' ? 'granted' : 'denied'
       } catch {
         bgStatus = 'unavailable'
       }
     }
 
-    let notifStatus: PermissionStatus['notifications'] = 'pending'
+    let notifStatus: PermissionStatus['notifications'] = 'granted'
     try {
       if (Platform.OS === 'android') {
         const { PermissionsAndroid, Platform: RNPlatform } = require('react-native')
@@ -122,7 +119,7 @@ export function useStartupPermissions(): {
               buttonNegative: 'Deny',
               buttonPositive: 'Allow',
             }
-          )
+          ).catch(() => PermissionsAndroid.RESULTS.DENIED)
           notifStatus = result === PermissionsAndroid.RESULTS.GRANTED ? 'granted' : 'denied'
         } else {
           notifStatus = 'granted'
@@ -136,15 +133,19 @@ export function useStartupPermissions(): {
 
     let cameraGranted = false
     try {
-      const { status: camStatus } = await ImagePicker.requestCameraPermissionsAsync()
-      cameraGranted = camStatus === 'granted'
-    } catch {}
+      const camRes = await ImagePicker.requestCameraPermissionsAsync().catch(() => ({ status: 'denied' }))
+      cameraGranted = camRes.status === 'granted'
+    } catch {
+      cameraGranted = false
+    }
 
     let mediaGranted = false
     try {
-      const { status: mediaStatus } = await ImagePicker.requestMediaLibraryPermissionsAsync()
-      mediaGranted = mediaStatus === 'granted'
-    } catch {}
+      const mediaRes = await ImagePicker.requestMediaLibraryPermissionsAsync().catch(() => ({ status: 'denied' }))
+      mediaGranted = mediaRes.status === 'granted'
+    } catch {
+      mediaGranted = false
+    }
 
     let contactsGranted = false
     if (Platform.OS === 'android') {
@@ -159,7 +160,7 @@ export function useStartupPermissions(): {
             buttonNegative: 'Deny',
             buttonPositive: 'Allow',
           }
-        )
+        ).catch(() => PermissionsAndroid.RESULTS.DENIED)
         contactsGranted = result === PermissionsAndroid.RESULTS.GRANTED
       } catch {
         contactsGranted = false
@@ -168,15 +169,9 @@ export function useStartupPermissions(): {
       contactsGranted = true
     }
 
-    // Request Battery Optimization Unrestricted mode on Android
-    if (Platform.OS === 'android') {
-      try {
-        const { BatteryOptimizationService } = require('../services/batteryOptimizationService')
-        await BatteryOptimizationService.requestIgnoreBatteryOptimization()
-      } catch {}
-    }
-
-    await AsyncStorage.setItem('permissions_gate_dismissed', 'true')
+    try {
+      await AsyncStorage.setItem('permissions_gate_dismissed', 'true')
+    } catch {}
 
     setStatus({
       location: locationGranted ? 'granted' : 'denied',

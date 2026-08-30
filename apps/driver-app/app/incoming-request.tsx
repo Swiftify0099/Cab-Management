@@ -20,11 +20,11 @@ import { DriverSocketService } from '../src/services/driverSocketService'
 import { RideQueueService } from '../src/services/rideQueueService'
 
 interface Props {
-  request: any
-  onDismiss: () => void
+  request?: any
+  onDismiss?: () => void
 }
 
-export default function IncomingRequestScreen({ request, onDismiss }: Props) {
+export default function IncomingRequestScreen({ request = {}, onDismiss = () => {} }: Props) {
   const { isDark } = useTheme()
   const timeoutLimit = request?.timeout_sec || 180
   const [timeLeft, setTimeLeft] = useState(timeoutLimit)

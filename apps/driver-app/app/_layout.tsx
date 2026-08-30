@@ -3,14 +3,16 @@
  * ─────────────────────────────────────────────────────────────
  * Wraps all screens with:
  *  1. ErrorBoundary — catches any render crash
- *  2. SplashScreen — held open until permissions are resolved
- *  3. PermissionGate — requests startup permissions before
- *     allowing navigation into the app
- *  4. useDriverNotifications — registered AFTER permissions are
- *     granted so it never fires before the native modules are ready
+ *  2. SafeAreaProvider — ensures safe area context is always present
+ *  3. ThemeProvider — manages dark/light theme
+ *  4. Stack Navigator — ALWAYS mounted so Expo Router never has missing context
+ *  5. PermissionGate — displayed as an overlay if permissions are pending
+ *  6. GlobalIncomingRequestOverlay — safely renders incoming ride requests
  */
-import { useEffect } from 'react'
+import React, { useEffect } from 'react'
+import { View, StyleSheet } from 'react-native'
 import { Stack } from 'expo-router'
+import { SafeAreaProvider } from 'react-native-safe-area-context'
 import * as SplashScreen from 'expo-splash-screen'
 import { ErrorBoundary } from '../src/components/ErrorBoundary'
 import { PermissionGate } from '../src/components/PermissionGate'
@@ -20,14 +22,11 @@ import { ThemeProvider } from '../src/theme'
 // Ensure Background Location Task is defined at module parse time
 import '../src/services/driverBackgroundLocationService'
 import { DriverLifecycleService } from '../src/services/driverLifecycleService'
-
-// Keep the splash screen visible while permissions are being checked.
-// This prevents the flash of unstyled content between splash and PermissionGate.
-SplashScreen.preventAutoHideAsync()
-
-// ── Inner component: runs after permissions are confirmed ──────────────────────
 import { useDriverSocket } from '../src/hooks/useDriverSocket'
 import IncomingRequestScreen from './incoming-request'
+
+// Keep splash visible until initial render is ready
+SplashScreen.preventAutoHideAsync().catch(() => {})
 
 function GlobalIncomingRequestOverlay() {
   const { incomingRequest, clearRequest } = useDriverSocket()
@@ -42,52 +41,67 @@ function GlobalIncomingRequestOverlay() {
   )
 }
 
-function AppReady() {
-  // Register for push notifications ONLY after app is fully initialised
-  useDriverNotifications()
-
-  // Initialize lifecycle & connection watchdog
-  useEffect(() => {
-    DriverLifecycleService.init()
-  }, [])
-
-  // Hide splash now that we have the correct screen to show
-  useEffect(() => {
-    SplashScreen.hideAsync()
-  }, [])
-
-  return (
-    <>
-      <Stack screenOptions={{ headerShown: false }} />
-      <GlobalIncomingRequestOverlay />
-    </>
-  )
-}
-
-// ── Outer component: handles permission gate ───────────────────────────────────
-function AppWithPermissions() {
+function AppContent() {
   const { status, requestAll, skipGate } = useStartupPermissions()
 
-  if (status.isChecking || !status.allCriticalGranted) {
-    return (
-      <PermissionGate
-        status={status}
-        onRequestAll={requestAll}
-        onSkip={skipGate}
-        isChecking={status.isChecking}
-      />
-    )
-  }
+  // Initialize notifications and lifecycle safely
+  useDriverNotifications()
 
-  return <AppReady />
+  useEffect(() => {
+    try {
+      DriverLifecycleService.init()
+    } catch (e) {
+      console.warn('[RootLayout] DriverLifecycleService.init error:', e)
+    }
+  }, [])
+
+  useEffect(() => {
+    // Hide splash screen once initial check completes
+    if (!status.isChecking) {
+      SplashScreen.hideAsync().catch(() => {})
+    }
+  }, [status.isChecking])
+
+  const showPermissionGate = !status.isChecking && !status.allCriticalGranted
+
+  return (
+    <View style={styles.root}>
+      {/* 1. Main Navigation Stack — ALWAYS MOUNTED */}
+      <Stack screenOptions={{ headerShown: false }} />
+
+      {/* 2. Global Incoming Ride Request Overlay */}
+      <GlobalIncomingRequestOverlay />
+
+      {/* 3. Permission Gate Overlay — cleanly sits on top until granted */}
+      {showPermissionGate && (
+        <View style={StyleSheet.absoluteFill}>
+          <PermissionGate
+            status={status}
+            onRequestAll={requestAll}
+            onSkip={skipGate}
+            isChecking={status.isChecking}
+          />
+        </View>
+      )}
+    </View>
+  )
 }
 
 export default function RootLayout() {
   return (
-    <ThemeProvider>
-      <ErrorBoundary>
-        <AppWithPermissions />
-      </ErrorBoundary>
-    </ThemeProvider>
+    <SafeAreaProvider>
+      <ThemeProvider>
+        <ErrorBoundary>
+          <AppContent />
+        </ErrorBoundary>
+      </ThemeProvider>
+    </SafeAreaProvider>
   )
 }
+
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: '#0F172A',
+  },
+})
