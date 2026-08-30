@@ -56,6 +56,31 @@ function patchCMakeFile(filePath) {
       modified = true;
     }
 
+    // 3. Remove -flto=thin (causes Clang crash on Windows NDK 27 during Release builds)
+    if (content.includes('-flto=thin')) {
+      content = content.replace(/-flto=thin/g, '');
+      modified = true;
+    }
+
+    // 4. Reduce debug symbols in release builds to prevent Clang out-of-memory
+    if (content.includes('-DNDEBUG') && !content.includes('-g0')) {
+      content = content.replace(/-DNDEBUG/g, '-DNDEBUG -g0');
+      modified = true;
+    }
+
+    // 5. Limit Ninja job concurrency to prevent Clang OOM on Windows
+    if (!content.includes('JOB_POOLS')) {
+      if (content.includes('cmake_minimum_required')) {
+        content = content.replace(
+          /cmake_minimum_required\s*\([^)]+\)/,
+          '$&\nset_property(GLOBAL PROPERTY JOB_POOLS compile=1 link=1)\nset(CMAKE_JOB_POOL_COMPILE compile)\nset(CMAKE_JOB_POOL_LINK link)'
+        );
+      } else {
+        content = 'set_property(GLOBAL PROPERTY JOB_POOLS compile=1 link=1)\nset(CMAKE_JOB_POOL_COMPILE compile)\nset(CMAKE_JOB_POOL_LINK link)\n' + content;
+      }
+      modified = true;
+    }
+
     if (modified) {
       fs.writeFileSync(filePath, content, 'utf8');
       console.log(`[fix-cmake] Patched: ${path.relative(rootDir, filePath)}`);
@@ -90,4 +115,3 @@ if (fs.existsSync(nodeModulesDir)) {
 }
 
 console.log('[fix-cmake] CMake and Ninja patching completed successfully.');
-
