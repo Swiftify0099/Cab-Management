@@ -46,11 +46,16 @@ export const normalizeDocType = (docType: string): string => {
     selfie: 'selfie',
     vehicle_photo: 'vehicle_photo',
     bank_account: 'bank_account',
+    hotel_trade_license: 'license',
+    hotel_property_deed: 'rc_book',
+    hotel_fssai_cert: 'insurance',
+    hotel_gst_pan: 'pan',
+    hotel_photos: 'vehicle_photo',
   }
   return map[docType] || docType
 }
 
-// Request interceptor — attach real JWT Bearer token and handle FormData boundary
+// Request interceptor — attach real JWT Bearer token and safely handle FormData
 api.interceptors.request.use(async (config) => {
   try {
     const token = await SecureStore.getItemAsync('access_token')
@@ -58,13 +63,8 @@ api.interceptors.request.use(async (config) => {
       config.headers.Authorization = `Bearer ${token}`
     }
     if (config.data instanceof FormData) {
-      if (config.headers && typeof (config.headers as any).delete === 'function') {
-        ;(config.headers as any).delete('Content-Type')
-        ;(config.headers as any).delete('content-type')
-      } else if (config.headers) {
-        delete config.headers['Content-Type']
-        delete config.headers['content-type']
-      }
+      // In React Native / Expo, setting Content-Type to multipart/form-data lets the networking layer add the correct boundary
+      config.headers['Content-Type'] = 'multipart/form-data'
       config.transformRequest = [(data) => data]
     }
   } catch (err) {

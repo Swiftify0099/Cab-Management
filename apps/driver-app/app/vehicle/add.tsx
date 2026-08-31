@@ -1,1056 +1,842 @@
 /**
- * Add Vehicle Screen — 6-Step Dynamic Onboarding Wizard
- * Step 1: Vehicle Type
- * Step 2: Basic Info (Make, Model, Variant, Color, Fuel, AC)
- * Step 3: Registration & Ownership (Reg No, Owner, Classification)
- * Step 4: Documents (RC, Insurance, Permit, PUC, Photos)
- * Step 5: Inspection Hub Booking (if applicable)
- * Step 6: Review & Submit
+ * Add Vehicle Screen — Unified Vehicle Registration
+ * Features:
+ * - Searchable Indian Vehicle Catalog (Brand -> Model -> Type & Capacity Auto-fill)
+ * - Selectable Year & Color Palette
+ * - Official IND Registration Number Plate Input
+ * - Direct sync with Backend, Fleet Switcher & Home Operations
  */
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import {
   View,
   Text,
-  ScrollView,
   TextInput,
   TouchableOpacity,
-  StyleSheet,
-  StatusBar,
-  Alert,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
   ActivityIndicator,
-  Switch,
+  Alert,
+  StyleSheet,
+  Modal,
+  FlatList,
+  StatusBar,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { router } from 'expo-router'
-import * as ImagePicker from 'expo-image-picker'
+import AsyncStorage from '@react-native-async-storage/async-storage'
+import { api } from '../../src/api/client'
 import { useTheme } from '../../src/theme'
+import { VehicleService } from '../../src/services/vehicleService'
 import {
-  VehicleType,
-  OwnershipType,
-  VEHICLE_REQUIREMENT_CONFIG,
-  VehicleService,
-} from '../../src/services/vehicleService'
-import { VehicleTypeSelector } from '../../src/components/vehicle/VehicleTypeSelector'
-import { VehicleStepper } from '../../src/components/vehicle/VehicleStepper'
-
-const COLOR_OPTIONS = [
-  'Pearl White',
-  'Silver Metallic',
-  'Midnight Black',
-  'Magma Grey',
-  'Ocean Blue',
-  'Ruby Red',
-  'Golden Bronze',
-  'Yellow',
-]
-
-const FUEL_OPTIONS: ('petrol' | 'diesel' | 'cng' | 'electric' | 'hybrid')[] = [
-  'petrol',
-  'diesel',
-  'cng',
-  'electric',
-  'hybrid',
-]
-
-const OWNERSHIP_OPTIONS: { value: OwnershipType; label: string }[] = [
-  { value: 'self', label: 'Self-Owned' },
-  { value: 'leased', label: 'Leased Vehicle' },
-  { value: 'company', label: 'Company / Commercial Partner' },
-  { value: 'fleet_partner', label: 'Fleet Partner' },
-]
+  VEHICLE_BRANDS_CATALOG,
+  POPULAR_VEHICLE_COLORS,
+  VEHICLE_YEARS,
+  VehicleBrandInfo,
+  VehicleModelInfo,
+} from '../../src/constants/vehicleCatalog'
 
 export default function AddVehicleScreen() {
   const { theme, isDark } = useTheme()
-  const [step, setStep] = useState(1) // 1 to 6
-  const [submitting, setSubmitting] = useState(false)
 
-  // Form State
-  const [vehicleType, setVehicleType] = useState<VehicleType>('sedan')
-  const [make, setMake] = useState('Maruti Suzuki')
-  const [model, setModel] = useState('Dzire')
-  const [variant, setVariant] = useState('VXI')
-  const [year, setYear] = useState('2023')
-  const [color, setColor] = useState('Pearl White')
-  const [fuelType, setFuelType] = useState<'petrol' | 'diesel' | 'cng' | 'electric' | 'hybrid'>('petrol')
-  const [hasAc, setHasAc] = useState(true)
-  const [parcelCapable, setParcelCapable] = useState(true)
-  const [parcelKg, setParcelKg] = useState('50')
+  const [form, setForm] = useState({
+    make: 'Maruti Suzuki',
+    model: 'Dzire',
+    year: '2023',
+    registration_number: '',
+    vehicle_type: 'sedan',
+    seat_capacity: 4,
+    color: 'Pearl White',
+    fuel_type: 'CNG',
+    display_type: 'Sedan',
+  })
 
-  // Registration
-  const [regNumber, setRegNumber] = useState('')
-  const [ownerName, setOwnerName] = useState('Rahul Ramesh Sharma')
-  const [ownershipType, setOwnershipType] = useState<OwnershipType>('self')
-  const [regDate, setRegDate] = useState('2023-05-10')
+  const [loading, setLoading] = useState(false)
+  const [errors, setErrors] = useState<Record<string, string>>({})
 
-  // Uploaded docs mock cache
-  const [uploadedDocs, setUploadedDocs] = useState<Record<string, string>>({})
-  const [uploadingType, setUploadingType] = useState<string | null>(null)
+  // Modal States for Searchable Pickers
+  const [showBrandModal, setShowBrandModal] = useState(false)
+  const [showModelModal, setShowModelModal] = useState(false)
+  const [showColorModal, setShowColorModal] = useState(false)
+  const [showYearModal, setShowYearModal] = useState(false)
 
-  // Inspection
-  const [selectedHub, setSelectedHub] = useState('Hadapsar Inspection Hub, Pune')
-  const [selectedSlot, setSelectedSlot] = useState('Feb 25, 2026 • 11:30 AM')
+  // Search queries inside Modals
+  const [brandSearch, setBrandSearch] = useState('')
+  const [modelSearch, setModelSearch] = useState('')
+  const [customColor, setCustomColor] = useState('')
 
-  // Review
-  const [declarationAgreed, setDeclarationAgreed] = useState(true)
-
-  const reqConfig = VEHICLE_REQUIREMENT_CONFIG[vehicleType]
-
-  // Image Picker for documents
-  const pickDocImage = async (docType: string) => {
-    try {
-      const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: true,
-        quality: 0.8,
-      })
-      if (!res.canceled && res.assets[0]?.uri) {
-        setUploadedDocs(prev => ({ ...prev, [docType]: res.assets[0].uri }))
-      }
-    } catch (e) {
-      console.warn('Image picker error:', e)
-    }
+  const update = (key: string, value: any) => {
+    setForm(p => ({ ...p, [key]: value }))
+    setErrors(p => ({ ...p, [key]: '' }))
   }
 
-  const handleNext = () => {
-    if (step === 1) {
-      setStep(2)
-    } else if (step === 2) {
-      if (!make.trim() || !model.trim()) {
-        Alert.alert('Required Fields', 'Please enter vehicle Make and Model.')
-        return
-      }
-      setStep(3)
-    } else if (step === 3) {
-      const cleanReg = regNumber.replace(/\s+/g, '').toUpperCase()
-      if (cleanReg.length < 5) {
-        Alert.alert('Invalid Registration', 'Please enter a valid registration number (e.g. MH 12 AB 1234).')
-        return
-      }
-      if (!ownerName.trim()) {
-        Alert.alert('Required Field', 'Please enter the registered owner name as per RC.')
-        return
-      }
-      setStep(4)
-    } else if (step === 4) {
-      setStep(5)
-    } else if (step === 5) {
-      setStep(6)
-    }
+  // Handle Brand Selection
+  const handleSelectBrand = (brand: VehicleBrandInfo) => {
+    const firstModel = brand.models[0]
+    setForm(p => ({
+      ...p,
+      make: brand.brand,
+      model: firstModel ? firstModel.model : '',
+      vehicle_type: firstModel ? firstModel.vehicle_type : p.vehicle_type,
+      seat_capacity: firstModel ? firstModel.seat_capacity : p.seat_capacity,
+      display_type: firstModel ? firstModel.display_type : 'Car',
+      fuel_type: firstModel?.fuel_types[0] || 'Petrol',
+    }))
+    setBrandSearch('')
+    setShowBrandModal(false)
   }
 
-  const handleFinalSubmit = async () => {
-    if (!declarationAgreed) {
-      Alert.alert('Declaration Required', 'Please confirm the vehicle ownership declaration to proceed.')
-      return
+  // Handle Model Selection
+  const handleSelectModel = (modelInfo: VehicleModelInfo) => {
+    setForm(p => ({
+      ...p,
+      model: modelInfo.model,
+      vehicle_type: modelInfo.vehicle_type,
+      seat_capacity: modelInfo.seat_capacity,
+      display_type: modelInfo.display_type,
+      fuel_type: modelInfo.fuel_types[0] || 'Petrol',
+    }))
+    setModelSearch('')
+    setShowModelModal(false)
+  }
+
+  // Selected Brand object
+  const currentBrand = useMemo(() => {
+    return (
+      VEHICLE_BRANDS_CATALOG.find(
+        b => b.brand.toLowerCase() === form.make.toLowerCase()
+      ) || VEHICLE_BRANDS_CATALOG[0]
+    )
+  }, [form.make])
+
+  // Filtered Brands for Modal
+  const filteredBrands = useMemo(() => {
+    if (!brandSearch.trim()) return VEHICLE_BRANDS_CATALOG
+    const q = brandSearch.toLowerCase()
+    return VEHICLE_BRANDS_CATALOG.filter(
+      b =>
+        b.brand.toLowerCase().includes(q) ||
+        b.models.some(m => m.model.toLowerCase().includes(q))
+    )
+  }, [brandSearch])
+
+  // Filtered Models for Modal
+  const filteredModels = useMemo(() => {
+    const list = currentBrand ? currentBrand.models : []
+    if (!modelSearch.trim()) return list
+    const q = modelSearch.toLowerCase()
+    return list.filter(
+      m =>
+        m.model.toLowerCase().includes(q) ||
+        m.display_type.toLowerCase().includes(q)
+    )
+  }, [currentBrand, modelSearch])
+
+  const validate = () => {
+    const e: Record<string, string> = {}
+    if (!form.make.trim()) e.make = 'Brand is required'
+    if (!form.model.trim()) e.model = 'Model is required'
+    if (!form.year.trim() || isNaN(Number(form.year)) || form.year.length !== 4) {
+      e.year = 'Valid year is required'
     }
+    if (
+      !form.registration_number.trim() ||
+      form.registration_number.trim().length < 6
+    ) {
+      e.registration_number = 'Enter valid registration number (e.g. MH 12 AB 1234)'
+    }
+    if (!form.color.trim()) e.color = 'Color is required'
+    setErrors(e)
+    return Object.keys(e).length === 0
+  }
 
+  const handleSaveVehicle = async () => {
+    if (!validate()) return
+    setLoading(true)
     try {
-      setSubmitting(true)
-      const created = await VehicleService.createVehicle({
-        vehicle_type: vehicleType,
-        make: make.trim(),
-        model: model.trim(),
-        variant: variant.trim() || undefined,
-        year: parseInt(year, 10) || 2023,
-        color,
-        registration_number: regNumber.toUpperCase().trim(),
-        seat_capacity: reqConfig.seats,
-        fuel_type: fuelType,
-        ownership_type: ownershipType,
-        registered_owner_name: ownerName.trim(),
-        registration_date: regDate,
-        has_ac: hasAc,
-        parcel_capable: parcelCapable,
-        parcel_capacity_kg: parcelCapable ? parseFloat(parcelKg) || 50 : undefined,
-      })
-
-      // Upload mock docs if captured
-      for (const [dt, uri] of Object.entries(uploadedDocs)) {
-        await VehicleService.uploadVehicleDocument(created.id, dt, {
-          file_url: uri,
-          document_number: dt === 'rc_book' ? regNumber.toUpperCase() : undefined,
-          expires_at: '2027-02-28',
-        })
+      const payload = {
+        ...form,
+        year: Number(form.year),
+        seat_capacity: Number(form.seat_capacity),
+        status: 'ACTIVE',
+        is_active: true,
       }
 
-      // Schedule inspection if applicable
-      if (reqConfig.requires_inspection) {
-        await VehicleService.scheduleInspection(created.id, {
-          scheduled_at: new Date(Date.now() + 86400000 * 3).toISOString(),
-          hub_location: selectedHub,
-          hub_address: 'Survey No. 42, Magarpatta Road, Hadapsar, Pune - 411028',
-        })
+      // 1. Post to backend
+      try {
+        await VehicleService.createVehicle(payload as any)
+      } catch {
+        await api.post('/driver/vehicles', payload).catch(() => api.post('/driver/me/vehicle', payload))
       }
+
+      // 2. Cache in local storage for instant trip creation & active vehicle switcher
+      await AsyncStorage.setItem('driver_active_vehicle', JSON.stringify(payload))
+      await AsyncStorage.setItem('driver_vehicle_details', JSON.stringify(payload))
 
       Alert.alert(
-        'Vehicle Submitted!',
-        `${make} ${model} (${regNumber.toUpperCase()}) has been registered and submitted for verification.`,
+        'Vehicle Registered!',
+        `${form.make} ${form.model} (${form.registration_number}) has been added to your fleet and set as active.`,
         [
           {
-            text: 'View My Vehicles',
+            text: 'Go to My Vehicles',
             onPress: () => router.replace('/vehicle'),
           },
         ]
       )
-    } catch (err: any) {
-      Alert.alert('Registration Error', err.message || 'Failed to submit vehicle.')
+    } catch (e: any) {
+      const msg = e?.response?.data?.detail || e?.message || 'Failed to save vehicle details.'
+      Alert.alert('Error', msg)
     } finally {
-      setSubmitting(false)
+      setLoading(false)
     }
   }
 
   return (
-    <View style={[styles.root, { backgroundColor: theme.colors.background }]}>
-      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+    <View style={[styles.root, { backgroundColor: isDark ? '#080C17' : '#F8FAFC' }]}>
+      <StatusBar barStyle="light-content" backgroundColor="#080C17" />
       <SafeAreaView style={styles.safeArea}>
         {/* Header */}
-        <View
-          style={[
-            styles.header,
-            {
-              backgroundColor: isDark ? '#111827' : '#FFFFFF',
-              borderBottomColor: isDark ? '#1F2937' : '#E2E8F0',
-            },
-          ]}
-        >
-          <TouchableOpacity
-            style={styles.headerBtn}
-            onPress={() => {
-              if (step > 1) setStep(step - 1)
-              else router.back()
-            }}
-          >
-            <Feather name="arrow-left" size={24} color={theme.colors.text} />
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+            <Feather name="chevron-left" size={24} color="#FFFFFF" />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: theme.colors.text }]}>Add New Vehicle</Text>
-          <View style={{ width: 40 }} />
+          <Text style={styles.headerTitle}>Add New Vehicle</Text>
+          <View style={{ width: 36 }} />
         </View>
 
-        {/* Stepper Progress */}
-        <VehicleStepper currentStep={step} totalSteps={6} />
-
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-          {/* STEP 1: VEHICLE TYPE */}
-          {step === 1 && (
-            <View>
-              <Text style={[styles.stepTitle, { color: theme.colors.text }]}>
-                Select Vehicle Category
-              </Text>
-              <Text style={[styles.stepSubtitle, { color: theme.colors.textSecondary }]}>
-                Choose the category that matches your vehicle's commercial registration.
-              </Text>
-              <VehicleTypeSelector selectedType={vehicleType} onSelect={setVehicleType} />
-            </View>
-          )}
-
-          {/* STEP 2: BASIC DETAILS */}
-          {step === 2 && (
-            <View>
-              <Text style={[styles.stepTitle, { color: theme.colors.text }]}>
-                Vehicle Specifications
-              </Text>
-              <Text style={[styles.stepSubtitle, { color: theme.colors.textSecondary }]}>
-                Enter your vehicle make, model, color, and fuel details.
-              </Text>
-
-              {/* Make & Model */}
-              <View style={styles.formGroup}>
-                <Text style={[styles.inputLabel, { color: theme.colors.text }]}>Vehicle Make *</Text>
-                <TextInput
-                  style={[
-                    styles.inputField,
-                    {
-                      backgroundColor: isDark ? '#1E293B' : '#FFFFFF',
-                      borderColor: isDark ? '#334155' : '#CBD5E1',
-                      color: theme.colors.text,
-                    },
-                  ]}
-                  placeholder="e.g. Maruti Suzuki, Toyota, Honda"
-                  placeholderTextColor="#94A3B8"
-                  value={make}
-                  onChangeText={setMake}
-                />
-              </View>
-
-              <View style={styles.formGroup}>
-                <Text style={[styles.inputLabel, { color: theme.colors.text }]}>Vehicle Model *</Text>
-                <TextInput
-                  style={[
-                    styles.inputField,
-                    {
-                      backgroundColor: isDark ? '#1E293B' : '#FFFFFF',
-                      borderColor: isDark ? '#334155' : '#CBD5E1',
-                      color: theme.colors.text,
-                    },
-                  ]}
-                  placeholder="e.g. Dzire, Innova, Swift, City"
-                  placeholderTextColor="#94A3B8"
-                  value={model}
-                  onChangeText={setModel}
-                />
-              </View>
-
-              <View style={styles.rowInputs}>
-                <View style={[styles.formGroup, { flex: 1, marginRight: 8 }]}>
-                  <Text style={[styles.inputLabel, { color: theme.colors.text }]}>Variant (Optional)</Text>
-                  <TextInput
-                    style={[
-                      styles.inputField,
-                      {
-                        backgroundColor: isDark ? '#1E293B' : '#FFFFFF',
-                        borderColor: isDark ? '#334155' : '#CBD5E1',
-                        color: theme.colors.text,
-                      },
-                    ]}
-                    placeholder="e.g. VXI, ZDI"
-                    placeholderTextColor="#94A3B8"
-                    value={variant}
-                    onChangeText={setVariant}
-                  />
-                </View>
-                <View style={[styles.formGroup, { flex: 1, marginLeft: 8 }]}>
-                  <Text style={[styles.inputLabel, { color: theme.colors.text }]}>Mfg Year *</Text>
-                  <TextInput
-                    style={[
-                      styles.inputField,
-                      {
-                        backgroundColor: isDark ? '#1E293B' : '#FFFFFF',
-                        borderColor: isDark ? '#334155' : '#CBD5E1',
-                        color: theme.colors.text,
-                      },
-                    ]}
-                    placeholder="2023"
-                    placeholderTextColor="#94A3B8"
-                    keyboardType="numeric"
-                    maxLength={4}
-                    value={year}
-                    onChangeText={setYear}
-                  />
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* Card: Brand & Model Selection */}
+            <View style={styles.card}>
+              <View style={styles.cardHeaderRow}>
+                <Text style={styles.cardTitle}>Vehicle Specification</Text>
+                <View style={styles.badgeCatalog}>
+                  <Feather name="check-circle" size={12} color="#10B981" />
+                  <Text style={styles.badgeCatalogText}>Catalog Auto-Sync</Text>
                 </View>
               </View>
 
-              {/* Color Selector */}
-              <View style={styles.formGroup}>
-                <Text style={[styles.inputLabel, { color: theme.colors.text }]}>Vehicle Color *</Text>
-                <View style={styles.chipGrid}>
-                  {COLOR_OPTIONS.map(c => (
-                    <TouchableOpacity
-                      key={c}
-                      style={[
-                        styles.chip,
-                        {
-                          backgroundColor: color === c ? '#0EA5E9' : isDark ? '#1E293B' : '#F1F5F9',
-                          borderColor: color === c ? '#0EA5E9' : isDark ? '#334155' : '#CBD5E1',
-                        },
-                      ]}
-                      onPress={() => setColor(c)}
-                    >
-                      <Text
-                        style={[
-                          styles.chipText,
-                          { color: color === c ? '#FFFFFF' : theme.colors.text },
-                        ]}
-                      >
-                        {c}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-
-              {/* Fuel Type */}
-              <View style={styles.formGroup}>
-                <Text style={[styles.inputLabel, { color: theme.colors.text }]}>Fuel Type *</Text>
-                <View style={styles.chipGrid}>
-                  {FUEL_OPTIONS.map(f => (
-                    <TouchableOpacity
-                      key={f}
-                      style={[
-                        styles.chip,
-                        {
-                          backgroundColor: fuelType === f ? '#0EA5E9' : isDark ? '#1E293B' : '#F1F5F9',
-                          borderColor: fuelType === f ? '#0EA5E9' : isDark ? '#334155' : '#CBD5E1',
-                        },
-                      ]}
-                      onPress={() => setFuelType(f)}
-                    >
-                      <Text
-                        style={[
-                          styles.chipText,
-                          { color: fuelType === f ? '#FFFFFF' : theme.colors.text },
-                        ]}
-                      >
-                        {f.toUpperCase()}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-
-              {/* Toggles */}
-              <View
-                style={[
-                  styles.toggleRow,
-                  {
-                    backgroundColor: isDark ? '#1E293B' : '#F8FAFC',
-                    borderColor: isDark ? '#334155' : '#E2E8F0',
-                  },
-                ]}
+              {/* Brand (Make) Picker Trigger */}
+              <Text style={styles.label}>Vehicle Brand (Make) *</Text>
+              <TouchableOpacity
+                style={[styles.pickerTrigger, errors.make && styles.inputError]}
+                onPress={() => setShowBrandModal(true)}
+                activeOpacity={0.8}
               >
-                <View style={{ flex: 1, marginRight: 12 }}>
-                  <Text style={[styles.toggleTitle, { color: theme.colors.text }]}>
-                    Working Air Conditioning (AC)
-                  </Text>
-                  <Text style={[styles.toggleSub, { color: theme.colors.textSecondary }]}>
-                    Vehicle is equipped with operational climate control
-                  </Text>
+                <View style={styles.pickerTriggerLeft}>
+                  <Text style={styles.brandIconMini}>{currentBrand.logo_icon}</Text>
+                  <Text style={styles.pickerValueText}>{form.make || 'Select Brand'}</Text>
                 </View>
-                <Switch value={hasAc} onValueChange={setHasAc} trackColor={{ true: '#0EA5E9', false: '#CBD5E1' }} />
-              </View>
-            </View>
-          )}
+                <Feather name="chevron-down" size={18} color="#94A3B8" />
+              </TouchableOpacity>
+              {errors.make && <Text style={styles.errorText}>⚠ {errors.make}</Text>}
 
-          {/* STEP 3: REGISTRATION & OWNERSHIP */}
-          {step === 3 && (
-            <View>
-              <Text style={[styles.stepTitle, { color: theme.colors.text }]}>
-                Registration & Ownership
-              </Text>
-              <Text style={[styles.stepSubtitle, { color: theme.colors.textSecondary }]}>
-                Provide registration details exactly as printed on your RC Book.
-              </Text>
+              {/* Model Picker Trigger */}
+              <Text style={[styles.label, { marginTop: 14 }]}>Vehicle Model *</Text>
+              <TouchableOpacity
+                style={[styles.pickerTrigger, errors.model && styles.inputError]}
+                onPress={() => setShowModelModal(true)}
+                activeOpacity={0.8}
+              >
+                <View style={styles.pickerTriggerLeft}>
+                  <Feather name="layers" size={18} color="#F59E0B" style={{ marginRight: 8 }} />
+                  <Text style={styles.pickerValueText}>{form.model || 'Select Model'}</Text>
+                </View>
+                <View style={styles.modelTagBadge}>
+                  <Text style={styles.modelTagText}>{form.display_type}</Text>
+                  <Feather name="chevron-down" size={16} color="#94A3B8" style={{ marginLeft: 4 }} />
+                </View>
+              </TouchableOpacity>
+              {errors.model && <Text style={styles.errorText}>⚠ {errors.model}</Text>}
 
-              {/* Registration Number */}
-              <View style={styles.formGroup}>
-                <Text style={[styles.inputLabel, { color: theme.colors.text }]}>
-                  Vehicle Registration Number *
-                </Text>
-                <TextInput
-                  style={[
-                    styles.inputField,
-                    styles.regInput,
-                    {
-                      backgroundColor: isDark ? '#1E293B' : '#FFFFFF',
-                      borderColor: isDark ? '#334155' : '#CBD5E1',
-                      color: theme.colors.text,
-                    },
-                  ]}
-                  placeholder="e.g. MH 12 AB 1234"
-                  placeholderTextColor="#94A3B8"
-                  autoCapitalize="characters"
-                  value={regNumber}
-                  onChangeText={v => setRegNumber(v.toUpperCase())}
-                />
-              </View>
-
-              {/* Registered Owner Name */}
-              <View style={styles.formGroup}>
-                <Text style={[styles.inputLabel, { color: theme.colors.text }]}>
-                  Registered Owner Name *
-                </Text>
-                <TextInput
-                  style={[
-                    styles.inputField,
-                    {
-                      backgroundColor: isDark ? '#1E293B' : '#FFFFFF',
-                      borderColor: isDark ? '#334155' : '#CBD5E1',
-                      color: theme.colors.text,
-                    },
-                  ]}
-                  placeholder="Full name as on RC"
-                  placeholderTextColor="#94A3B8"
-                  value={ownerName}
-                  onChangeText={setOwnerName}
-                />
-              </View>
-
-              {/* Ownership Category */}
-              <View style={styles.formGroup}>
-                <Text style={[styles.inputLabel, { color: theme.colors.text }]}>
-                  Ownership Classification *
-                </Text>
-                <View style={styles.ownershipGrid}>
-                  {OWNERSHIP_OPTIONS.map(opt => (
-                    <TouchableOpacity
-                      key={opt.value}
-                      style={[
-                        styles.ownershipOption,
-                        {
-                          backgroundColor: ownershipType === opt.value
-                            ? isDark
-                              ? 'rgba(14, 165, 233, 0.15)'
-                              : 'rgba(14, 165, 233, 0.08)'
-                            : isDark
-                            ? '#1E293B'
-                            : '#F8FAFC',
-                          borderColor: ownershipType === opt.value
-                            ? '#0EA5E9'
-                            : isDark
-                            ? '#334155'
-                            : '#E2E8F0',
-                          borderWidth: ownershipType === opt.value ? 2 : 1,
-                        },
-                      ]}
-                      onPress={() => setOwnershipType(opt.value)}
-                    >
-                      <Feather
-                        name={ownershipType === opt.value ? 'check-circle' : 'circle'}
-                        size={16}
-                        color={ownershipType === opt.value ? '#0EA5E9' : '#94A3B8'}
-                      />
-                      <Text
-                        style={[
-                          styles.ownershipLabel,
-                          {
-                            color: ownershipType === opt.value ? '#0EA5E9' : theme.colors.text,
-                            fontWeight: ownershipType === opt.value ? '700' : '500',
-                          },
-                        ]}
-                      >
-                        {opt.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
+              {/* Auto-Calculated Readout Box */}
+              <View style={styles.autoCalcBox}>
+                <View style={styles.calcCol}>
+                  <Text style={styles.calcLabel}>BODY TYPE</Text>
+                  <Text style={styles.calcValue}>{form.vehicle_type.toUpperCase()}</Text>
+                </View>
+                <View style={styles.calcDivider} />
+                <View style={styles.calcCol}>
+                  <Text style={styles.calcLabel}>CAPACITY</Text>
+                  <Text style={styles.calcValue}>{form.seat_capacity} SEATER</Text>
+                </View>
+                <View style={styles.calcDivider} />
+                <View style={styles.calcCol}>
+                  <Text style={styles.calcLabel}>FUEL</Text>
+                  <Text style={styles.calcValue}>{form.fuel_type}</Text>
                 </View>
               </View>
             </View>
-          )}
 
-          {/* STEP 4: DOCUMENTS UPLOAD */}
-          {step === 4 && (
-            <View>
-              <Text style={[styles.stepTitle, { color: theme.colors.text }]}>
-                Upload Vehicle Documents
-              </Text>
-              <Text style={[styles.stepSubtitle, { color: theme.colors.textSecondary }]}>
-                Please upload clear photos or PDF copies of required compliance certificates.
-              </Text>
+            {/* Card: Color, Year & Registration */}
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Identity & Registration</Text>
 
-              {reqConfig.required_docs.map((doc, idx) => {
-                const isUploaded = !!uploadedDocs[doc.type]
-
-                return (
-                  <View
-                    key={doc.type}
-                    style={[
-                      styles.docUploadCard,
-                      {
-                        backgroundColor: isDark ? '#1E293B' : '#FFFFFF',
-                        borderColor: isUploaded ? '#10B981' : isDark ? '#334155' : '#E2E8F0',
-                      },
-                    ]}
+              <View style={styles.fieldGroup}>
+                {/* Year Selector */}
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.label}>Mfg Year *</Text>
+                  <TouchableOpacity
+                    style={styles.pickerTrigger}
+                    onPress={() => setShowYearModal(true)}
+                    activeOpacity={0.8}
                   >
-                    <View style={styles.docCardLeft}>
+                    <Text style={styles.pickerValueText}>{form.year}</Text>
+                    <Feather name="calendar" size={16} color="#94A3B8" />
+                  </TouchableOpacity>
+                  {errors.year && <Text style={styles.errorText}>⚠ {errors.year}</Text>}
+                </View>
+
+                {/* Color Selector */}
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.label}>Color *</Text>
+                  <TouchableOpacity
+                    style={styles.pickerTrigger}
+                    onPress={() => setShowColorModal(true)}
+                    activeOpacity={0.8}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                       <View
                         style={[
-                          styles.docIconCircle,
+                          styles.colorDot,
                           {
-                            backgroundColor: isUploaded
-                              ? 'rgba(16, 185, 129, 0.15)'
-                              : isDark
-                              ? '#0F172A'
-                              : '#F1F5F9',
+                            backgroundColor: form.color.toLowerCase().includes('white')
+                              ? '#FFFFFF'
+                              : form.color.toLowerCase().includes('black')
+                              ? '#000000'
+                              : form.color.toLowerCase().includes('silver')
+                              ? '#C0C0C0'
+                              : form.color.toLowerCase().includes('red')
+                              ? '#EF4444'
+                              : form.color.toLowerCase().includes('blue')
+                              ? '#3B82F6'
+                              : '#F59E0B',
                           },
                         ]}
-                      >
-                        <Feather
-                          name={isUploaded ? 'check' : 'file-text'}
-                          size={18}
-                          color={isUploaded ? '#10B981' : theme.colors.text}
-                        />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={[styles.docName, { color: theme.colors.text }]}>
-                          {doc.name}
-                        </Text>
-                        <Text style={[styles.docStatusSub, { color: isUploaded ? '#10B981' : '#94A3B8' }]}>
-                          {isUploaded ? 'File Attached ✅' : doc.mandatory ? 'Mandatory Document' : 'Optional'}
-                        </Text>
-                      </View>
-                    </View>
-
-                    <TouchableOpacity
-                      style={[
-                        styles.uploadBtn,
-                        {
-                          backgroundColor: isUploaded ? 'rgba(16, 185, 129, 0.12)' : '#0EA5E9',
-                          borderColor: isUploaded ? '#10B981' : '#0EA5E9',
-                        },
-                      ]}
-                      onPress={() => pickDocImage(doc.type)}
-                    >
-                      <Feather
-                        name={isUploaded ? 'refresh-cw' : 'upload'}
-                        size={13}
-                        color={isUploaded ? '#10B981' : '#FFFFFF'}
                       />
-                      <Text
-                        style={[
-                          styles.uploadBtnText,
-                          { color: isUploaded ? '#10B981' : '#FFFFFF' },
-                        ]}
-                      >
-                        {isUploaded ? 'Replace' : 'Upload'}
+                      <Text style={styles.pickerValueText} numberOfLines={1}>
+                        {form.color}
                       </Text>
-                    </TouchableOpacity>
+                    </View>
+                    <Feather name="chevron-down" size={16} color="#94A3B8" />
+                  </TouchableOpacity>
+                  {errors.color && <Text style={styles.errorText}>⚠ {errors.color}</Text>}
+                </View>
+              </View>
+
+              {/* Registration Number Field */}
+              <View style={{ marginTop: 14 }}>
+                <Text style={styles.label}>Registration Number (RTO) *</Text>
+                <View style={styles.regInputContainer}>
+                  <View style={styles.indBadge}>
+                    <Text style={styles.indBadgeText}>IND</Text>
                   </View>
+                  <TextInput
+                    style={[styles.regInput, errors.registration_number && styles.inputError]}
+                    placeholder="e.g. MH 12 AB 1234"
+                    placeholderTextColor="#64748B"
+                    autoCapitalize="characters"
+                    maxLength={14}
+                    value={form.registration_number}
+                    onChangeText={t => update('registration_number', t.toUpperCase())}
+                  />
+                </View>
+                {errors.registration_number && (
+                  <Text style={styles.errorText}>⚠ {errors.registration_number}</Text>
+                )}
+                <Text style={styles.regHint}>Must match your vehicle's RC certificate number</Text>
+              </View>
+            </View>
+
+            {/* Submit Button */}
+            <TouchableOpacity
+              onPress={handleSaveVehicle}
+              disabled={loading}
+              activeOpacity={0.85}
+              style={styles.submitBtnContainer}
+            >
+              <LinearGradient
+                colors={['#0EA5E9', '#2563EB']}
+                style={styles.submitBtn}
+              >
+                {loading ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Ionicons name="checkmark-circle" size={18} color="#FFFFFF" />
+                    <Text style={styles.submitBtnText}>Add Vehicle to Fleet</Text>
+                  </View>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+
+      {/* ── Brand Selection Modal ── */}
+      <Modal visible={showBrandModal} transparent animationType="slide" onRequestClose={() => setShowBrandModal(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHandle} />
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Select Vehicle Brand</Text>
+              <TouchableOpacity onPress={() => setShowBrandModal(false)} style={styles.modalCloseBtn}>
+                <Feather name="x" size={20} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalSearchBar}>
+              <Feather name="search" size={18} color="#94A3B8" />
+              <TextInput
+                style={styles.modalSearchInput}
+                placeholder="Search brand (e.g. Maruti, Tata, Toyota...)"
+                placeholderTextColor="#64748B"
+                value={brandSearch}
+                onChangeText={setBrandSearch}
+                autoCorrect={false}
+              />
+              {brandSearch.length > 0 && (
+                <TouchableOpacity onPress={() => setBrandSearch('')}>
+                  <Feather name="x-circle" size={16} color="#94A3B8" />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <FlatList
+              data={filteredBrands}
+              keyExtractor={item => item.brand}
+              contentContainerStyle={{ paddingBottom: 20 }}
+              renderItem={({ item }) => {
+                const isSelected = form.make === item.brand
+                return (
+                  <TouchableOpacity
+                    style={[styles.modalItemRow, isSelected && styles.modalItemRowActive]}
+                    onPress={() => handleSelectBrand(item)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.brandIconCircle}>
+                      <Text style={{ fontSize: 20 }}>{item.logo_icon}</Text>
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={[styles.modalItemTitle, isSelected && styles.modalItemTitleActive]}>
+                        {item.brand}
+                      </Text>
+                      <Text style={styles.modalItemSub}>
+                        {item.models.length} models • {item.models.map(m => m.model).slice(0, 3).join(', ')}...
+                      </Text>
+                    </View>
+                    {isSelected && <Feather name="check" size={20} color="#0EA5E9" />}
+                  </TouchableOpacity>
+                )
+              }}
+            />
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Model Selection Modal ── */}
+      <Modal visible={showModelModal} transparent animationType="slide" onRequestClose={() => setShowModelModal(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHandle} />
+            <View style={styles.modalHeaderRow}>
+              <View>
+                <Text style={styles.modalTitle}>Select {form.make} Model</Text>
+                <Text style={styles.modalSubtitle}>Auto-assigns category, body type & seating capacity</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowModelModal(false)} style={styles.modalCloseBtn}>
+                <Feather name="x" size={20} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalSearchBar}>
+              <Feather name="search" size={18} color="#94A3B8" />
+              <TextInput
+                style={styles.modalSearchInput}
+                placeholder={`Search in ${form.make} models...`}
+                placeholderTextColor="#64748B"
+                value={modelSearch}
+                onChangeText={setModelSearch}
+                autoCorrect={false}
+              />
+            </View>
+
+            <FlatList
+              data={filteredModels}
+              keyExtractor={item => item.model}
+              contentContainerStyle={{ paddingBottom: 20 }}
+              renderItem={({ item }) => {
+                const isSelected = form.model === item.model
+                return (
+                  <TouchableOpacity
+                    style={[styles.modalItemRow, isSelected && styles.modalItemRowActive]}
+                    onPress={() => handleSelectModel(item)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.brandIconCircle, { backgroundColor: isSelected ? 'rgba(14,165,233,0.2)' : '#1E293B' }]}>
+                      <Feather name="truck" size={18} color={isSelected ? '#0EA5E9' : '#94A3B8'} />
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={[styles.modalItemTitle, isSelected && styles.modalItemTitleActive]}>
+                          {item.model}
+                        </Text>
+                        <View style={styles.typeBadge}>
+                          <Text style={styles.typeBadgeText}>{item.display_type}</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.modalItemSub}>
+                        {item.seat_capacity} Seater • Fuels: {item.fuel_types.join(', ')}
+                      </Text>
+                    </View>
+                    {isSelected && <Feather name="check" size={20} color="#0EA5E9" />}
+                  </TouchableOpacity>
+                )
+              }}
+            />
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Color Palette Modal ── */}
+      <Modal visible={showColorModal} transparent animationType="slide" onRequestClose={() => setShowColorModal(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHandle} />
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Choose Vehicle Color</Text>
+              <TouchableOpacity onPress={() => setShowColorModal(false)} style={styles.modalCloseBtn}>
+                <Feather name="x" size={20} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.colorPaletteGrid}>
+              {POPULAR_VEHICLE_COLORS.map(c => {
+                const isSelected = form.color === c.name
+                return (
+                  <TouchableOpacity
+                    key={c.name}
+                    style={[styles.colorOption, isSelected && styles.colorOptionActive]}
+                    onPress={() => {
+                      update('color', c.name)
+                      setShowColorModal(false)
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <View style={[styles.colorCircle, { backgroundColor: c.hex, borderColor: c.border }]} />
+                    <Text style={[styles.colorName, isSelected && styles.colorNameActive]}>{c.name}</Text>
+                  </TouchableOpacity>
                 )
               })}
             </View>
-          )}
 
-          {/* STEP 5: INSPECTION HUB */}
-          {step === 5 && (
-            <View>
-              <Text style={[styles.stepTitle, { color: theme.colors.text }]}>
-                Vehicle Safety & Inspection
-              </Text>
-              <Text style={[styles.stepSubtitle, { color: theme.colors.textSecondary }]}>
-                {reqConfig.requires_inspection
-                  ? 'This vehicle category requires physical hub verification before going online.'
-                  : 'Fast-Track: Physical inspection waived for this private/commercial vehicle tier.'}
-              </Text>
-
-              {reqConfig.requires_inspection ? (
-                <View
-                  style={[
-                    styles.inspectionBox,
-                    {
-                      backgroundColor: isDark ? '#1E293B' : '#F8FAFC',
-                      borderColor: isDark ? '#334155' : '#E2E8F0',
-                    },
-                  ]}
-                >
-                  <View style={styles.inspBadgeRow}>
-                    <Feather name="map-pin" size={16} color="#0EA5E9" />
-                    <Text style={[styles.inspHubTitle, { color: theme.colors.text }]}>
-                      Select Inspection Hub
-                    </Text>
-                  </View>
-
-                  {['Hadapsar Inspection Hub, Pune', 'Wakad Inspection Hub, PCMC', 'Swargate Hub, Pune'].map(hub => (
-                    <TouchableOpacity
-                      key={hub}
-                      style={[
-                        styles.hubOption,
-                        {
-                          backgroundColor: selectedHub === hub
-                            ? isDark
-                              ? 'rgba(14, 165, 233, 0.15)'
-                              : 'rgba(14, 165, 233, 0.08)'
-                            : isDark
-                            ? '#0F172A'
-                            : '#FFFFFF',
-                          borderColor: selectedHub === hub ? '#0EA5E9' : isDark ? '#334155' : '#E2E8F0',
-                          borderWidth: selectedHub === hub ? 2 : 1,
-                        },
-                      ]}
-                      onPress={() => setSelectedHub(hub)}
-                    >
-                      <Feather
-                        name={selectedHub === hub ? 'check-circle' : 'circle'}
-                        size={16}
-                        color={selectedHub === hub ? '#0EA5E9' : '#94A3B8'}
-                      />
-                      <Text style={[styles.hubText, { color: theme.colors.text }]}>{hub}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              ) : (
-                <View
-                  style={[
-                    styles.waivedBox,
-                    {
-                      backgroundColor: isDark ? 'rgba(16, 185, 129, 0.1)' : '#ECFDF5',
-                      borderColor: '#10B981',
-                    },
-                  ]}
-                >
-                  <Ionicons name="checkmark-done-circle" size={32} color="#10B981" />
-                  <Text style={[styles.waivedTitle, { color: theme.colors.text }]}>
-                    Self-Declaration Verification Eligible
-                  </Text>
-                  <Text style={[styles.waivedSub, { color: theme.colors.textSecondary }]}>
-                    Your vehicle documents will be reviewed digitally by our compliance team. You do not need to visit a physical inspection center.
-                  </Text>
-                </View>
-              )}
-            </View>
-          )}
-
-          {/* STEP 6: REVIEW & SUBMIT */}
-          {step === 6 && (
-            <View>
-              <Text style={[styles.stepTitle, { color: theme.colors.text }]}>
-                Review Vehicle Summary
-              </Text>
-              <Text style={[styles.stepSubtitle, { color: theme.colors.textSecondary }]}>
-                Please confirm the details below before submitting for compliance approval.
-              </Text>
-
-              <View
-                style={[
-                  styles.summaryCard,
-                  {
-                    backgroundColor: isDark ? '#1E293B' : '#FFFFFF',
-                    borderColor: isDark ? '#334155' : '#E2E8F0',
-                  },
-                ]}
-              >
-                <View style={styles.summaryHeader}>
-                  <Text style={[styles.summaryVehicleName, { color: theme.colors.text }]}>
-                    {make} {model} {variant}
-                  </Text>
-                  <Text style={styles.summaryRegPlate}>{regNumber.toUpperCase()}</Text>
-                </View>
-
-                <View style={styles.divider} />
-
-                <View style={styles.summaryRow}>
-                  <Text style={[styles.sLabel, { color: theme.colors.textSecondary }]}>Category</Text>
-                  <Text style={[styles.sVal, { color: theme.colors.text }]}>{reqConfig.label}</Text>
-                </View>
-                <View style={styles.summaryRow}>
-                  <Text style={[styles.sLabel, { color: theme.colors.textSecondary }]}>Color & Fuel</Text>
-                  <Text style={[styles.sVal, { color: theme.colors.text }]}>{color} • {fuelType.toUpperCase()}</Text>
-                </View>
-                <View style={styles.summaryRow}>
-                  <Text style={[styles.sLabel, { color: theme.colors.textSecondary }]}>Owner Name</Text>
-                  <Text style={[styles.sVal, { color: theme.colors.text }]}>{ownerName}</Text>
-                </View>
-                <View style={styles.summaryRow}>
-                  <Text style={[styles.sLabel, { color: theme.colors.textSecondary }]}>Seat Capacity</Text>
-                  <Text style={[styles.sVal, { color: theme.colors.text }]}>{reqConfig.seats} Passenger Seats</Text>
-                </View>
-                <View style={styles.summaryRow}>
-                  <Text style={[styles.sLabel, { color: theme.colors.textSecondary }]}>Inspection</Text>
-                  <Text style={[styles.sVal, { color: reqConfig.requires_inspection ? '#8B5CF6' : '#10B981' }]}>
-                    {reqConfig.requires_inspection ? 'Hub Scheduled' : 'Digital Verification'}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Declaration Checkbox */}
-              <TouchableOpacity
-                style={styles.declarationRow}
-                activeOpacity={0.8}
-                onPress={() => setDeclarationAgreed(!declarationAgreed)}
-              >
-                <Feather
-                  name={declarationAgreed ? 'check-square' : 'square'}
-                  size={20}
-                  color={declarationAgreed ? '#0EA5E9' : '#94A3B8'}
+            <View style={{ marginTop: 14 }}>
+              <Text style={styles.label}>Or type custom color</Text>
+              <View style={styles.customColorRow}>
+                <TextInput
+                  style={styles.customColorInput}
+                  placeholder="e.g. Dark Maroon / Bronze"
+                  placeholderTextColor="#64748B"
+                  value={customColor}
+                  onChangeText={setCustomColor}
                 />
-                <Text style={[styles.declarationText, { color: theme.colors.textSecondary }]}>
-                  I solemnly declare that all information and documents submitted are valid, original, and belong to the registered vehicle.
-                </Text>
+                <TouchableOpacity
+                  style={styles.customColorBtn}
+                  onPress={() => {
+                    if (customColor.trim()) {
+                      update('color', customColor.trim())
+                      setCustomColor('')
+                      setShowColorModal(false)
+                    }
+                  }}
+                >
+                  <Text style={styles.customColorBtnText}>Apply</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Year Selection Modal ── */}
+      <Modal visible={showYearModal} transparent animationType="slide" onRequestClose={() => setShowYearModal(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContainer, { maxHeight: '60%' }]}>
+            <View style={styles.modalHandle} />
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Select Manufacturing Year</Text>
+              <TouchableOpacity onPress={() => setShowYearModal(false)} style={styles.modalCloseBtn}>
+                <Feather name="x" size={20} color="#FFFFFF" />
               </TouchableOpacity>
             </View>
-          )}
 
-          {/* Navigation Button */}
-          <View style={styles.bottomCtaContainer}>
-            {step < 6 ? (
-              <TouchableOpacity style={styles.nextBtn} onPress={handleNext}>
-                <LinearGradient
-                  colors={['#0EA5E9', '#8B5CF6']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.gradientCta}
+            <FlatList
+              data={VEHICLE_YEARS}
+              keyExtractor={item => item}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[styles.yearItemRow, form.year === item && styles.yearItemRowActive]}
+                  onPress={() => {
+                    update('year', item)
+                    setShowYearModal(false)
+                  }}
+                  activeOpacity={0.7}
                 >
-                  <Text style={styles.ctaText}>Continue to Step {step + 1} →</Text>
-                </LinearGradient>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity
-                style={styles.nextBtn}
-                disabled={submitting}
-                onPress={handleFinalSubmit}
-              >
-                <LinearGradient
-                  colors={['#10B981', '#059669']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.gradientCta}
-                >
-                  {submitting ? (
-                    <ActivityIndicator color="#FFFFFF" />
-                  ) : (
-                    <>
-                      <Ionicons name="checkmark-circle" size={18} color="#FFFFFF" />
-                      <Text style={styles.ctaText}>Submit Vehicle for Approval</Text>
-                    </>
-                  )}
-                </LinearGradient>
-              </TouchableOpacity>
-            )}
+                  <Text style={[styles.yearText, form.year === item && styles.yearTextActive]}>{item}</Text>
+                  {form.year === item && <Feather name="check" size={18} color="#0EA5E9" />}
+                </TouchableOpacity>
+              )}
+            />
           </View>
-        </ScrollView>
-      </SafeAreaView>
+        </View>
+      </Modal>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
+  root: { flex: 1, backgroundColor: '#080C17' },
   safeArea: { flex: 1 },
+
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
+    paddingVertical: 12,
   },
-  headerBtn: {
-    width: 40,
-    height: 40,
+  backBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  headerTitle: { color: '#FFFFFF', fontSize: 18, fontWeight: '800' },
+
+  scroll: { flex: 1, paddingHorizontal: 18 },
+  scrollContent: { paddingBottom: 40, paddingTop: 6 },
+
+  card: {
+    backgroundColor: '#0F172A',
     borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  scrollContent: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 40,
-  },
-  stepTitle: {
-    fontSize: 20,
-    fontWeight: '800',
-    marginBottom: 4,
-  },
-  stepSubtitle: {
-    fontSize: 13,
-    marginBottom: 20,
-    lineHeight: 18,
-  },
-  formGroup: {
-    marginBottom: 16,
-  },
-  inputLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  inputField: {
-    height: 50,
-    borderRadius: 12,
-    borderWidth: 1,
-    paddingHorizontal: 16,
-    fontSize: 15,
-  },
-  regInput: {
-    fontSize: 16,
-    fontWeight: '800',
-    letterSpacing: 1,
-  },
-  rowInputs: {
-    flexDirection: 'row',
-  },
-  chipGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  chip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-  },
-  chipText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  toggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    marginTop: 6,
-  },
-  toggleTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  toggleSub: {
-    fontSize: 11,
-    marginTop: 2,
-  },
-  ownershipGrid: {
-    gap: 8,
-  },
-  ownershipOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: 14,
-    borderRadius: 12,
-  },
-  ownershipLabel: {
-    fontSize: 14,
-  },
-  docUploadCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    marginBottom: 10,
-  },
-  docCardLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    flex: 1,
-  },
-  docIconCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  docName: {
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  docStatusSub: {
-    fontSize: 11,
-    marginTop: 2,
-    fontWeight: '600',
-  },
-  uploadBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 8,
-    borderWidth: 1,
-  },
-  uploadBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  inspectionBox: {
-    padding: 16,
-    borderRadius: 14,
-    borderWidth: 1,
-    gap: 10,
-  },
-  inspBadgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 6,
-  },
-  inspHubTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  hubOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    padding: 14,
-    borderRadius: 10,
-  },
-  hubText: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  waivedBox: {
-    padding: 20,
-    borderRadius: 16,
-    borderWidth: 1,
-    alignItems: 'center',
-    gap: 8,
-  },
-  waivedTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    textAlign: 'center',
-  },
-  waivedSub: {
-    fontSize: 12,
-    textAlign: 'center',
-    lineHeight: 18,
-  },
-  summaryCard: {
     padding: 18,
-    borderRadius: 16,
-    borderWidth: 1,
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#334155',
   },
-  summaryHeader: {
+  cardHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+  cardTitle: { fontSize: 16, fontWeight: '800', color: '#FFFFFF' },
+  badgeCatalog: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-  },
-  summaryVehicleName: {
-    fontSize: 17,
-    fontWeight: '800',
-  },
-  summaryRegPlate: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#0EA5E9',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#E2E8F0',
-    marginVertical: 12,
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    gap: 4,
+    backgroundColor: 'rgba(16,185,129,0.12)',
+    paddingHorizontal: 8,
     paddingVertical: 4,
+    borderRadius: 8,
   },
-  sLabel: {
-    fontSize: 12,
-  },
-  sVal: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  declarationRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    marginTop: 8,
-  },
-  declarationText: {
-    flex: 1,
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  bottomCtaContainer: {
-    marginTop: 24,
-    marginBottom: 20,
-  },
-  nextBtn: {
+  badgeCatalogText: { color: '#10B981', fontSize: 10.5, fontWeight: '700' },
+
+  label: { fontSize: 13, fontWeight: '600', color: '#CBD5E1', marginBottom: 6 },
+  fieldGroup: { flexDirection: 'row', gap: 12 },
+
+  pickerTrigger: {
+    height: 50,
     borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#334155',
+    backgroundColor: '#020617',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+  },
+  pickerTriggerLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+  brandIconMini: { fontSize: 18, marginRight: 8 },
+  pickerValueText: { color: '#FFFFFF', fontSize: 14.5, fontWeight: '700' },
+  modelTagBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(14,165,233,0.12)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  modelTagText: { color: '#0EA5E9', fontSize: 11, fontWeight: '700' },
+
+  autoCalcBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    backgroundColor: '#020617',
+    borderRadius: 14,
+    paddingVertical: 12,
+    marginTop: 16,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  calcCol: { alignItems: 'center' },
+  calcLabel: { color: '#64748B', fontSize: 9.5, fontWeight: '800', letterSpacing: 0.8 },
+  calcValue: { color: '#38BDF8', fontSize: 12.5, fontWeight: '800', marginTop: 2 },
+  calcDivider: { width: 1, height: 24, backgroundColor: '#334155' },
+
+  colorDot: { width: 14, height: 14, borderRadius: 7, borderWidth: 1, borderColor: '#64748B' },
+
+  regInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 52,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#334155',
+    backgroundColor: '#020617',
     overflow: 'hidden',
   },
-  gradientCta: {
-    flexDirection: 'row',
+  indBadge: {
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 12,
+    height: '100%',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 16,
+    borderRightWidth: 1,
+    borderRightColor: '#334155',
   },
-  ctaText: {
-    fontSize: 15,
-    fontWeight: '700',
+  indBadgeText: { color: '#60A5FA', fontSize: 11, fontWeight: '900' },
+  regInput: {
+    flex: 1,
+    paddingHorizontal: 14,
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 1.2,
+  },
+  regHint: { color: '#64748B', fontSize: 11, marginTop: 6 },
+  inputError: { borderColor: '#EF4444', backgroundColor: 'rgba(239,68,68,0.08)' },
+  errorText: { color: '#F87171', fontSize: 12, marginTop: 4 },
+
+  submitBtnContainer: { marginTop: 8, borderRadius: 16, overflow: 'hidden' },
+  submitBtn: {
+    height: 54,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#0EA5E9',
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  submitBtnText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800' },
+
+  // Modals
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
+  modalContainer: {
+    backgroundColor: '#0F172A',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    maxHeight: '80%',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  modalHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: '#475569', alignSelf: 'center', marginBottom: 14 },
+  modalHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+  modalTitle: { fontSize: 18, fontWeight: '800', color: '#FFFFFF' },
+  modalSubtitle: { fontSize: 12, color: '#94A3B8', marginTop: 2 },
+  modalCloseBtn: { padding: 4 },
+
+  modalSearchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#020617',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+    paddingHorizontal: 12,
+    height: 44,
+    marginBottom: 14,
+    gap: 8,
+  },
+  modalSearchInput: { flex: 1, color: '#FFFFFF', fontSize: 14 },
+
+  modalItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    marginBottom: 8,
+    backgroundColor: '#020617',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  modalItemRowActive: { borderColor: '#0EA5E9', backgroundColor: 'rgba(14,165,233,0.08)' },
+  brandIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#1E293B',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalItemTitle: { fontSize: 14.5, fontWeight: '700', color: '#FFFFFF' },
+  modalItemTitleActive: { color: '#0EA5E9' },
+  modalItemSub: { fontSize: 11.5, color: '#94A3B8', marginTop: 2 },
+
+  typeBadge: { backgroundColor: 'rgba(59,130,246,0.15)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
+  typeBadgeText: { color: '#60A5FA', fontSize: 9.5, fontWeight: '700' },
+
+  // Color Grid
+  colorPaletteGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  colorOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#020617',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+    gap: 8,
+    minWidth: '45%',
+    flex: 1,
+  },
+  colorOptionActive: { borderColor: '#0EA5E9', backgroundColor: 'rgba(14,165,233,0.1)' },
+  colorCircle: { width: 18, height: 18, borderRadius: 9, borderWidth: 1.5 },
+  colorName: { color: '#CBD5E1', fontSize: 12.5, fontWeight: '600' },
+  colorNameActive: { color: '#0EA5E9', fontWeight: '700' },
+
+  customColorRow: { flexDirection: 'row', gap: 8, marginTop: 6 },
+  customColorInput: {
+    flex: 1,
+    height: 44,
+    backgroundColor: '#020617',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+    paddingHorizontal: 12,
     color: '#FFFFFF',
   },
+  customColorBtn: {
+    backgroundColor: '#0EA5E9',
+    paddingHorizontal: 16,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  customColorBtnText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800' },
+
+  yearItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#334155',
+  },
+  yearItemRowActive: { backgroundColor: 'rgba(14,165,233,0.08)' },
+  yearText: { color: '#CBD5E1', fontSize: 15, fontWeight: '600' },
+  yearTextActive: { color: '#0EA5E9', fontWeight: '800' },
 })

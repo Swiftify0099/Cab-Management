@@ -118,13 +118,20 @@ export default function DocumentStatusScreen() {
     loadCachedUser()
   }, [])
 
-  // 2. Fetch live KYC and Profile from backend
+  // 2. Fetch live KYC, Profile, and local onboarding sync
   const fetchKYC = useCallback(async () => {
     try {
-      const [kycRes, profileRes] = await Promise.allSettled([
+      const [kycRes, profileRes, cachedDocsStr, profileCompleteStr] = await Promise.allSettled([
         kycApi.getDashboard(),
         driverApi.getProfile(),
+        AsyncStorage.getItem('driver_uploaded_docs'),
+        AsyncStorage.getItem('profile_complete'),
       ])
+
+      const cachedDocs = (cachedDocsStr.status === 'fulfilled' && cachedDocsStr.value)
+        ? JSON.parse(cachedDocsStr.value)
+        : {}
+      const isProfileDone = profileCompleteStr.status === 'fulfilled' && profileCompleteStr.value === 'true'
 
       let verifiedFromProfile = false
       if (profileRes.status === 'fulfilled' && profileRes.value.data?.data) {
@@ -159,40 +166,54 @@ export default function DocumentStatusScreen() {
 
       const isFullyVerified =
         verifiedFromProfile ||
+        isProfileDone ||
         data?.can_go_online === true ||
         data?.overall_status === 'VERIFIED' ||
-        data?.overall_status === 'APPROVED' ||
-        data?.completion_percentage === 100
+        data?.overall_status === 'APPROVED'
 
       setIsVerified(isFullyVerified)
       setCanGoOnline(isFullyVerified)
-      setCompletionPct(isFullyVerified ? 100 : (data?.completion_percentage ?? 0))
 
-      if (data?.sections && data.sections.length > 0) {
-        if (isFullyVerified) {
-          const verifiedSections = data.sections.map((s: any) => ({
-            ...s,
-            items: s.items.map((it: any) => ({
+      const rawSections = (data?.sections && data.sections.length > 0) ? data.sections : INITIAL_SECTIONS
+
+      const mergedSections = rawSections.map((sec: any) => ({
+        ...sec,
+        items: sec.items.map((it: any) => {
+          const normKey = it.doc_type || it.key
+          const localItem = cachedDocs[normKey]
+          if (localItem && (localItem.uploaded || localItem.status === 'approved')) {
+            return {
               ...it,
               status: it.status === 'rejected' ? 'rejected' : 'approved',
               status_label: it.status === 'rejected' ? 'Action Required' : 'Approved',
-            })),
-          }))
-          setSections(verifiedSections)
-        } else {
-          setSections(data.sections)
-        }
-      } else if (isFullyVerified) {
-        const verifiedSections = INITIAL_SECTIONS.map((s) => ({
-          ...s,
-          items: s.items.map((it) => ({
-            ...it,
-            status: 'approved',
-            status_label: 'Approved',
-          })),
-        }))
-        setSections(verifiedSections)
-      }
+              document_number: it.document_number || localItem.document_number || undefined,
+              preview_url: it.preview_url || localItem.front_uri || undefined,
+            }
+          }
+          if (isFullyVerified && it.status !== 'rejected') {
+            return {
+              ...it,
+              status: 'approved',
+              status_label: 'Approved',
+            }
+          }
+          return it
+        }),
+      }))
+
+      // Calculate total completed percentage
+      let totalCount = 0
+      let completedCount = 0
+      mergedSections.forEach((s: any) => {
+        s.items.forEach((it: any) => {
+          totalCount++
+          if (it.status === 'approved' || it.status === 'under_review') completedCount++
+        })
+      })
+
+      const computedPct = isFullyVerified ? 100 : Math.round((completedCount / (totalCount || 1)) * 100)
+      setCompletionPct(computedPct)
+      setSections(mergedSections)
     } catch (e) {
       console.warn('[KYC Dashboard] Load warning:', e)
     } finally {

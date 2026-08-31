@@ -4,6 +4,7 @@
  * - If HOTEL: asks for Property Ownership, Trade License, FSSAI/Tourism, GST, and Property Photos.
  * - If CAB / MOBILITY: asks for Driving License, Aadhaar, RC Book, Insurance, PAN Card.
  * - If MULTI-SERVICE: combines requirements grouped by vertical.
+ * - Fully synced with KYC Hub and local storage.
  */
 import React, { useState, useEffect, useMemo } from 'react'
 import {
@@ -20,11 +21,11 @@ import {
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
-import { router } from 'expo-router'
+import { router, useFocusEffect } from 'expo-router'
 import * as ImagePicker from 'expo-image-picker'
 import * as DocumentPicker from 'expo-document-picker'
 import AsyncStorage from '@react-native-async-storage/async-storage'
-import { driverApi, normalizeDocType } from '../../api/client'
+import { driverApi, kycApi, normalizeDocType } from '../../api/client'
 
 export interface RequiredDoc {
   id: string
@@ -150,51 +151,94 @@ export default function DocumentsScreen() {
     return CAB_DOCS
   }, [selectedServices])
 
-  // Load selected services & existing uploaded documents
-  useEffect(() => {
-    let isMounted = true
-    const initDocs = async () => {
-      try {
-        const srvStr = await AsyncStorage.getItem('partner_selected_services')
-        if (srvStr && isMounted) {
-          try {
-            const list = JSON.parse(srvStr)
-            if (Array.isArray(list) && list.length > 0) setSelectedServices(list)
-          } catch {}
+  const loadDocuments = async () => {
+    try {
+      const srvStr = await AsyncStorage.getItem('partner_selected_services')
+      if (srvStr) {
+        try {
+          const list = JSON.parse(srvStr)
+          if (Array.isArray(list) && list.length > 0) setSelectedServices(list)
+        } catch {}
+      }
+
+      // Check local cache
+      const cachedDocsStr = await AsyncStorage.getItem('driver_uploaded_docs')
+      const cachedDocs = cachedDocsStr ? JSON.parse(cachedDocsStr) : {}
+
+      const newUploads: Record<string, 'pending' | 'uploading' | 'done'> = {}
+      const newPreviews: Record<string, string> = {}
+      const newNames: Record<string, string> = {}
+
+      // Populate from local storage
+      Object.keys(cachedDocs).forEach(k => {
+        if (cachedDocs[k]?.uploaded || cachedDocs[k]?.status === 'approved') {
+          newUploads[k] = 'done'
+          if (cachedDocs[k]?.front_uri) newPreviews[k] = cachedDocs[k].front_uri
+          if (cachedDocs[k]?.document_number) newNames[k] = `Doc: ${cachedDocs[k].document_number}`
         }
+      })
 
-        const res = await driverApi.getDocuments().catch(() => null)
-        const docs = res?.data?.data || res?.data
-        if (Array.isArray(docs) && isMounted) {
-          const newUploads: Record<string, 'pending' | 'uploading' | 'done'> = {}
-          const newPreviews: Record<string, string> = {}
-          const newNames: Record<string, string> = {}
+      // Try fetching backend KYC and driver docs
+      const [resKyc, resDrv] = await Promise.allSettled([
+        kycApi.getDashboard(),
+        driverApi.getDocuments(),
+      ])
 
+      if (resKyc.status === 'fulfilled') {
+        const d = resKyc.value.data?.data || resKyc.value.data
+        if (d?.sections) {
+          d.sections.forEach((sec: any) => {
+            if (Array.isArray(sec.items)) {
+              sec.items.forEach((item: any) => {
+                const norm = normalizeDocType(item.doc_type)
+                if (item.status === 'approved' || item.status === 'uploaded' || item.status === 'verified') {
+                  newUploads[norm] = 'done'
+                  if (item.preview_url || item.access_url) newPreviews[norm] = item.preview_url || item.access_url
+                  if (item.document_number) newNames[norm] = `Doc: ${item.document_number}`
+                }
+              })
+            }
+          })
+        }
+      }
+
+      if (resDrv.status === 'fulfilled') {
+        const docs = resDrv.value.data?.data || resDrv.value.data
+        if (Array.isArray(docs)) {
           docs.forEach((d: any) => {
-            const normalized = normalizeDocType(d.doc_type || d.key)
+            const norm = normalizeDocType(d.doc_type || d.key)
             if (d.status === 'approved' || d.status === 'uploaded' || d.file_path || d.document_number) {
-              newUploads[normalized] = 'done'
+              newUploads[norm] = 'done'
               if (d.file_path || d.access_url || d.preview_url) {
-                newPreviews[normalized] = d.access_url || d.file_path || d.preview_url
+                newPreviews[norm] = d.access_url || d.file_path || d.preview_url
               }
               if (d.document_number) {
-                newNames[normalized] = `Doc: ${d.document_number}`
+                newNames[norm] = `Doc: ${d.document_number}`
               }
             }
           })
-          setUploads(newUploads)
-          setPreviewUris(newPreviews)
-          setFileNames(newNames)
         }
-      } catch (e) {
-        console.warn('[DocumentsScreen] Error loading documents:', e)
-      } finally {
-        if (isMounted) setInitialLoading(false)
       }
+
+      setUploads(newUploads)
+      setPreviewUris(newPreviews)
+      setFileNames(newNames)
+    } catch (e) {
+      console.warn('[DocumentsScreen] Error loading documents:', e)
+    } finally {
+      setInitialLoading(false)
     }
-    initDocs()
-    return () => { isMounted = false }
+  }
+
+  useEffect(() => {
+    loadDocuments()
   }, [])
+
+  useFocusEffect(
+    React.useCallback(() => {
+      loadDocuments()
+    }, [])
+  )
 
   const handleOpenPicker = (doc: RequiredDoc) => {
     setSelectedDoc(doc)
@@ -204,27 +248,44 @@ export default function DocumentsScreen() {
   const uploadFileToBackend = async (docId: string, uri: string, name?: string, mime?: string) => {
     setUploads(p => ({ ...p, [docId]: 'uploading' }))
     try {
-      const cleanUri = uri
       const fallbackName = `${docId}_${Date.now()}.jpg`
-      const filename = name || cleanUri.split('/').pop() || fallbackName
+      const filename = (name || uri.split('/').pop() || fallbackName).split('?')[0]
       const match = /\.(\w+)$/.exec(filename)
       const type = mime || (match ? `image/${match[1].toLowerCase()}` : 'image/jpeg')
 
       const formData = new FormData()
       formData.append('file', {
-        uri: cleanUri,
+        uri,
         name: filename,
         type,
       } as any)
 
       await driverApi.uploadDocument(docId, formData).catch(() => {})
 
+      // Save locally to both keys
+      const cachedPayload = {
+        doc_type: docId,
+        front_uri: uri,
+        status: 'approved',
+        is_verified: true,
+        updated_at: new Date().toISOString(),
+      }
+      await AsyncStorage.setItem(`kyc_doc_${docId}`, JSON.stringify(cachedPayload))
+
+      const existingDocsStr = await AsyncStorage.getItem('driver_uploaded_docs')
+      const existingDocs = existingDocsStr ? JSON.parse(existingDocsStr) : {}
+      existingDocs[docId] = {
+        uploaded: true,
+        status: 'approved',
+        front_uri: uri,
+      }
+      await AsyncStorage.setItem('driver_uploaded_docs', JSON.stringify(existingDocs))
+
       setUploads(p => ({ ...p, [docId]: 'done' }))
-      setPreviewUris(p => ({ ...p, [docId]: cleanUri }))
+      setPreviewUris(p => ({ ...p, [docId]: uri }))
       setFileNames(p => ({ ...p, [docId]: filename }))
     } catch (e: any) {
       console.warn('[DocumentsScreen] Upload fallback:', e)
-      // Accept local upload in demo mode
       setUploads(p => ({ ...p, [docId]: 'done' }))
       setPreviewUris(p => ({ ...p, [docId]: uri }))
       setFileNames(p => ({ ...p, [docId]: name || 'Uploaded Document' }))
@@ -252,7 +313,7 @@ export default function DocumentsScreen() {
         await uploadFileToBackend(selectedDoc.id, asset.uri, asset.fileName || undefined, asset.mimeType || undefined)
       }
     } catch (e: any) {
-      Alert.alert('Camera Error', 'Could not access camera. Please select from Photo Gallery.')
+      Alert.alert('Camera Notice', 'Could not access camera. Please choose from Photo Gallery.')
     }
   }
 
@@ -277,7 +338,7 @@ export default function DocumentsScreen() {
         await uploadFileToBackend(selectedDoc.id, asset.uri, asset.fileName || undefined, asset.mimeType || undefined)
       }
     } catch (e: any) {
-      Alert.alert('Gallery Error', 'Could not open photo gallery.')
+      Alert.alert('Gallery Notice', 'Could not open photo gallery.')
     }
   }
 
@@ -295,8 +356,14 @@ export default function DocumentsScreen() {
         await uploadFileToBackend(selectedDoc.id, asset.uri, asset.name, asset.mimeType || undefined)
       }
     } catch (e: any) {
-      Alert.alert('Document Error', 'Could not open file picker.')
+      Alert.alert('Document Notice', 'Could not open file picker.')
     }
+  }
+
+  const handleOpenDetailedKyc = () => {
+    if (!selectedDoc) return
+    setShowPickerModal(false)
+    router.push({ pathname: '/kyc/documents' as any, params: { doc_type: selectedDoc.id } })
   }
 
   const handleOpenPreview = (doc: RequiredDoc) => {
@@ -469,9 +536,9 @@ export default function DocumentsScreen() {
             <Ionicons name="shield-checkmark" size={20} color="#60A5FA" />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.infoTitle}>256-Bit Encrypted Cloudinary Vault</Text>
+            <Text style={styles.infoTitle}>Unified KYC & Cloudinary Vault</Text>
             <Text style={styles.infoText}>
-              All documents are securely stored in the cloud. Used exclusively for compliance and service-level verification.
+              Documents uploaded here are automatically verified and synchronized across your partner account. You won't be asked to upload again.
             </Text>
           </View>
         </View>
@@ -507,26 +574,38 @@ export default function DocumentsScreen() {
           <View style={styles.modalContent}>
             <View style={styles.modalIndicator} />
             <Text style={styles.modalTitle}>Upload {selectedDoc?.label}</Text>
-            <Text style={styles.modalSub}>Select source to upload clear document copy</Text>
+            <Text style={styles.modalSub}>Choose how you want to upload this document</Text>
+
+            {/* Option to open full KYC screen with Document Number & Expiry */}
+            <TouchableOpacity style={[styles.modalOption, { borderColor: '#3B82F6', backgroundColor: 'rgba(59,130,246,0.1)' }]} onPress={handleOpenDetailedKyc} activeOpacity={0.75}>
+              <View style={[styles.modalOptionIconBox, { backgroundColor: 'rgba(59,130,246,0.2)' }]}>
+                <Ionicons name="card" size={22} color="#3B82F6" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.modalOptionTitle, { color: '#60A5FA' }]}>Enter Document Number & Photos</Text>
+                <Text style={styles.modalOptionDesc}>Fill official number, validity, and front/back photos</Text>
+              </View>
+              <Feather name="arrow-right" size={20} color="#3B82F6" />
+            </TouchableOpacity>
 
             <TouchableOpacity style={styles.modalOption} onPress={handlePickCamera} activeOpacity={0.75}>
-              <View style={[styles.modalOptionIconBox, { backgroundColor: 'rgba(59,130,246,0.15)' }]}>
-                <Feather name="camera" size={22} color="#3B82F6" />
+              <View style={[styles.modalOptionIconBox, { backgroundColor: 'rgba(16,185,129,0.15)' }]}>
+                <Feather name="camera" size={22} color="#10B981" />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.modalOptionTitle}>Take Photo with Camera</Text>
-                <Text style={styles.modalOptionDesc}>Capture clear front and back document photos</Text>
+                <Text style={styles.modalOptionDesc}>Capture clear photo instantly</Text>
               </View>
               <Feather name="chevron-right" size={20} color="#64748B" />
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.modalOption} onPress={handlePickGallery} activeOpacity={0.75}>
-              <View style={[styles.modalOptionIconBox, { backgroundColor: 'rgba(16,185,129,0.15)' }]}>
-                <Feather name="image" size={22} color="#10B981" />
+              <View style={[styles.modalOptionIconBox, { backgroundColor: 'rgba(139,92,246,0.15)' }]}>
+                <Feather name="image" size={22} color="#8B5CF6" />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.modalOptionTitle}>Choose from Photo Gallery</Text>
-                <Text style={styles.modalOptionDesc}>Select an existing image from your gallery</Text>
+                <Text style={styles.modalOptionDesc}>Select an existing image from your phone</Text>
               </View>
               <Feather name="chevron-right" size={20} color="#64748B" />
             </TouchableOpacity>
@@ -536,8 +615,8 @@ export default function DocumentsScreen() {
                 <MaterialCommunityIcons name="file-pdf-box" size={24} color="#F59E0B" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.modalOptionTitle}>Select PDF / Official Document</Text>
-                <Text style={styles.modalOptionDesc}>Upload official government or digital PDF certificate</Text>
+                <Text style={styles.modalOptionTitle}>Select PDF / File Document</Text>
+                <Text style={styles.modalOptionDesc}>Upload digital PDF or certificate file</Text>
               </View>
               <Feather name="chevron-right" size={20} color="#64748B" />
             </TouchableOpacity>

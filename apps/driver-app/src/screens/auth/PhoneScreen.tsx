@@ -536,4 +536,6 @@ const styles = StyleSheet.create({
   footerWrap: { marginTop: 24, alignItems: 'center', gap: 10 },
   trustBadgeRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   trustBadgeText: { color: '#94A3B8', fontSize: 11.5, fontWeight: '600' },
+  registerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 14 },
+  registerPromptText: { color: '#94A3B8', fontSize: 12, fontWeight: '600' },
 })
