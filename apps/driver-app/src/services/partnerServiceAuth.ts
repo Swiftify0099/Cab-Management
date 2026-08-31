@@ -56,7 +56,8 @@ class PartnerServiceAuthClass {
     { service_type: 'OUTSTATION', display_name: 'Outstation Rides', is_approved: true, is_enabled: true, verification_status: 'APPROVED', icon: 'map', route: '/rental-outstation' },
     { service_type: 'CORPORATE', display_name: 'Corporate Commute', is_approved: true, is_enabled: true, verification_status: 'APPROVED', icon: 'briefcase', route: '/corporate' },
     { service_type: 'CARPOOL', display_name: 'Carpooling & Shared', is_approved: true, is_enabled: true, verification_status: 'APPROVED', icon: 'users', route: '/carpool' },
-    { service_type: 'HOSPITALITY', display_name: 'Hotel Concierge', is_approved: true, is_enabled: true, verification_status: 'APPROVED', icon: 'award', route: '/hospitality' },
+    { service_type: 'HOTEL' as any, display_name: 'Hotel & Stays Management', is_approved: true, is_enabled: true, verification_status: 'APPROVED', icon: 'home', route: '/hotel-partner' },
+    { service_type: 'HOSPITALITY', display_name: 'Hotel Concierge & Chauffeur', is_approved: true, is_enabled: true, verification_status: 'APPROVED', icon: 'award', route: '/hospitality' },
   ]
 
   /**

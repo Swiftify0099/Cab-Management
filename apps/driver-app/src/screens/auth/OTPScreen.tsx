@@ -134,6 +134,16 @@ export default function DriverOTPScreen() {
       if (tokenData.profile_complete === false || tokenData.is_new_user === true) {
         router.replace('/onboarding/profile' as any)
       } else {
+        const srvStr = await AsyncStorage.getItem('partner_selected_services')
+        if (srvStr) {
+          try {
+            const list = JSON.parse(srvStr)
+            if (Array.isArray(list) && list.length === 1 && list[0] === 'HOTEL') {
+              router.replace('/hotel-partner' as any)
+              return
+            }
+          } catch {}
+        }
         router.replace('/(tabs)/' as any)
       }
     } catch (err: any) {

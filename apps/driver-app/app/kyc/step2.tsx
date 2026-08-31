@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,18 +6,53 @@ import {
   TouchableOpacity,
   StatusBar,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
+import { kycApi } from '../../src/api/client';
 
 export default function Step2Screen() {
+  const [rcDoc, setRcDoc] = useState<any>(null);
+  const [insDoc, setInsDoc] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  const loadStatus = useCallback(async () => {
+    try {
+      const [rcRes, insRes] = await Promise.allSettled([
+        kycApi.getDocumentDetails('rc_book'),
+        kycApi.getDocumentDetails('insurance'),
+      ]);
+
+      if (rcRes.status === 'fulfilled' && rcRes.value.data) {
+        setRcDoc(rcRes.value.data.data || rcRes.value.data);
+      }
+      if (insRes.status === 'fulfilled' && insRes.value.data) {
+        setInsDoc(insRes.value.data.data || insRes.value.data);
+      }
+    } catch (e) {
+      console.warn('[Step2] Load error:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadStatus();
+    }, [loadStatus])
+  );
+
+  const isRcDone = !!(rcDoc && (rcDoc.file_path || rcDoc.document_number || rcDoc.status === 'approved' || rcDoc.status === 'uploaded'));
+  const isInsDone = !!(insDoc && (insDoc.file_path || insDoc.document_number || insDoc.status === 'approved' || insDoc.status === 'uploaded'));
+
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor="#090A10" />
 
-      {/* Dark background matching the image exactly */}
+      {/* Dark background */}
       <View style={StyleSheet.absoluteFill}>
         <LinearGradient
           colors={['#0F121C', '#0B0D14', '#07080C']}
@@ -43,78 +78,114 @@ export default function Step2Screen() {
         </View>
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-          
-          {/* Vehicle RC Book Section */}
-          <View style={styles.cardWrapper}>
-            <View style={styles.glassCard}>
-              <LinearGradient
-                colors={['rgba(255, 255, 255, 0.12)', 'rgba(255, 255, 255, 0.03)']}
-                style={[StyleSheet.absoluteFill, { borderRadius: 20 }]}
-              />
-              
-              <View style={styles.cardHeader}>
-                <Text style={styles.cardTitle}>Vehicle RC Book Upload</Text>
-                <View style={styles.statusIconGreen}>
-                  <Feather name="check" size={14} color="#FFFFFF" />
+          {loading ? (
+            <ActivityIndicator color="#3B82F6" style={{ marginTop: 30 }} />
+          ) : (
+            <>
+              {/* Vehicle RC Book Section */}
+              <View style={styles.cardWrapper}>
+                <View style={styles.glassCard}>
+                  <LinearGradient
+                    colors={['rgba(255, 255, 255, 0.12)', 'rgba(255, 255, 255, 0.03)']}
+                    style={[StyleSheet.absoluteFill, { borderRadius: 20 }]}
+                  />
+
+                  <View style={styles.cardHeader}>
+                    <Text style={styles.cardTitle}>Vehicle RC Book (Form 23)</Text>
+                    {isRcDone ? (
+                      <View style={styles.statusIconGreen}>
+                        <Feather name="check" size={14} color="#FFFFFF" />
+                      </View>
+                    ) : (
+                      <View style={styles.statusIconYellow}>
+                        <Text style={styles.exclamationText}>!</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.uploadArea}
+                    activeOpacity={0.7}
+                    onPress={() => router.push({ pathname: '/kyc/documents' as any, params: { doc_type: 'rc_book' } })}
+                  >
+                    <View style={styles.cameraBox}>
+                      <View style={styles.cameraDashedBorder} />
+                      <MaterialCommunityIcons
+                        name={isRcDone ? 'file-check' : 'camera'}
+                        size={36}
+                        color={isRcDone ? '#10B981' : '#60A5FA'}
+                      />
+                    </View>
+                    <Text style={[styles.uploadText, isRcDone && { color: '#10B981', fontWeight: '700' }]}>
+                      {isRcDone
+                        ? `Uploaded • ${rcDoc?.document_number || 'Tap to Update'}`
+                        : 'Upload Front & Back'}
+                    </Text>
+                  </TouchableOpacity>
                 </View>
+                <Text style={styles.helperText}>
+                  {isRcDone ? 'RC Book verified • Tap card to update' : 'Ensure vehicle registration number & fitness validity are visible'}
+                </Text>
               </View>
 
-              <TouchableOpacity 
-                style={styles.uploadArea} 
-                activeOpacity={0.7}
-                onPress={() => router.push({ pathname: '/kyc/documents' as any, params: { doc_type: 'rc_book' } })}
-              >
-                <View style={styles.cameraBox}>
-                  <View style={styles.cameraDashedBorder} />
-                  <MaterialCommunityIcons name="camera" size={36} color="#60A5FA" />
-                </View>
-                <Text style={styles.uploadText}>Upload Front & Back</Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.helperText}>Ensure vehicle number is clearly visible</Text>
-          </View>
+              {/* Insurance Certificate Section */}
+              <View style={styles.cardWrapper}>
+                <View style={styles.glassCard}>
+                  <LinearGradient
+                    colors={['rgba(255, 255, 255, 0.12)', 'rgba(255, 255, 255, 0.03)']}
+                    style={[StyleSheet.absoluteFill, { borderRadius: 20 }]}
+                  />
 
-          {/* Insurance Certificate Section */}
-          <View style={styles.cardWrapper}>
-            <View style={styles.glassCard}>
-              <LinearGradient
-                colors={['rgba(255, 255, 255, 0.12)', 'rgba(255, 255, 255, 0.03)']}
-                style={[StyleSheet.absoluteFill, { borderRadius: 20 }]}
-              />
-              
-              <View style={styles.cardHeader}>
-                <Text style={styles.cardTitle}>Insurance Certificate Upload</Text>
-                <View style={styles.statusIconYellow}>
-                  <Text style={styles.exclamationText}>!</Text>
+                  <View style={styles.cardHeader}>
+                    <Text style={styles.cardTitle}>Commercial Insurance Policy</Text>
+                    {isInsDone ? (
+                      <View style={styles.statusIconGreen}>
+                        <Feather name="check" size={14} color="#FFFFFF" />
+                      </View>
+                    ) : (
+                      <View style={styles.statusIconYellow}>
+                        <Text style={styles.exclamationText}>!</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.uploadArea}
+                    activeOpacity={0.7}
+                    onPress={() => router.push({ pathname: '/kyc/documents' as any, params: { doc_type: 'insurance' } })}
+                  >
+                    <View style={styles.cameraBox}>
+                      <View style={styles.cameraDashedBorder} />
+                      <MaterialCommunityIcons
+                        name={isInsDone ? 'file-check' : 'camera'}
+                        size={36}
+                        color={isInsDone ? '#10B981' : '#60A5FA'}
+                      />
+                    </View>
+                    <Text style={[styles.uploadText, isInsDone && { color: '#10B981', fontWeight: '700' }]}>
+                      {isInsDone
+                        ? `Uploaded • ${insDoc?.document_number || 'Tap to Update'}`
+                        : 'Upload Policy Document'}
+                    </Text>
+                  </TouchableOpacity>
                 </View>
+                <Text style={styles.helperText}>
+                  {isInsDone ? 'Insurance active • Tap card to update' : 'Make sure commercial policy dates cover current validity'}
+                </Text>
               </View>
-
-              <TouchableOpacity 
-                style={styles.uploadArea} 
-                activeOpacity={0.7}
-                onPress={() => router.push({ pathname: '/kyc/documents' as any, params: { doc_type: 'insurance' } })}
-              >
-                <View style={styles.cameraBox}>
-                  <View style={styles.cameraDashedBorder} />
-                  <MaterialCommunityIcons name="camera" size={36} color="#60A5FA" />
-                </View>
-                <Text style={styles.uploadText}>Upload Policy Document</Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.helperText}>Make sure the expiry date is legible</Text>
-          </View>
-
+            </>
+          )}
         </ScrollView>
 
         {/* Bottom Button */}
         <View style={styles.bottomContainer}>
-          <TouchableOpacity 
-            style={styles.proceedBtnWrapper} 
+          <TouchableOpacity
+            style={styles.proceedBtnWrapper}
             activeOpacity={0.8}
             onPress={() => router.push('/kyc/step3')}
           >
             <View style={styles.glowBg} />
-            
+
             <LinearGradient
               colors={['rgba(255,255,255,0.2)', 'rgba(255,255,255,0.05)']}
               style={[styles.proceedBtn, { borderRadius: 20 }]}
@@ -123,7 +194,6 @@ export default function Step2Screen() {
             </LinearGradient>
           </TouchableOpacity>
         </View>
-
       </SafeAreaView>
     </View>
   );

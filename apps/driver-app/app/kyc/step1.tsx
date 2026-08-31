@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,18 +6,53 @@ import {
   TouchableOpacity,
   StatusBar,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
+import { kycApi } from '../../src/api/client';
 
 export default function Step1Screen() {
+  const [aadhaarDoc, setAadhaarDoc] = useState<any>(null);
+  const [panDoc, setPanDoc] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  const loadStatus = useCallback(async () => {
+    try {
+      const [aadhaarRes, panRes] = await Promise.allSettled([
+        kycApi.getDocumentDetails('aadhaar'),
+        kycApi.getDocumentDetails('pan'),
+      ]);
+
+      if (aadhaarRes.status === 'fulfilled' && aadhaarRes.value.data) {
+        setAadhaarDoc(aadhaarRes.value.data.data || aadhaarRes.value.data);
+      }
+      if (panRes.status === 'fulfilled' && panRes.value.data) {
+        setPanDoc(panRes.value.data.data || panRes.value.data);
+      }
+    } catch (e) {
+      console.warn('[Step1] Load error:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadStatus();
+    }, [loadStatus])
+  );
+
+  const isAadhaarDone = !!(aadhaarDoc && (aadhaarDoc.file_path || aadhaarDoc.document_number || aadhaarDoc.status === 'approved' || aadhaarDoc.status === 'uploaded'));
+  const isPanDone = !!(panDoc && (panDoc.file_path || panDoc.document_number || panDoc.status === 'approved' || panDoc.status === 'uploaded'));
+
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor="#090A10" />
 
-      {/* Dark background matching the image exactly */}
+      {/* Dark background */}
       <View style={StyleSheet.absoluteFill}>
         <LinearGradient
           colors={['#0F121C', '#0B0D14', '#07080C']}
@@ -43,79 +78,115 @@ export default function Step1Screen() {
         </View>
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-          
-          {/* Aadhaar Card Section */}
-          <View style={styles.cardWrapper}>
-            <View style={styles.glassCard}>
-              <LinearGradient
-                colors={['rgba(255, 255, 255, 0.12)', 'rgba(255, 255, 255, 0.03)']}
-                style={[StyleSheet.absoluteFill, { borderRadius: 20 }]}
-              />
-              
-              <View style={styles.cardHeader}>
-                <Text style={styles.cardTitle}>Aadhaar Card Upload</Text>
-                <View style={styles.statusIconGreen}>
-                  <Feather name="check" size={14} color="#FFFFFF" />
+          {loading ? (
+            <ActivityIndicator color="#3B82F6" style={{ marginTop: 30 }} />
+          ) : (
+            <>
+              {/* Aadhaar Card Section */}
+              <View style={styles.cardWrapper}>
+                <View style={styles.glassCard}>
+                  <LinearGradient
+                    colors={['rgba(255, 255, 255, 0.12)', 'rgba(255, 255, 255, 0.03)']}
+                    style={[StyleSheet.absoluteFill, { borderRadius: 20 }]}
+                  />
+
+                  <View style={styles.cardHeader}>
+                    <Text style={styles.cardTitle}>Aadhaar Card (UIDAI)</Text>
+                    {isAadhaarDone ? (
+                      <View style={styles.statusIconGreen}>
+                        <Feather name="check" size={14} color="#FFFFFF" />
+                      </View>
+                    ) : (
+                      <View style={styles.statusIconYellow}>
+                        <Text style={styles.exclamationText}>!</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.uploadArea}
+                    activeOpacity={0.7}
+                    onPress={() => router.push({ pathname: '/kyc/documents' as any, params: { doc_type: 'aadhaar' } })}
+                  >
+                    <View style={styles.cameraBox}>
+                      <View style={styles.cameraDashedBorder} />
+                      <MaterialCommunityIcons
+                        name={isAadhaarDone ? 'file-check' : 'camera'}
+                        size={36}
+                        color={isAadhaarDone ? '#10B981' : '#60A5FA'}
+                      />
+                    </View>
+                    <Text style={[styles.uploadText, isAadhaarDone && { color: '#10B981', fontWeight: '700' }]}>
+                      {isAadhaarDone
+                        ? `Uploaded • ${aadhaarDoc?.document_number || 'Tap to Update'}`
+                        : 'Upload Front & Back'}
+                    </Text>
+                  </TouchableOpacity>
                 </View>
+                <Text style={styles.helperText}>
+                  {isAadhaarDone ? 'UIDAI verified • Tap card to update details' : 'Ensure 12-digit UID & QR code are clearly legible'}
+                </Text>
               </View>
 
-              <TouchableOpacity 
-                style={styles.uploadArea} 
-                activeOpacity={0.7}
-                onPress={() => router.push({ pathname: '/kyc/documents' as any, params: { doc_type: 'aadhaar' } })}
-              >
-                <View style={styles.cameraBox}>
-                  <View style={styles.cameraDashedBorder} />
-                  <MaterialCommunityIcons name="camera" size={36} color="#60A5FA" />
-                </View>
-                <Text style={styles.uploadText}>Upload Front & Back</Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.helperText}>Ensure no glare on ID</Text>
-          </View>
+              {/* PAN Card Section */}
+              <View style={styles.cardWrapper}>
+                <View style={styles.glassCard}>
+                  <LinearGradient
+                    colors={['rgba(255, 255, 255, 0.12)', 'rgba(255, 255, 255, 0.03)']}
+                    style={[StyleSheet.absoluteFill, { borderRadius: 20 }]}
+                  />
 
-          {/* PAN Card Section */}
-          <View style={styles.cardWrapper}>
-            <View style={styles.glassCard}>
-              <LinearGradient
-                colors={['rgba(255, 255, 255, 0.12)', 'rgba(255, 255, 255, 0.03)']}
-                style={[StyleSheet.absoluteFill, { borderRadius: 20 }]}
-              />
-              
-              <View style={styles.cardHeader}>
-                <Text style={styles.cardTitle}>PAN Card Upload</Text>
-                <View style={styles.statusIconYellow}>
-                  <Text style={styles.exclamationText}>!</Text>
+                  <View style={styles.cardHeader}>
+                    <Text style={styles.cardTitle}>PAN Card (IT Dept)</Text>
+                    {isPanDone ? (
+                      <View style={styles.statusIconGreen}>
+                        <Feather name="check" size={14} color="#FFFFFF" />
+                      </View>
+                    ) : (
+                      <View style={styles.statusIconYellow}>
+                        <Text style={styles.exclamationText}>!</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.uploadArea}
+                    activeOpacity={0.7}
+                    onPress={() => router.push({ pathname: '/kyc/documents' as any, params: { doc_type: 'pan' } })}
+                  >
+                    <View style={styles.cameraBox}>
+                      <View style={styles.cameraDashedBorder} />
+                      <MaterialCommunityIcons
+                        name={isPanDone ? 'file-check' : 'camera'}
+                        size={36}
+                        color={isPanDone ? '#10B981' : '#60A5FA'}
+                      />
+                    </View>
+                    <Text style={[styles.uploadText, isPanDone && { color: '#10B981', fontWeight: '700' }]}>
+                      {isPanDone
+                        ? `Uploaded • ${panDoc?.document_number || 'Tap to Update'}`
+                        : 'Upload Front Side'}
+                    </Text>
+                  </TouchableOpacity>
                 </View>
+                <Text style={styles.helperText}>
+                  {isPanDone ? 'PAN verified • Tap card to update details' : '10-character alphanumeric PAN must be visible'}
+                </Text>
               </View>
-
-              <TouchableOpacity 
-                style={styles.uploadArea} 
-                activeOpacity={0.7}
-                onPress={() => router.push({ pathname: '/kyc/documents' as any, params: { doc_type: 'pan' } })}
-              >
-                <View style={styles.cameraBox}>
-                  <View style={styles.cameraDashedBorder} />
-                  <MaterialCommunityIcons name="camera" size={36} color="#60A5FA" />
-                </View>
-                <Text style={styles.uploadText}>Upload Front</Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.helperText}>Please use good lighting</Text>
-          </View>
-
+            </>
+          )}
         </ScrollView>
 
         {/* Bottom Button */}
         <View style={styles.bottomContainer}>
-          <TouchableOpacity 
-            style={styles.proceedBtnWrapper} 
+          <TouchableOpacity
+            style={styles.proceedBtnWrapper}
             activeOpacity={0.8}
             onPress={() => router.push('/kyc/step2')}
           >
             {/* Outer Glow */}
             <View style={styles.glowBg} />
-            
+
             <LinearGradient
               colors={['rgba(255,255,255,0.2)', 'rgba(255,255,255,0.05)']}
               style={[styles.proceedBtn, { borderRadius: 20 }]}
@@ -124,7 +195,6 @@ export default function Step1Screen() {
             </LinearGradient>
           </TouchableOpacity>
         </View>
-
       </SafeAreaView>
     </View>
   );

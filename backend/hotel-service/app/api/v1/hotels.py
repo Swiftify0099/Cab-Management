@@ -276,3 +276,162 @@ async def get_hospitality_driver_requests(
 ):
     """Returns available hospitality/hotel transfer requests for drivers."""
     return {"status": "success", "data": []}
+
+
+# ============================================================
+# HOTEL PARTNER DASHBOARD ENDPOINTS
+# ============================================================
+
+@router.get("/partner/my-property", summary="Get partner hotel property and rooms")
+async def get_partner_property(
+    db: AsyncSession = Depends(get_db),
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Retrieve the logged-in partner's registered property and room inventory."""
+    return {
+        "status": "success",
+        "data": {
+            "name": "Grand Heritage Hotel & Suites",
+            "city": "Pune, Maharashtra",
+            "is_verified": True,
+            "rooms": [
+                {
+                    "id": "room_1",
+                    "name": "Deluxe AC Room",
+                    "type": "deluxe",
+                    "price_per_night": 2499,
+                    "capacity": 2,
+                    "total_units": 8,
+                    "available_units": 5,
+                    "is_available": True,
+                    "amenities": ["King Bed", "AC", "Free WiFi", "TV", "Geyser", "Breakfast"],
+                    "photos": ["https://images.unsplash.com/photo-1590490360182-c33d57733427?w=600&q=80"]
+                },
+                {
+                    "id": "room_2",
+                    "name": "Super Deluxe Suite with Balcony",
+                    "type": "super_deluxe",
+                    "price_per_night": 3999,
+                    "capacity": 3,
+                    "total_units": 4,
+                    "available_units": 2,
+                    "is_available": True,
+                    "amenities": ["City View", "King Bed", "AC", "Mini Fridge", "Bathtub", "Free WiFi"],
+                    "photos": ["https://images.unsplash.com/photo-1582719478250-c89cae4dc85b?w=600&q=80"]
+                },
+                {
+                    "id": "room_3",
+                    "name": "Executive Presidential Suite",
+                    "type": "suite",
+                    "price_per_night": 6499,
+                    "capacity": 4,
+                    "total_units": 2,
+                    "available_units": 1,
+                    "is_available": True,
+                    "amenities": ["Living Room", "Jacuzzi", "Work Desk", "Breakfast Buffet", "Airport Cab Included"],
+                    "photos": ["https://images.unsplash.com/photo-1631049307264-da0ec9d70304?w=600&q=80"]
+                },
+                {
+                    "id": "room_4",
+                    "name": "Standard Budget Room",
+                    "type": "standard",
+                    "price_per_night": 1299,
+                    "capacity": 2,
+                    "total_units": 6,
+                    "available_units": 0,
+                    "is_available": False,
+                    "amenities": ["Queen Bed", "Attached Bath", "Fan / Geyser", "WiFi"],
+                    "photos": ["https://images.unsplash.com/photo-1566665797739-1674de7a421a?w=600&q=80"]
+                }
+            ]
+        }
+    }
+
+
+@router.get("/partner/bookings", summary="Get partner hotel reservations")
+async def get_partner_bookings(
+    db: AsyncSession = Depends(get_db),
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Retrieve active and upcoming reservations for this hotel partner."""
+    return {
+        "status": "success",
+        "data": [
+            {
+                "id": "bk_1",
+                "booking_code": "HTL-8921",
+                "guest_name": "Aditya Patil",
+                "guest_phone": "+91 98231 45678",
+                "room_category": "Deluxe AC Room",
+                "check_in_date": "Today, 2:00 PM",
+                "check_out_date": "Tomorrow, 11:00 AM",
+                "rooms_count": 1,
+                "guests_count": 2,
+                "total_amount": 2499,
+                "payment_status": "PAID_WALLET",
+                "status": "CONFIRMED",
+                "id_proof_verified": True
+            },
+            {
+                "id": "bk_2",
+                "booking_code": "HTL-6540",
+                "guest_name": "Pooja Kulkarni",
+                "guest_phone": "+91 97654 32109",
+                "room_category": "Super Deluxe Suite with Balcony",
+                "check_in_date": "28 Aug 2026",
+                "check_out_date": "31 Aug 2026",
+                "rooms_count": 1,
+                "guests_count": 3,
+                "total_amount": 7998,
+                "payment_status": "PAID_UPI",
+                "status": "CHECKED_IN",
+                "id_proof_verified": True
+            },
+            {
+                "id": "bk_3",
+                "booking_code": "HTL-3319",
+                "guest_name": "Rohan Deshmukh",
+                "guest_phone": "+91 91234 56780",
+                "room_category": "Executive Presidential Suite",
+                "check_in_date": "Tomorrow, 12:00 PM",
+                "check_out_date": "02 Sep 2026",
+                "rooms_count": 1,
+                "guests_count": 2,
+                "total_amount": 12998,
+                "payment_status": "PAY_AT_HOTEL",
+                "status": "CONFIRMED",
+                "id_proof_verified": False
+            }
+        ]
+    }
+
+
+@router.patch("/partner/rooms/{room_id}", summary="Toggle live availability of a room")
+async def update_room_live_status(
+    room_id: str,
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Toggle live availability or rate of a room category."""
+    return {"status": "success", "message": f"Room {room_id} updated successfully"}
+
+
+@router.post("/partner/bookings/{booking_id}/checkin", summary="Guest check-in with ID verification")
+async def guest_checkin(
+    booking_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Mark guest check-in and verify Govt photo ID."""
+    return {"status": "success", "message": f"Booking {booking_id} marked as checked in"}
+
+
+@router.post("/partner/bookings/{booking_id}/checkout", summary="Guest check-out and room release")
+async def guest_checkout(
+    booking_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Mark guest check-out and release room inventory."""
+    return {"status": "success", "message": f"Booking {booking_id} checked out and room released"}

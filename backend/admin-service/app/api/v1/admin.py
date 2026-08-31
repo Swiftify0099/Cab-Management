@@ -482,3 +482,33 @@ async def driver_action(driver_id: str, action: str, db: AsyncSession = Depends(
 
     await db.commit()
     return SuccessResponse(success=True, message=f"Driver {action}d", data={"driver_id": driver_id})
+
+
+# ============================================================
+# ADMIN HOTEL & VEHICLE CATALOG MANAGEMENT
+# ============================================================
+
+@router.get("/admin/hotels", response_model=SuccessResponse, summary="List partner hotels for verification")
+async def admin_list_hotels(status: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+    DEMO_HOTELS = [
+        {"id": "h1", "name": "Hotel Grand Palace", "city": "Pune", "address": "FC Road, Shivajinagar", "contact_phone": "+91 20 2553 1234", "rating": 4.5, "price_per_night": 2500, "category": "premium", "status": "active", "bookings": 127},
+        {"id": "h2", "name": "Mumbai Inn & Suites", "city": "Mumbai", "address": "Bandra West, Link Road", "contact_phone": "+91 22 6545 7890", "rating": 4.2, "price_per_night": 3800, "category": "premium", "status": "active", "bookings": 89},
+        {"id": "h3", "name": "Nashik Budget Stay", "city": "Nashik", "address": "Dwarka Circle, Nashik Road", "contact_phone": "+91 253 223 4567", "rating": 3.8, "price_per_night": 800, "category": "budget", "status": "active", "bookings": 54},
+    ]
+    if status and status != "all":
+        filtered = [h for h in DEMO_HOTELS if h.get("status") == status]
+    else:
+        filtered = DEMO_HOTELS
+    return SuccessResponse(success=True, message="Hotels fetched", data=filtered)
+
+
+@router.patch("/admin/hotels/{hotel_id}", response_model=SuccessResponse, summary="Approve/reject hotel partner")
+async def admin_verify_hotel(hotel_id: str, payload: dict, db: AsyncSession = Depends(get_db)):
+    new_status = payload.get("status", "active")
+    return SuccessResponse(success=True, message=f"Hotel status updated to {new_status}", data={"id": hotel_id, "status": new_status})
+
+
+@router.get("/admin/vehicle-catalog", response_model=SuccessResponse, summary="List vehicle catalog for admin")
+async def admin_get_vehicle_catalog(db: AsyncSession = Depends(get_db)):
+    from app.api.v1.driver import VEHICLE_CATALOG_DATA
+    return SuccessResponse(success=True, message="Catalog fetched", data=VEHICLE_CATALOG_DATA)

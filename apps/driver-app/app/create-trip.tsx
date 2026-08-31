@@ -51,6 +51,18 @@ export const isUUID = (val?: string | null): boolean => {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim())
 }
 
+export const formatErrorMessage = (e: any, fallback = 'An error occurred'): string => {
+  const detail = e?.response?.data?.detail ?? e?.response?.data?.message ?? e?.message
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    return detail.map((d: any) => (typeof d === 'string' ? d : d?.msg || JSON.stringify(d))).join('\n')
+  }
+  if (detail && typeof detail === 'object') {
+    return Object.values(detail).map((v) => (typeof v === 'string' ? v : JSON.stringify(v))).join('\n')
+  }
+  return fallback
+}
+
 import MapView, { Marker, Polyline, Polygon, PROVIDER_GOOGLE, PROVIDER_DEFAULT } from 'react-native-maps'
 
 interface SavedLocationItem {
@@ -214,10 +226,56 @@ export default function CreateTripScreen() {
         setLoadingVehicles(false)
       })
 
-    // Fetch driver saved locations
+    // Fetch driver saved locations & saved addresses
+    AsyncStorage.getItem('driver_saved_addresses').then((str) => {
+      if (str) {
+        try {
+          const parsed = JSON.parse(str)
+          const extraLocs: SavedLocationItem[] = []
+          if (parsed.home) {
+            extraLocs.push({
+              id: 'home_loc',
+              label: 'Home',
+              address: parsed.home.address,
+              latitude: parsed.home.latitude,
+              longitude: parsed.home.longitude,
+              city: parsed.home.city || 'Pune',
+              location_type: 'home',
+              is_default: true,
+            })
+          }
+          if (parsed.office) {
+            extraLocs.push({
+              id: 'office_loc',
+              label: 'Office / Hub',
+              address: parsed.office.address,
+              latitude: parsed.office.latitude,
+              longitude: parsed.office.longitude,
+              city: parsed.office.city || 'Pune',
+              location_type: 'office',
+            })
+          }
+          if (parsed.other) {
+            extraLocs.push({
+              id: 'other_loc',
+              label: 'Base Hub',
+              address: parsed.other.address,
+              latitude: parsed.other.latitude,
+              longitude: parsed.other.longitude,
+              city: parsed.other.city || 'Pune',
+              location_type: 'other',
+            })
+          }
+          if (extraLocs.length > 0) {
+            setSavedLocations((prev) => [...extraLocs, ...prev.filter((p) => !extraLocs.some((e) => e.id === p.id))])
+          }
+        } catch {}
+      }
+    })
+
     api.get('/trips/saved-locations').then((res: any) => {
       if (res.data?.data && Array.isArray(res.data.data)) {
-        setSavedLocations(res.data.data)
+        setSavedLocations((prev) => [...res.data.data, ...prev])
       }
     }).catch(() => {})
 
@@ -370,8 +428,7 @@ export default function CreateTripScreen() {
       }
       setShowEditLocModal(false)
     } catch (e: any) {
-      const msg = e.response?.data?.message || e.response?.data?.detail || e.message || 'Failed to save location.'
-      Alert.alert('Save Location Error', msg)
+      Alert.alert('Save Location Error', formatErrorMessage(e, 'Failed to save location.'))
     } finally {
       setSavingLoc(false)
     }
@@ -493,8 +550,7 @@ export default function CreateTripScreen() {
         ]
       )
     } catch (e: any) {
-      const msg = e.response?.data?.message || e.response?.data?.detail || e.message || 'Failed to publish trip.'
-      Alert.alert('Publish Error', msg)
+      Alert.alert('Publish Error', formatErrorMessage(e, 'Failed to publish trip.'))
     } finally {
       setPublishing(false)
     }
@@ -568,19 +624,43 @@ export default function CreateTripScreen() {
               </TouchableOpacity>
 
               <View style={styles.quickActionsRow}>
+                {savedLocations.find((l) => l.id === 'home_loc' || l.location_type === 'home') && (
+                  <TouchableOpacity
+                    style={[styles.quickActionChip, { borderColor: '#10B981', backgroundColor: 'rgba(16,185,129,0.1)' }]}
+                    onPress={() => {
+                      const h = savedLocations.find((l) => l.id === 'home_loc' || l.location_type === 'home')
+                      if (h) setPickupData({ latitude: h.latitude, longitude: h.longitude, address: h.address, city: h.city || 'Pune' })
+                    }}
+                  >
+                    <Text style={{ fontSize: 12 }}>🏠</Text>
+                    <Text style={[styles.quickActionText, { color: '#10B981', fontWeight: '800' }]}>Home</Text>
+                  </TouchableOpacity>
+                )}
+                {savedLocations.find((l) => l.id === 'office_loc' || l.location_type === 'office') && (
+                  <TouchableOpacity
+                    style={[styles.quickActionChip, { borderColor: '#3B82F6', backgroundColor: 'rgba(59,130,246,0.1)' }]}
+                    onPress={() => {
+                      const o = savedLocations.find((l) => l.id === 'office_loc' || l.location_type === 'office')
+                      if (o) setPickupData({ latitude: o.latitude, longitude: o.longitude, address: o.address, city: o.city || 'Pune' })
+                    }}
+                  >
+                    <Text style={{ fontSize: 12 }}>🏢</Text>
+                    <Text style={[styles.quickActionText, { color: '#60A5FA', fontWeight: '800' }]}>Office</Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity
                   style={styles.quickActionChip}
                   onPress={() => setSavedLocModalTarget('pickup')}
                 >
                   <Feather name="bookmark" size={13} color="#3B82F6" />
-                  <Text style={styles.quickActionText}>Saved Locations</Text>
+                  <Text style={styles.quickActionText}>Saved</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.quickActionChip}
                   onPress={() => setLocationPickerTarget('pickup')}
                 >
                   <MaterialCommunityIcons name="crosshairs-gps" size={13} color="#10B981" />
-                  <Text style={styles.quickActionText}>Pin on Map</Text>
+                  <Text style={styles.quickActionText}>Pin Map</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -607,19 +687,43 @@ export default function CreateTripScreen() {
               </TouchableOpacity>
 
               <View style={styles.quickActionsRow}>
+                {savedLocations.find((l) => l.id === 'office_loc' || l.location_type === 'office') && (
+                  <TouchableOpacity
+                    style={[styles.quickActionChip, { borderColor: '#3B82F6', backgroundColor: 'rgba(59,130,246,0.1)' }]}
+                    onPress={() => {
+                      const o = savedLocations.find((l) => l.id === 'office_loc' || l.location_type === 'office')
+                      if (o) setDropData({ latitude: o.latitude, longitude: o.longitude, address: o.address, city: o.city || 'Pune' })
+                    }}
+                  >
+                    <Text style={{ fontSize: 12 }}>🏢</Text>
+                    <Text style={[styles.quickActionText, { color: '#60A5FA', fontWeight: '800' }]}>Office</Text>
+                  </TouchableOpacity>
+                )}
+                {savedLocations.find((l) => l.id === 'home_loc' || l.location_type === 'home') && (
+                  <TouchableOpacity
+                    style={[styles.quickActionChip, { borderColor: '#10B981', backgroundColor: 'rgba(16,185,129,0.1)' }]}
+                    onPress={() => {
+                      const h = savedLocations.find((l) => l.id === 'home_loc' || l.location_type === 'home')
+                      if (h) setDropData({ latitude: h.latitude, longitude: h.longitude, address: h.address, city: h.city || 'Pune' })
+                    }}
+                  >
+                    <Text style={{ fontSize: 12 }}>🏠</Text>
+                    <Text style={[styles.quickActionText, { color: '#10B981', fontWeight: '800' }]}>Home</Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity
                   style={styles.quickActionChip}
                   onPress={() => setSavedLocModalTarget('drop')}
                 >
                   <Feather name="bookmark" size={13} color="#3B82F6" />
-                  <Text style={styles.quickActionText}>Saved Locations</Text>
+                  <Text style={styles.quickActionText}>Saved</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.quickActionChip}
                   onPress={() => setLocationPickerTarget('drop')}
                 >
                   <MaterialCommunityIcons name="crosshairs-gps" size={13} color="#EF4444" />
-                  <Text style={styles.quickActionText}>Pin on Map</Text>
+                  <Text style={styles.quickActionText}>Pin Map</Text>
                 </TouchableOpacity>
               </View>
             </View>

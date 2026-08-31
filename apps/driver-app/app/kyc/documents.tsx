@@ -258,22 +258,27 @@ export default function DocumentUploadScreen() {
         const res = await kycApi.getDocumentDetails(doc_type).catch(() => null)
         const doc = res?.data?.data || res?.data
         if (doc) {
-          if (doc.document_number) setDocNumber(doc.document_number)
+          if (doc.document_number) setDocNumber(String(doc.document_number))
           if (config.hasExpiry && doc.expires_at) {
-            const parts = doc.expires_at.split('-')
+            const parts = String(doc.expires_at).split('-')
             if (parts.length === 3) setExpiryDate(`${parts[2]}/${parts[1]}/${parts[0]}`)
-            else setExpiryDate(doc.expires_at)
+            else setExpiryDate(String(doc.expires_at))
           }
+          const meta = doc.metadata_json || {}
+          if (meta.extra_field_1) setExtraField1(meta.extra_field_1)
+          if (meta.extra_field_2) setExtraField2(meta.extra_field_2)
+
           const pUrl = doc.access_url || doc.file_path || doc.preview_url
           if (pUrl) {
             setFrontUri(pUrl)
           }
-          if (doc.metadata_json?.back_url || doc.back_url) {
-            setBackUri(doc.metadata_json?.back_url || doc.back_url)
+          const bUrl = meta.back_url || doc.back_url
+          if (bUrl) {
+            setBackUri(bUrl)
           }
         }
-      } catch {
-        // Clean initial state for driver
+      } catch (e) {
+        console.warn('[DocUpload] Error loading doc details:', e)
       }
     }
     loadDriverDefaultsAndDoc()
@@ -330,6 +335,11 @@ export default function DocumentUploadScreen() {
     }
   }
 
+  const isLocalUri = (uri: string | null): boolean => {
+    if (!uri) return false
+    return !uri.startsWith('http://') && !uri.startsWith('https://')
+  }
+
   const handleSubmit = async () => {
     if (!frontUri && !backUri) {
       Alert.alert('Please Attach Photo', `Please capture or select the front side photo of your ${config.label}.`)
@@ -349,21 +359,23 @@ export default function DocumentUploadScreen() {
     setUploading(true)
     try {
       const formData = new FormData()
-      const mainUri = frontUri || backUri || ''
-      const filename = mainUri.split('/').pop() || `${doc_type}.jpg`
-      const match = /\.(\w+)$/.exec(filename)
-      const type = match ? `image/${match[1]}` : 'image/jpeg'
 
-      formData.append('file', {
-        uri: mainUri,
-        name: filename,
-        type,
-      } as any)
+      // Only append binary file payload if user captured/selected a new local file
+      if (frontUri && isLocalUri(frontUri)) {
+        const filename = frontUri.split('/').pop() || `${doc_type}.jpg`
+        const match = /\.(\w+)$/.exec(filename)
+        const type = match ? `image/${match[1].toLowerCase()}` : 'image/jpeg'
+        formData.append('file', {
+          uri: frontUri,
+          name: filename,
+          type,
+        } as any)
+      }
 
-      if (config.requiresBackSide && backUri && frontUri) {
+      if (config.requiresBackSide && backUri && isLocalUri(backUri)) {
         const bFilename = backUri.split('/').pop() || `${doc_type}_back.jpg`
         const bMatch = /\.(\w+)$/.exec(bFilename)
-        const bType = bMatch ? `image/${bMatch[1]}` : 'image/jpeg'
+        const bType = bMatch ? `image/${bMatch[1].toLowerCase()}` : 'image/jpeg'
         formData.append('back_file', {
           uri: backUri,
           name: bFilename,
@@ -371,9 +383,9 @@ export default function DocumentUploadScreen() {
         } as any)
       }
 
-      if (docNumber) formData.append('document_number', docNumber.trim())
-      if (config.hasExpiry && expiryDate) {
-        const parts = expiryDate.split('/')
+      if (docNumber.trim()) formData.append('document_number', docNumber.trim())
+      if (config.hasExpiry && expiryDate.trim()) {
+        const parts = expiryDate.trim().split('/')
         if (parts.length === 3) {
           formData.append('expires_at', `${parts[2]}-${parts[1]}-${parts[0]}`)
         } else {
@@ -381,11 +393,14 @@ export default function DocumentUploadScreen() {
         }
       }
 
+      if (extraField1.trim()) formData.append('extra_field_1', extraField1.trim())
+      if (extraField2.trim()) formData.append('extra_field_2', extraField2.trim())
+
       const res = await kycApi.uploadDocument(doc_type, formData)
       const uploadedData = res.data?.data || res.data
 
-      if (uploadedData?.access_url || uploadedData?.file_path) {
-        setFrontUri(uploadedData.access_url || uploadedData.file_path)
+      if (uploadedData?.access_url || uploadedData?.file_path || uploadedData?.preview_url) {
+        setFrontUri(uploadedData.access_url || uploadedData.file_path || uploadedData.preview_url)
       }
       if (uploadedData?.back_url) {
         setBackUri(uploadedData.back_url)
@@ -393,8 +408,11 @@ export default function DocumentUploadScreen() {
 
       Alert.alert(
         'Upload Successful',
-        `${config.title} submitted with authentic verified fields. Verification in progress.`,
-        [{ text: 'View Verification Status', onPress: () => router.push('/kyc/status' as any) }]
+        `${config.title} details saved and submitted with authentic verified fields.`,
+        [
+          { text: 'KYC Hub', onPress: () => router.push('/kyc/status' as any) },
+          { text: 'Done', style: 'default' },
+        ]
       )
     } catch (e: any) {
       const msg = e?.response?.data?.detail || e?.response?.data?.message || e.message || 'Failed to upload document.'

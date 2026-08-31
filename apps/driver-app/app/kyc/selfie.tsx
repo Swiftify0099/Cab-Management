@@ -2,7 +2,7 @@
  * Driver KYC Live Selfie Verification Screen (Feature 2: Driver Onboarding & KYC)
  * Pixel-perfect implementation matching approved UI mockup.
  */
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   View,
   Text,
@@ -25,6 +25,22 @@ export default function LiveSelfieScreen() {
   const { theme, isDark } = useTheme()
   const [photoUri, setPhotoUri] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
+
+  useEffect(() => {
+    const loadExistingSelfie = async () => {
+      try {
+        const res = await kycApi.getDocumentDetails('selfie').catch(() => null)
+        const doc = res?.data?.data || res?.data
+        const pUrl = doc?.access_url || doc?.file_path || doc?.preview_url
+        if (pUrl) {
+          setPhotoUri(pUrl)
+        }
+      } catch (e) {
+        console.warn('[Selfie] Load warning:', e)
+      }
+    }
+    loadExistingSelfie()
+  }, [])
 
   const handleCaptureSelfie = async () => {
     try {
@@ -57,16 +73,22 @@ export default function LiveSelfieScreen() {
 
     setUploading(true)
     try {
+      const isLocal = !photoUri.startsWith('http://') && !photoUri.startsWith('https://')
       const formData = new FormData()
-      const filename = photoUri.split('/').pop() || 'selfie.jpg'
-      const match = /\.(\w+)$/.exec(filename)
-      const type = match ? `image/${match[1]}` : 'image/jpeg'
 
-      formData.append('file', {
-        uri: photoUri,
-        name: filename,
-        type,
-      } as any)
+      if (isLocal) {
+        const filename = photoUri.split('/').pop() || 'selfie.jpg'
+        const match = /\.(\w+)$/.exec(filename)
+        const type = match ? `image/${match[1].toLowerCase()}` : 'image/jpeg'
+
+        formData.append('file', {
+          uri: photoUri,
+          name: filename,
+          type,
+        } as any)
+      }
+
+      formData.append('document_number', 'LIVE-SELFIE')
 
       await kycApi.uploadDocument('selfie', formData)
 

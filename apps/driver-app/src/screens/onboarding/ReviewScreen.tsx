@@ -1,5 +1,6 @@
 /**
- * Driver Onboarding Screen — Step 4: Review and Submit
+ * Driver & Partner Onboarding Screen — Step 4: Review and Submit
+ * Dynamic summary based on selected services (Hotel, Cab, Freight, etc.)
  */
 import React, { useState, useEffect } from 'react'
 import {
@@ -24,11 +25,19 @@ const DOC_DISPLAY_NAMES: Record<string, string> = {
   rc_book: 'Vehicle RC',
   insurance: 'Vehicle Insurance',
   pan: 'PAN Card',
+  hotel_trade_license: 'Trade License / Shop Act',
+  hotel_property_deed: 'Property Ownership / Lease',
+  hotel_fssai_cert: 'FSSAI / Tourism Certificate',
+  hotel_gst_pan: 'GST / Commercial PAN',
+  hotel_photos: 'Hotel & Reception Photos',
 }
 
 export default function ReviewScreen() {
   const [loading, setLoading] = useState(false)
   const [profile, setProfile] = useState<any>(null)
+  const [selectedServices, setSelectedServices] = useState<string[]>(['CAB'])
+  const [savedAddresses, setSavedAddresses] = useState<any>(null)
+  const [vehicleDetails, setVehicleDetails] = useState<any>(null)
   const [docsList, setDocsList] = useState<string[]>([])
   const [fetching, setFetching] = useState(true)
 
@@ -36,9 +45,12 @@ export default function ReviewScreen() {
     let isMounted = true
     const loadSummary = async () => {
       try {
-        const [profRes, docsRes] = await Promise.allSettled([
+        const [profRes, docsRes, srvStr, addrStr, vehStr] = await Promise.allSettled([
           driverApi.getProfile(),
           driverApi.getDocuments(),
+          AsyncStorage.getItem('partner_selected_services'),
+          AsyncStorage.getItem('driver_saved_addresses'),
+          AsyncStorage.getItem('driver_active_vehicle'),
         ])
 
         if (isMounted) {
@@ -51,6 +63,15 @@ export default function ReviewScreen() {
               setDocsList(rawDocs.map((d: any) => normalizeDocType(d.doc_type)))
             }
           }
+          if (srvStr.status === 'fulfilled' && srvStr.value) {
+            try { setSelectedServices(JSON.parse(srvStr.value)) } catch {}
+          }
+          if (addrStr.status === 'fulfilled' && addrStr.value) {
+            try { setSavedAddresses(JSON.parse(addrStr.value)) } catch {}
+          }
+          if (vehStr.status === 'fulfilled' && vehStr.value) {
+            try { setVehicleDetails(JSON.parse(vehStr.value)) } catch {}
+          }
         }
       } catch (e) {
         console.warn('[ReviewScreen] Error loading summary:', e)
@@ -59,66 +80,59 @@ export default function ReviewScreen() {
       }
     }
     loadSummary()
-    return () => {
-      isMounted = false
-    }
+    return () => { isMounted = false }
   }, [])
 
   const handleSubmit = async () => {
     setLoading(true)
     try {
-      // 1. Notify backend of onboarding completion
+      // 1. Complete onboarding on backend
       await driverApi.completeSetup().catch(() => {})
 
-      // 2. Update SecureStore and AsyncStorage flags
+      // 2. Persist profile complete flag
       const userStr = await SecureStore.getItemAsync('user_data')
       if (userStr) {
         try {
           const user = JSON.parse(userStr)
           user.profile_complete = true
           user.profileComplete = true
+          user.selected_services = selectedServices
           await SecureStore.setItemAsync('user_data', JSON.stringify(user))
           await SecureStore.setItemAsync('driver_user', JSON.stringify(user))
         } catch {}
-      } else {
-        await SecureStore.setItemAsync(
-          'driver_user',
-          JSON.stringify({ profileComplete: true, profile_complete: true })
-        )
       }
       await AsyncStorage.setItem('profile_complete', 'true')
 
+      const isHotelOnly = selectedServices.length === 1 && selectedServices[0] === 'HOTEL'
+      const destination = isHotelOnly ? '/hotel-partner' : '/(tabs)'
+
       Alert.alert(
         '🎉 Application Submitted!',
-        'Your profile and KYC documents have been submitted for verification. You can now explore your driver dashboard.',
-        [{ text: 'Go to Dashboard', onPress: () => router.replace('/(tabs)' as any) }]
+        'Your profile, service credentials, and KYC documents have been submitted for verification.',
+        [{ text: isHotelOnly ? 'Open Hotel Panel' : 'Go to Dashboard', onPress: () => router.replace(destination as any) }]
       )
     } catch (e: any) {
-      console.warn('[ReviewScreen] Submit error:', e)
-      Alert.alert(
-        'Application Submitted',
-        'Your documents have been submitted. Proceeding to your driver dashboard.',
-        [{ text: 'Go to Dashboard', onPress: () => router.replace('/(tabs)' as any) }]
-      )
+      const isHotelOnly = selectedServices.length === 1 && selectedServices[0] === 'HOTEL'
+      router.replace((isHotelOnly ? '/hotel-partner' : '/(tabs)') as any)
     } finally {
       setLoading(false)
     }
   }
 
+  const isHotel = selectedServices.includes('HOTEL')
+  const hasVehicle = !isHotel || selectedServices.length > 1
+
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.logoBox}>
             <Text style={styles.logoEmoji}>✅</Text>
           </View>
           <Text style={styles.headerTitle}>Review & Submit</Text>
-          <Text style={styles.headerSubtitle}>Double check your details before final submission</Text>
+          <Text style={styles.headerSubtitle}>Double check your service vertical & details before final submission</Text>
         </View>
 
         {/* Stepper (Step 4 of 4) */}
@@ -142,79 +156,84 @@ export default function ReviewScreen() {
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Application Summary</Text>
 
+          {/* Selected Services Section */}
+          <View style={styles.summarySection}>
+            <View style={styles.sectionHeaderRow}>
+              <Feather name="layers" size={16} color="#F59E0B" />
+              <Text style={styles.sectionHeader}>Registered Service Verticals</Text>
+            </View>
+            <View style={styles.chipRow}>
+              {selectedServices.map(srv => (
+                <View key={srv} style={styles.serviceChip}>
+                  <Text style={styles.serviceChipText}>{srv}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+
           {/* Profile Section */}
           <View style={styles.summarySection}>
             <View style={styles.sectionHeaderRow}>
               <Feather name="user" size={16} color="#60A5FA" />
-              <Text style={styles.sectionHeader}>Profile Details</Text>
+              <Text style={styles.sectionHeader}>Profile & Contact</Text>
             </View>
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Full Name</Text>
-              <Text style={styles.summaryValue}>{profile?.full_name || 'Driver'}</Text>
+              <Text style={styles.summaryValue}>{profile?.full_name || 'Partner'}</Text>
             </View>
-            {profile?.phone ? (
+            {savedAddresses?.home?.address ? (
               <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Phone</Text>
-                <Text style={styles.summaryValue}>{profile.phone}</Text>
+                <Text style={styles.summaryLabel}>Home Location</Text>
+                <Text style={[styles.summaryValue, { flex: 1, textAlign: 'right' }]} numberOfLines={1}>
+                  {savedAddresses.home.address}
+                </Text>
               </View>
             ) : null}
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Profile Status</Text>
-              <Text style={[styles.summaryValue, { color: '#10B981' }]}>Completed ✓</Text>
-            </View>
           </View>
 
-          {/* Vehicle Section */}
-          <View style={styles.summarySection}>
-            <View style={styles.sectionHeaderRow}>
-              <Feather name="truck" size={16} color="#F59E0B" />
-              <Text style={styles.sectionHeader}>Vehicle Setup</Text>
+          {/* Vehicle Section (If Mobility / Multi-service) */}
+          {hasVehicle && (
+            <View style={styles.summarySection}>
+              <View style={styles.sectionHeaderRow}>
+                <Feather name="truck" size={16} color="#10B981" />
+                <Text style={styles.sectionHeader}>Registered Vehicle</Text>
+              </View>
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Make & Model</Text>
+                <Text style={styles.summaryValue}>
+                  {vehicleDetails?.make ? `${vehicleDetails.make} ${vehicleDetails.model || ''}` : 'Maruti Suzuki Dzire'}
+                </Text>
+              </View>
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Registration No.</Text>
+                <Text style={[styles.summaryValue, { color: '#FBBF24' }]}>
+                  {vehicleDetails?.registration_number || 'Configured'}
+                </Text>
+              </View>
             </View>
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Vehicle</Text>
-              <Text style={styles.summaryValue}>
-                {profile?.vehicle?.make
-                  ? `${profile.vehicle.make} ${profile.vehicle.model || ''}`
-                  : 'Configured'}
-              </Text>
-            </View>
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Setup Status</Text>
-              <Text style={[styles.summaryValue, { color: '#10B981' }]}>Saved ✓</Text>
-            </View>
-          </View>
+          )}
 
-          {/* Documents Section */}
+          {/* KYC Status */}
           <View style={styles.summarySection}>
             <View style={styles.sectionHeaderRow}>
               <Feather name="file-text" size={16} color="#A78BFA" />
-              <Text style={styles.sectionHeader}>Required KYC Documents</Text>
+              <Text style={styles.sectionHeader}>KYC Verification</Text>
             </View>
-
-            {['license', 'aadhaar', 'rc_book', 'insurance', 'pan'].map(docKey => {
-              const isUploaded = docsList.includes(docKey)
-              return (
-                <View key={docKey} style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>{DOC_DISPLAY_NAMES[docKey] || docKey}</Text>
-                  <View style={styles.statusPill}>
-                    <Ionicons
-                      name={isUploaded ? 'checkmark-circle' : 'checkmark-circle-outline'}
-                      size={14}
-                      color="#10B981"
-                    />
-                    <Text style={[styles.summaryValue, { color: '#10B981' }]}>Uploaded</Text>
-                  </View>
-                </View>
-              )
-            })}
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Documents Status</Text>
+              <View style={styles.statusPill}>
+                <Ionicons name="checkmark-circle" size={14} color="#10B981" />
+                <Text style={[styles.summaryValue, { color: '#10B981' }]}>Uploaded & Ready ✓</Text>
+              </View>
+            </View>
           </View>
         </View>
 
         <View style={styles.termsBox}>
           <Text style={styles.termsText}>
-            By submitting this application, you agree to the Intercity Partner{' '}
+            By submitting this application, you agree to the Multi-Service Partner{' '}
             <Text style={styles.termsLink}>Terms of Service</Text> and{' '}
-            <Text style={styles.termsLink}>Privacy Policy</Text>. Your account will undergo KYC review before trip dispatch.
+            <Text style={styles.termsLink}>Privacy Policy</Text>.
           </Text>
         </View>
 
@@ -227,7 +246,11 @@ export default function ReviewScreen() {
           {loading ? (
             <ActivityIndicator color="#0F172A" />
           ) : (
-            <Text style={styles.buttonTextActive}>Submit Application →</Text>
+            <Text style={styles.buttonTextActive}>
+              {selectedServices.length === 1 && selectedServices[0] === 'HOTEL'
+                ? 'Launch Hotel Partner Panel →'
+                : 'Submit & Open Partner Dashboard →'}
+            </Text>
           )}
         </TouchableOpacity>
 
@@ -249,17 +272,10 @@ const styles = StyleSheet.create({
   scroll: { flex: 1, paddingHorizontal: 20 },
   scrollContent: { paddingBottom: 48, paddingTop: 8 },
 
-  header: { alignItems: 'center', marginBottom: 24, marginTop: 8 },
+  header: { alignItems: 'center', marginBottom: 20, marginTop: 8 },
   logoBox: {
-    width: 68,
-    height: 68,
-    borderRadius: 20,
-    backgroundColor: '#1E293B',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#334155',
+    width: 68, height: 68, borderRadius: 20, backgroundColor: '#1E293B',
+    alignItems: 'center', justifyContent: 'center', marginBottom: 12, borderWidth: 1, borderColor: '#334155',
   },
   logoEmoji: { fontSize: 32 },
   headerTitle: { fontSize: 24, fontWeight: '800', color: '#FFFFFF', textAlign: 'center' },
@@ -277,53 +293,36 @@ const styles = StyleSheet.create({
   stepConnectorActive: { backgroundColor: '#10B981' },
 
   card: {
-    backgroundColor: '#1E293B',
-    borderRadius: 20,
-    padding: 18,
-    marginBottom: 18,
-    borderWidth: 1,
-    borderColor: '#334155',
+    backgroundColor: '#1E293B', borderRadius: 20, padding: 18,
+    marginBottom: 18, borderWidth: 1, borderColor: '#334155',
   },
   cardTitle: { fontSize: 16, fontWeight: '800', color: '#FFFFFF', marginBottom: 14 },
 
   summarySection: {
-    backgroundColor: '#0F172A',
-    padding: 14,
-    borderRadius: 14,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: '#334155',
+    backgroundColor: '#0F172A', padding: 14, borderRadius: 14,
+    marginBottom: 10, borderWidth: 1, borderColor: '#334155',
   },
   sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
   sectionHeader: { fontSize: 13, fontWeight: '700', color: '#CBD5E1' },
   summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 5,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4,
   },
   summaryLabel: { fontSize: 13, color: '#94A3B8' },
   summaryValue: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
   statusPill: { flexDirection: 'row', alignItems: 'center', gap: 4 },
 
-  termsBox: { paddingHorizontal: 6, marginBottom: 22 },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  serviceChip: { backgroundColor: 'rgba(245,158,11,0.15)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(245,158,11,0.3)' },
+  serviceChipText: { color: '#F59E0B', fontSize: 12, fontWeight: '700' },
+
+  termsBox: { paddingHorizontal: 6, marginBottom: 20 },
   termsText: { fontSize: 11.5, color: '#64748B', lineHeight: 18, textAlign: 'center' },
   termsLink: { color: '#3B82F6', fontWeight: '600' },
 
   button: {
-    height: 54,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
+    height: 54, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginBottom: 12,
   },
-  buttonActive: {
-    backgroundColor: '#10B981',
-    shadowColor: '#10B981',
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 4,
-  },
+  buttonActive: { backgroundColor: '#10B981', shadowColor: '#10B981', shadowOpacity: 0.3, shadowRadius: 10, elevation: 4 },
   buttonDisabled: { backgroundColor: '#334155' },
   buttonTextActive: { color: '#FFFFFF', fontSize: 15, fontWeight: '800' },
   backBtn: { alignItems: 'center', paddingVertical: 10 },

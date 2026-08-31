@@ -197,9 +197,28 @@ export const driverApi = {
   setupVehicle: (data: any) => api.post('/driver/me/vehicle', data),
   uploadDocument: (docType: string, formData: FormData) => {
     const norm = normalizeDocType(docType)
-    return api.post(`/driver/me/documents/${norm}`, formData)
+    return api
+      .post(`/driver/kyc/documents/${norm}`, formData)
+      .catch(() => api.post(`/driver/me/documents/${norm}`, formData))
   },
-  getDocuments: () => api.get('/driver/me/documents'),
+  getDocuments: async () => {
+    try {
+      const res = await api.get('/driver/kyc/dashboard')
+      const d = res.data?.data || res.data
+      if (d?.sections) {
+        const allItems: any[] = []
+        d.sections.forEach((s: any) => {
+          if (Array.isArray(s.items)) {
+            allItems.push(...s.items)
+          }
+        })
+        return { ...res, data: { ...res.data, data: allItems } }
+      }
+      return await api.get('/driver/me/documents')
+    } catch {
+      return await api.get('/driver/me/documents')
+    }
+  },
   getOnboardingStatus: () => api.get('/driver/me/onboarding-status'),
   completeSetup: () =>
     api.post('/driver/setup/complete').catch(() => api.get('/driver/me/onboarding-status')),
@@ -214,13 +233,20 @@ export const driverApi = {
 // ── Dedicated Driver KYC & Document Lifecycle API ──────────────────────────
 export const kycApi = {
   getDashboard: () => api.get('/driver/kyc/dashboard').catch(() => api.get('/driver/verification/status')),
-  getDocumentDetails: (docType: string) => {
+  getDocumentDetails: async (docType: string) => {
     const norm = normalizeDocType(docType)
-    return api.get('/driver/me/documents').then(res => {
-      const docs = res.data?.data || res.data || []
-      const found = Array.isArray(docs) ? docs.find((d: any) => d.doc_type === norm) : null
-      return { data: { data: found } }
-    }).catch(() => api.get(`/driver/kyc/documents/${norm}`))
+    try {
+      const res = await api.get(`/driver/kyc/documents/${norm}`)
+      return res
+    } catch {
+      return api.get('/driver/me/documents').then((res) => {
+        const docs = res.data?.data || res.data || []
+        const found = Array.isArray(docs)
+          ? docs.find((d: any) => normalizeDocType(d.doc_type) === norm)
+          : null
+        return { data: { data: found } }
+      })
+    }
   },
   getDocumentAccessUrl: (docType: string) => {
     const norm = normalizeDocType(docType)
@@ -228,9 +254,9 @@ export const kycApi = {
   },
   uploadDocument: (docType: string, formData: FormData) => {
     const norm = normalizeDocType(docType)
-    return api.post(`/driver/me/documents/${norm}`, formData).catch(() =>
-      api.post(`/driver/kyc/documents/${norm}`, formData)
-    )
+    return api
+      .post(`/driver/kyc/documents/${norm}`, formData)
+      .catch(() => api.post(`/driver/me/documents/${norm}`, formData))
   },
   getBankAccount: () => api.get('/driver/kyc/bank-account'),
   submitBankAccount: (data: {

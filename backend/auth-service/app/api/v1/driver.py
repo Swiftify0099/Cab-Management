@@ -1504,3 +1504,213 @@ async def driver_ai_copilot(
 
     reply_fallback = f"⚡ Driver Copilot: Based on your current stats in {city} (Rating: {rating} ★, Total Trips: {trips}), head towards high demand tech parks and airport corridors during peak hours (6 PM - 9 PM) to maximize your hourly earnings!"
     return APIResponse(message="AI analysis complete", data={"reply": reply_fallback})
+
+
+# ============================================================
+# VEHICLE CATALOG & SAVED ADDRESSES
+# ============================================================
+
+VEHICLE_CATALOG_DATA = [
+    {
+        "brand": "Maruti Suzuki",
+        "logo_icon": "🚗",
+        "category": "car",
+        "models": [
+            {"model": "Dzire", "vehicle_type": "sedan", "seat_capacity": 4, "fuel_types": ["CNG", "Petrol"], "display_type": "Sedan"},
+            {"model": "Swift", "vehicle_type": "mini", "seat_capacity": 4, "fuel_types": ["Petrol", "CNG"], "display_type": "Hatchback / Mini"},
+            {"model": "WagonR", "vehicle_type": "mini", "seat_capacity": 4, "fuel_types": ["CNG", "Petrol"], "display_type": "Hatchback / Mini"},
+            {"model": "Ertiga", "vehicle_type": "suv", "seat_capacity": 6, "fuel_types": ["CNG", "Petrol"], "display_type": "MPV / 6 Seater"},
+            {"model": "Baleno", "vehicle_type": "mini", "seat_capacity": 4, "fuel_types": ["Petrol", "CNG"], "display_type": "Hatchback / Mini"},
+            {"model": "Brezza", "vehicle_type": "suv", "seat_capacity": 4, "fuel_types": ["Petrol", "CNG"], "display_type": "Compact SUV"},
+            {"model": "Ciaz", "vehicle_type": "sedan", "seat_capacity": 4, "fuel_types": ["Petrol"], "display_type": "Premium Sedan"},
+            {"model": "XL6", "vehicle_type": "suv", "seat_capacity": 6, "fuel_types": ["Petrol", "CNG"], "display_type": "MPV / 6 Seater"},
+            {"model": "Grand Vitara", "vehicle_type": "suv", "seat_capacity": 4, "fuel_types": ["Hybrid", "Petrol", "CNG"], "display_type": "SUV"},
+        ],
+    },
+    {
+        "brand": "Hyundai",
+        "logo_icon": "🚘",
+        "category": "car",
+        "models": [
+            {"model": "Aura", "vehicle_type": "sedan", "seat_capacity": 4, "fuel_types": ["CNG", "Petrol"], "display_type": "Sedan"},
+            {"model": "Grand i10 Nios", "vehicle_type": "mini", "seat_capacity": 4, "fuel_types": ["Petrol", "CNG"], "display_type": "Hatchback / Mini"},
+            {"model": "Creta", "vehicle_type": "suv", "seat_capacity": 4, "fuel_types": ["Diesel", "Petrol"], "display_type": "Mid-size SUV"},
+            {"model": "Verna", "vehicle_type": "sedan", "seat_capacity": 4, "fuel_types": ["Petrol"], "display_type": "Premium Sedan"},
+            {"model": "Venue", "vehicle_type": "suv", "seat_capacity": 4, "fuel_types": ["Petrol", "Diesel"], "display_type": "Compact SUV"},
+            {"model": "Alcazar", "vehicle_type": "suv", "seat_capacity": 6, "fuel_types": ["Diesel", "Petrol"], "display_type": "SUV / 6-7 Seater"},
+        ],
+    },
+    {
+        "brand": "Tata Motors",
+        "logo_icon": "🚙",
+        "category": "car",
+        "models": [
+            {"model": "Tigor / Tigor EV", "vehicle_type": "sedan", "seat_capacity": 4, "fuel_types": ["Electric", "CNG", "Petrol"], "display_type": "Sedan / EV"},
+            {"model": "Tiago / Tiago EV", "vehicle_type": "mini", "seat_capacity": 4, "fuel_types": ["Electric", "CNG", "Petrol"], "display_type": "Hatchback / EV"},
+            {"model": "Nexon / Nexon EV", "vehicle_type": "suv", "seat_capacity": 4, "fuel_types": ["Electric", "Petrol", "Diesel"], "display_type": "Compact SUV"},
+            {"model": "Punch / Punch EV", "vehicle_type": "mini", "seat_capacity": 4, "fuel_types": ["Petrol", "CNG", "Electric"], "display_type": "Micro SUV"},
+            {"model": "Harrier", "vehicle_type": "suv", "seat_capacity": 4, "fuel_types": ["Diesel"], "display_type": "Premium SUV"},
+            {"model": "Safari", "vehicle_type": "suv", "seat_capacity": 6, "fuel_types": ["Diesel"], "display_type": "Luxury SUV / 6-7 Seater"},
+            {"model": "Tata Ace (Chota Hathi)", "vehicle_type": "goods_carrier", "seat_capacity": 2, "fuel_types": ["Diesel", "CNG"], "display_type": "Goods Mini Truck"},
+        ],
+    },
+    {
+        "brand": "Mahindra",
+        "logo_icon": "🚙",
+        "category": "car",
+        "models": [
+            {"model": "Scorpio-N", "vehicle_type": "suv", "seat_capacity": 6, "fuel_types": ["Diesel", "Petrol"], "display_type": "SUV / 6-7 Seater"},
+            {"model": "Scorpio Classic", "vehicle_type": "suv", "seat_capacity": 6, "fuel_types": ["Diesel"], "display_type": "SUV / 7 Seater"},
+            {"model": "XUV700", "vehicle_type": "suv", "seat_capacity": 6, "fuel_types": ["Diesel", "Petrol"], "display_type": "Luxury SUV / 6-7 Seater"},
+            {"model": "Bolero", "vehicle_type": "suv", "seat_capacity": 6, "fuel_types": ["Diesel"], "display_type": "Utility SUV / 7 Seater"},
+            {"model": "Thar / Thar Roxx", "vehicle_type": "suv", "seat_capacity": 4, "fuel_types": ["Diesel", "Petrol"], "display_type": "Off-Road 4x4"},
+        ],
+    },
+    {
+        "brand": "Toyota",
+        "logo_icon": "🚘",
+        "category": "car",
+        "models": [
+            {"model": "Innova Crysta", "vehicle_type": "suv", "seat_capacity": 6, "fuel_types": ["Diesel"], "display_type": "Premium MPV / 6-7 Seater"},
+            {"model": "Innova Hycross", "vehicle_type": "suv", "seat_capacity": 6, "fuel_types": ["Hybrid", "Petrol"], "display_type": "Luxury Hybrid MPV"},
+            {"model": "Fortuner", "vehicle_type": "premium_suv", "seat_capacity": 6, "fuel_types": ["Diesel", "Petrol"], "display_type": "Luxury Full-size SUV"},
+            {"model": "Glanza", "vehicle_type": "mini", "seat_capacity": 4, "fuel_types": ["Petrol", "CNG"], "display_type": "Hatchback / Mini"},
+        ],
+    },
+    {
+        "brand": "Bajaj Auto",
+        "logo_icon": "🛺",
+        "category": "auto",
+        "models": [
+            {"model": "Compact RE 4S Auto", "vehicle_type": "auto", "seat_capacity": 3, "fuel_types": ["CNG", "LPG", "Petrol"], "display_type": "3-Wheeler Passenger Auto"},
+            {"model": "Maxima Z Auto", "vehicle_type": "auto", "seat_capacity": 4, "fuel_types": ["CNG", "Diesel"], "display_type": "Large Passenger Auto"},
+        ],
+    },
+    {
+        "brand": "Force Motors",
+        "logo_icon": "🚐",
+        "category": "traveller",
+        "models": [
+            {"model": "Traveller 3050 (9-12 Seater)", "vehicle_type": "tempo_traveller", "seat_capacity": 12, "fuel_types": ["Diesel"], "display_type": "Tempo Traveller / 12 Seats"},
+            {"model": "Traveller 3350 (13-17 Seater)", "vehicle_type": "tempo_traveller", "seat_capacity": 16, "fuel_types": ["Diesel"], "display_type": "Tempo Traveller / 16 Seats"},
+        ],
+    },
+]
+
+@router.get(
+    "/vehicle-catalog",
+    response_model=APIResponse[list],
+    summary="Get authoritative Indian vehicle catalog (brands, models, types, capacities)",
+)
+async def get_vehicle_catalog():
+    """Returns categorized brands, models, body types, and seat capacities for onboarding."""
+    return APIResponse(
+        message="Vehicle catalog fetched successfully",
+        data=VEHICLE_CATALOG_DATA,
+    )
+
+
+class SavedAddressPayload(BaseModel):
+    home: Optional[dict] = None
+    office: Optional[dict] = None
+    other: Optional[dict] = None
+
+
+@router.get(
+    "/saved-addresses",
+    response_model=APIResponse[dict],
+    summary="Get driver map-saved addresses (Home, Office, Other)",
+)
+async def get_saved_addresses(
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Driver).where(Driver.user_id == current_user.id))
+    driver = result.scalar_one_or_none()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver profile not found")
+
+    home_data = None
+    if driver.home_city or getattr(driver, "home_address", None):
+        home_data = {
+            "label": "Home",
+            "address": getattr(driver, "home_address", None) or f"{driver.home_city}, India",
+            "city": driver.home_city or "Pune",
+            "latitude": getattr(driver, "home_lat", 18.5204) or 18.5204,
+            "longitude": getattr(driver, "home_lng", 73.8567) or 73.8567,
+        }
+
+    return APIResponse(
+        message="Saved addresses fetched",
+        data={"home": home_data, "office": None, "other": None},
+    )
+
+
+@router.post(
+    "/saved-addresses",
+    response_model=APIResponse[dict],
+    summary="Save driver map-picked addresses (Home, Office, Other)",
+)
+async def save_driver_addresses(
+    payload: SavedAddressPayload,
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Driver).where(Driver.user_id == current_user.id))
+    driver = result.scalar_one_or_none()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver profile not found")
+
+    if payload.home:
+        if payload.home.get("city"):
+            driver.home_city = payload.home.get("city")
+        if hasattr(driver, "home_address") and payload.home.get("address"):
+            driver.home_address = payload.home.get("address")
+        if hasattr(driver, "home_lat") and payload.home.get("latitude"):
+            driver.home_lat = float(payload.home.get("latitude"))
+        if hasattr(driver, "home_lng") and payload.home.get("longitude"):
+            driver.home_lng = float(payload.home.get("longitude"))
+
+    await db.commit()
+
+    return APIResponse(
+        message="Addresses saved successfully",
+        data=payload.model_dump(),
+    )
+
+
+@router.get(
+    "/me/vehicle",
+    response_model=APIResponse[dict],
+    summary="Get current active vehicle details",
+)
+async def get_my_vehicle(
+    current_user: AuthenticatedUser = Depends(get_current_active_driver),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Driver).where(Driver.user_id == current_user.id))
+    driver = result.scalar_one_or_none()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver profile not found")
+
+    veh_res = await db.execute(select(Vehicle).where(Vehicle.driver_id == driver.id))
+    vehicle = veh_res.scalars().first()
+
+    if not vehicle:
+        return APIResponse(message="No vehicle registered", data=None)
+
+    return APIResponse(
+        message="Vehicle details fetched",
+        data={
+            "id": str(vehicle.id),
+            "make": vehicle.make,
+            "model": vehicle.model,
+            "year": vehicle.year,
+            "color": vehicle.color,
+            "registration_number": vehicle.registration_number,
+            "vehicle_type": vehicle.vehicle_type.value if hasattr(vehicle.vehicle_type, "value") else str(vehicle.vehicle_type),
+            "seat_capacity": vehicle.seat_capacity,
+            "fuel_type": getattr(vehicle, "fuel_type", "petrol"),
+            "is_active": vehicle.is_active,
+        },
+    )

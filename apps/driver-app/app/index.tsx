@@ -15,6 +15,7 @@ import {
 import { useRouter } from 'expo-router'
 import { LinearGradient } from 'expo-linear-gradient'
 import * as SecureStore from 'expo-secure-store'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { api } from '../src/api/client'
 
 const { width, height } = Dimensions.get('window')
@@ -133,7 +134,21 @@ export default function MultiServiceFlashScreen() {
               await api.post('/driver/claim-driver-role', {})
             } catch {}
           }
-          destination = '/(tabs)'
+          const srvStr = await AsyncStorage.getItem('partner_selected_services')
+          if (srvStr) {
+            try {
+              const srvList = JSON.parse(srvStr)
+              if (Array.isArray(srvList) && srvList.length === 1 && srvList[0] === 'HOTEL') {
+                destination = '/hotel-partner'
+              } else {
+                destination = '/(tabs)'
+              }
+            } catch {
+              destination = '/(tabs)'
+            }
+          } else {
+            destination = '/(tabs)'
+          }
         }
       } catch (err) {
         console.warn('[FlashScreen] Auth check notice:', err)

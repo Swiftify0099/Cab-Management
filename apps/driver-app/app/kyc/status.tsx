@@ -271,7 +271,7 @@ export default function DocumentStatusScreen() {
   // Authentic visual card renderer (used for both thumbnail and full modal)
   const renderAuthenticCard = (item: KYCItem, isModal: boolean = false) => {
     const docNum = item.document_number || 'VERIFIED-DOC'
-    const name = driverName || 'Pankaj Yewale'
+    const name = driverName || 'Driver Partner'
 
     switch (item.doc_type) {
       case 'aadhaar':
@@ -318,7 +318,7 @@ export default function DocumentStatusScreen() {
             <Text style={isModal ? styles.cardNumLarge : styles.cardNumSmall}>{docNum}</Text>
             <View style={styles.cardFooterRow}>
               <Text style={styles.cardNameText}>{name}</Text>
-              <Text style={styles.cardValidText}>{item.expiry_label ? `Exp: ${item.expiry_label}` : 'Valid 2028'}</Text>
+              <Text style={styles.cardValidText}>{item.expiry_label ? `Exp: ${item.expiry_label}` : 'Transport Valid'}</Text>
             </View>
           </View>
         )
@@ -330,11 +330,11 @@ export default function DocumentStatusScreen() {
               <Text style={styles.cardGovtText}>CERTIFICATE OF REGISTRATION (FORM 23)</Text>
               <Text style={styles.cardSealText}>VAHAN</Text>
             </View>
-            <Text style={isModal ? styles.cardTitleLarge : styles.cardTitleSmall}>Vehicle RC (Maruti Suzuki XL6)</Text>
+            <Text style={isModal ? styles.cardTitleLarge : styles.cardTitleSmall}>Vehicle Certificate of Registration</Text>
             <Text style={isModal ? styles.cardNumLarge : styles.cardNumSmall}>{docNum}</Text>
             <View style={styles.cardFooterRow}>
               <Text style={styles.cardNameText}>{name}</Text>
-              <Text style={styles.cardValidText}>{item.expiry_label ? `Fitness: ${item.expiry_label}` : 'Fitness 2035'}</Text>
+              <Text style={styles.cardValidText}>{item.expiry_label ? `Fitness: ${item.expiry_label}` : 'Fitness Valid'}</Text>
             </View>
           </View>
         )
@@ -343,14 +343,14 @@ export default function DocumentStatusScreen() {
         return (
           <View style={[isModal ? styles.modalInsuranceCard : styles.thumbInsuranceCard]}>
             <View style={styles.cardHeaderRow}>
-              <Text style={styles.cardGovtText}>ICICI LOMBARD GENERAL INSURANCE</Text>
+              <Text style={styles.cardGovtText}>COMMERCIAL VEHICLE INSURANCE</Text>
               <Text style={styles.cardSealText}>ACTIVE</Text>
             </View>
             <Text style={isModal ? styles.cardTitleLarge : styles.cardTitleSmall}>Commercial Passenger Policy</Text>
             <Text style={isModal ? styles.cardNumLarge : styles.cardNumSmall}>{docNum}</Text>
             <View style={styles.cardFooterRow}>
-              <Text style={styles.cardNameText}>MH 10 X 5615</Text>
-              <Text style={styles.cardValidText}>{item.expiry_label ? `Upto: ${item.expiry_label}` : 'Valid 2027'}</Text>
+              <Text style={styles.cardNameText}>{name}</Text>
+              <Text style={styles.cardValidText}>{item.expiry_label ? `Upto: ${item.expiry_label}` : 'Valid'}</Text>
             </View>
           </View>
         )
@@ -362,11 +362,11 @@ export default function DocumentStatusScreen() {
               <Text style={styles.cardGovtText}>TRANSPORT DEPT • COMMERCIAL PERMIT</Text>
               <Text style={styles.cardSealText}>AITP</Text>
             </View>
-            <Text style={isModal ? styles.cardTitleLarge : styles.cardTitleSmall}>All Maharashtra & Intercity Permit</Text>
+            <Text style={isModal ? styles.cardTitleLarge : styles.cardTitleSmall}>Commercial Transport Permit</Text>
             <Text style={isModal ? styles.cardNumLarge : styles.cardNumSmall}>{docNum}</Text>
             <View style={styles.cardFooterRow}>
               <Text style={styles.cardNameText}>{name}</Text>
-              <Text style={styles.cardValidText}>{item.expiry_label ? `Upto: ${item.expiry_label}` : 'Valid 2028'}</Text>
+              <Text style={styles.cardValidText}>{item.expiry_label ? `Upto: ${item.expiry_label}` : 'Valid'}</Text>
             </View>
           </View>
         )
@@ -378,11 +378,11 @@ export default function DocumentStatusScreen() {
               <Text style={styles.cardGovtText}>POLLUTION UNDER CONTROL CERTIFICATE</Text>
               <Text style={styles.cardSealText}>BS-VI</Text>
             </View>
-            <Text style={isModal ? styles.cardTitleLarge : styles.cardTitleSmall}>Emission Compliance (Passed)</Text>
+            <Text style={isModal ? styles.cardTitleLarge : styles.cardTitleSmall}>Emission Compliance Certificate</Text>
             <Text style={isModal ? styles.cardNumLarge : styles.cardNumSmall}>{docNum}</Text>
             <View style={styles.cardFooterRow}>
-              <Text style={styles.cardNameText}>MH 10 X 5615</Text>
-              <Text style={styles.cardValidText}>{item.expiry_label ? `Valid: ${item.expiry_label}` : 'Valid 2027'}</Text>
+              <Text style={styles.cardNameText}>{name}</Text>
+              <Text style={styles.cardValidText}>{item.expiry_label ? `Valid: ${item.expiry_label}` : 'Valid'}</Text>
             </View>
           </View>
         )
