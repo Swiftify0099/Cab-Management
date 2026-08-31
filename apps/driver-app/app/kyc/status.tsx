@@ -181,11 +181,15 @@ export default function DocumentStatusScreen() {
         items: sec.items.map((it: any) => {
           const normKey = it.doc_type || it.key
           const localItem = cachedDocs[normKey]
-          if (localItem && (localItem.uploaded || localItem.status === 'approved')) {
+          if (localItem && (localItem.uploaded || localItem.status)) {
+            const isApproved = isFullyVerified || it.status === 'approved' || localItem.status === 'approved'
+            const isRejected = it.status === 'rejected' || localItem.status === 'rejected'
+            const status = isRejected ? 'rejected' : isApproved ? 'approved' : 'under_review'
+            const status_label = isRejected ? 'Action Required' : isApproved ? 'Approved' : 'Under Review'
             return {
               ...it,
-              status: it.status === 'rejected' ? 'rejected' : 'approved',
-              status_label: it.status === 'rejected' ? 'Action Required' : 'Approved',
+              status,
+              status_label,
               document_number: it.document_number || localItem.document_number || undefined,
               preview_url: it.preview_url || localItem.front_uri || undefined,
             }

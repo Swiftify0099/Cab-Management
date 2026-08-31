@@ -59,6 +59,13 @@ async def create_user_if_not_exists(
     await db.flush()
     await db.refresh(user)
 
+    if role == UserRole.CUSTOMER:
+        from app.services.profile_service import get_or_create_customer_profile
+        try:
+            await get_or_create_customer_profile(db=db, user=user)
+        except Exception as e:
+            logger.warning("auto_create_customer_profile_failed", error=str(e))
+
     logger.info("New user created", user_id=str(user.id), phone=phone, role=role.value)
     return user, True
 

@@ -24,7 +24,8 @@ from typing import List, Optional, Dict, Any, Tuple
 
 import structlog
 from fastapi import HTTPException, status
-from sqlalchemy import select, update, desc, func
+from sqlalchemy import select, update, desc, func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.vehicle import (
@@ -180,10 +181,113 @@ async def create_driver_vehicle(
     data: VehicleCreateRequest,
 ) -> Vehicle:
     """
-    Registers a new vehicle for a driver.
+    Registers a new vehicle for a driver or updates if owned by the same driver.
     Enforces maximum vehicle limit and unique registration number formatting.
     """
-    # 1. Check maximum vehicle count
+    clean_reg = data.registration_number.upper().strip()
+    norm_reg = clean_reg.replace(" ", "").replace("-", "")
+
+    # 1. Check registration number uniqueness or existing vehicle
+    existing_res = await db.execute(
+        select(Vehicle).where(
+            or_(
+                Vehicle.registration_number == clean_reg,
+                func.replace(func.replace(Vehicle.registration_number, " ", ""), "-", "") == norm_reg,
+            )
+        )
+    )
+    existing_v = existing_res.scalars().first()
+
+    # Determine capabilities & defaults
+    caps = list(data.service_capabilities or [])
+    v_type_val = data.vehicle_type.value if hasattr(data.vehicle_type, "value") else str(data.vehicle_type)
+
+    if v_type_val == "bike":
+        if "parcel" not in caps:
+            caps.append("parcel")
+        is_parcel = True
+        is_transport = False
+        seat_cap = 1
+        parcel_kg = data.parcel_capacity_kg or 25.0
+        max_payload = 30.0
+    elif v_type_val == "truck":
+        if "transport" not in caps:
+            caps.append("transport")
+        if "packers" not in caps:
+            caps.append("packers")
+        is_parcel = True
+        is_transport = True
+        seat_cap = data.seat_capacity or 2
+        parcel_kg = data.parcel_capacity_kg or 1000.0
+        max_payload = data.max_payload_kg or 2500.0
+    else:
+        if "cab" not in caps:
+            caps.append("cab")
+        if "rental" not in caps:
+            caps.append("rental")
+        if "outstation" not in caps:
+            caps.append("outstation")
+        if "airport" not in caps:
+            caps.append("airport")
+        if data.parcel_capable and "parcel" not in caps:
+            caps.append("parcel")
+        is_parcel = data.parcel_capable
+        is_transport = data.transport_capable
+        seat_cap = data.seat_capacity
+        parcel_kg = data.parcel_capacity_kg or (50.0 if data.parcel_capable else None)
+        max_payload = data.max_payload_kg
+
+    if existing_v:
+        if existing_v.driver_id == driver.id:
+            # Idempotent update for same driver
+            existing_v.vehicle_type = data.vehicle_type
+            existing_v.make = data.make.strip()
+            existing_v.model = data.model.strip()
+            existing_v.variant = data.variant.strip() if data.variant else None
+            existing_v.year = data.year
+            existing_v.color = data.color.strip()
+            existing_v.registration_number = clean_reg
+            existing_v.seat_capacity = seat_cap
+            existing_v.fuel_type = data.fuel_type or "petrol"
+            existing_v.comfort_level = data.comfort_level or "economy"
+            existing_v.ownership_type = data.ownership_type or "self"
+            if data.registered_owner_name:
+                existing_v.registered_owner_name = data.registered_owner_name.strip()
+            existing_v.service_capabilities = caps
+            existing_v.has_ac = data.has_ac
+            existing_v.parcel_capable = is_parcel
+            existing_v.parcel_capacity_kg = parcel_kg
+            existing_v.transport_capable = is_transport
+            existing_v.max_payload_kg = max_payload
+            existing_v.cargo_volume_cft = data.cargo_volume_cft
+            existing_v.commercial_permit = data.commercial_permit
+            if data.insurance_expiry:
+                existing_v.insurance_expiry = data.insurance_expiry
+            if data.pollution_expiry:
+                existing_v.pollution_expiry = data.pollution_expiry
+            if data.permit_expiry:
+                existing_v.permit_expiry = data.permit_expiry
+            if data.fitness_expiry:
+                existing_v.fitness_expiry = data.fitness_expiry
+            if data.photos:
+                existing_v.photos = data.photos
+
+            try:
+                await db.flush()
+                await db.refresh(existing_v)
+            except IntegrityError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Vehicle registration number '{clean_reg}' conflict.",
+                )
+            return existing_v
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Vehicle with registration number '{clean_reg}' is already registered on the platform by another driver.",
+            )
+
+    # 2. Check maximum vehicle count
     count_res = await db.execute(
         select(func.count(Vehicle.id)).where(Vehicle.driver_id == driver.id)
     )
@@ -192,17 +296,6 @@ async def create_driver_vehicle(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Maximum vehicle limit reached ({MAX_VEHICLES_PER_DRIVER} vehicles allowed per driver).",
-        )
-
-    # 2. Check registration number uniqueness
-    clean_reg = data.registration_number.upper().replace(" ", "").replace("-", "").strip()
-    existing_res = await db.execute(
-        select(Vehicle).where(Vehicle.registration_number == clean_reg)
-    )
-    if existing_res.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Vehicle with registration number '{clean_reg}' is already registered on the platform.",
         )
 
     # 3. Determine initial capabilities and defaults based on vehicle type

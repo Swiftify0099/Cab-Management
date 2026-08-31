@@ -66,19 +66,59 @@ async def update_customer_profile(
     db: AsyncSession,
     profile: CustomerProfile,
     data: CustomerProfileUpdate,
-    user: User,
+    user: Optional[User] = None,
 ) -> CustomerProfile:
     """Update customer profile fields."""
     update_data = data.model_dump(exclude_unset=True)
 
     for field, value in update_data.items():
         if field == "language":
-            user.language = value
-        else:
+            if user:
+                user.language = value
+        elif field == "email":
+            if user:
+                user.email = value.strip() if value else None
+        elif field == "phone":
+            if user and value:
+                user.phone = value.strip()
+        elif hasattr(profile, field):
             setattr(profile, field, value)
+
+    if user and data.full_name:
+        user.is_profile_complete = True
 
     await db.flush()
     await db.refresh(profile)
+    return profile
+
+
+async def get_or_create_customer_profile(
+    db: AsyncSession,
+    user: User,
+    full_name: Optional[str] = None,
+) -> CustomerProfile:
+    """Get customer profile or auto-create if missing."""
+    profile = await get_customer_profile(db=db, user_id=user.id)
+    if profile:
+        if full_name and not profile.full_name:
+            profile.full_name = full_name.strip()
+            await db.flush()
+        return profile
+
+    referral_code = await _generate_unique_referral_code(db)
+    resolved_name = (full_name or "").strip() or getattr(user, "name", "") or getattr(user, "full_name", "") or getattr(user, "phone", "Customer")
+    profile = CustomerProfile(
+        user_id=user.id,
+        full_name=resolved_name,
+        referral_code=referral_code,
+        reward_points=0,
+        wallet_balance=0,
+        women_only_mode=False,
+    )
+    db.add(profile)
+    await db.flush()
+    await db.refresh(profile)
+    logger.info("Auto-created customer profile", user_id=str(user.id))
     return profile
 
 

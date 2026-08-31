@@ -51,13 +51,46 @@ class CustomerProfileCreate(BaseModel):
 
 class CustomerProfileUpdate(BaseModel):
     """Optional fields that can be updated later."""
-    full_name: Optional[str] = Field(None, min_length=2, max_length=255)
+    full_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    email: Optional[str] = Field(None, max_length=255)
+    phone: Optional[str] = Field(None, max_length=20)
     gender: Optional[Gender] = None
     dob: Optional[date] = None
-    emergency_contact: Optional[str] = Field(None, min_length=10, max_length=15)
+    emergency_contact: Optional[str] = Field(None, max_length=20)
     language: Optional[str] = Field(None, max_length=10)
     women_only_mode: Optional[bool] = None
     service_preferences: Optional[dict] = None  # Phase 10: {default_service, pinned_services, ladies_only, ...}
+
+    @field_validator("full_name", mode="before")
+    @classmethod
+    def clean_full_name(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        v_str = str(v).strip()
+        return v_str if v_str else None
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def clean_email(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        v_str = str(v).strip().lower()
+        return v_str if v_str else None
+
+    @field_validator("emergency_contact", mode="before")
+    @classmethod
+    def clean_emergency_contact(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        v_str = str(v).strip()
+        return v_str if v_str else None
+
+    @field_validator("dob", mode="before")
+    @classmethod
+    def clean_dob(cls, v: Any) -> Optional[Any]:
+        if v is None or v == "":
+            return None
+        return v
 
 
 class CustomerProfileResponse(BaseModel):
@@ -65,16 +98,25 @@ class CustomerProfileResponse(BaseModel):
 
     user_id: uuid.UUID
     full_name: str
-    gender: Optional[Gender]
-    dob: Optional[date]
-    emergency_contact: Optional[str]
-    profile_photo: Optional[str]
-    reward_points: int
-    wallet_balance: Decimal
-    referral_code: Optional[str]
-    women_only_mode: bool
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    gender: Optional[Gender] = None
+    dob: Optional[date] = None
+    emergency_contact: Optional[str] = None
+    profile_photo: Optional[str] = None
+    profile_photo_url: Optional[str] = None
+    reward_points: int = 0
+    wallet_balance: Decimal = Decimal("0.00")
+    promo_credit_balance: Optional[Decimal] = Decimal("0.00")
+    referral_reward_balance: Optional[Decimal] = Decimal("0.00")
+    pending_refund_balance: Optional[Decimal] = Decimal("0.00")
+    referral_code: Optional[str] = None
+    women_only_mode: bool = False
     service_preferences: Optional[dict] = None  # Phase 10
-    subscription_plan_id: Optional[uuid.UUID]
+    subscription_plan_id: Optional[uuid.UUID] = None
+    rating: Optional[Decimal] = Decimal("5.00")
+    total_ratings: Optional[int] = 0
+    is_profile_complete: Optional[bool] = False
 
 
 # ============================================================
@@ -195,15 +237,29 @@ class DriverProfileUpdate(BaseModel):
 class VehicleCreate(BaseModel):
     """Vehicle details during driver onboarding."""
     vehicle_type: VehicleType
-    make: str = Field(..., min_length=2, max_length=100, description="e.g. Maruti, Toyota")
+    make: str = Field(..., min_length=1, max_length=100, description="e.g. Maruti, Toyota")
     model: str = Field(..., min_length=1, max_length=100, description="e.g. Swift, Innova")
-    year: int = Field(..., ge=2000, le=2030)
-    color: str = Field(..., min_length=2, max_length=50)
-    registration_number: str = Field(..., min_length=5, max_length=20)
-    seat_capacity: int = Field(..., ge=2, le=50)
+    variant: Optional[str] = Field(None, max_length=100)
+    year: int = Field(..., ge=1995, le=2035)
+    color: str = Field(..., min_length=1, max_length=50)
+    registration_number: str = Field(..., min_length=4, max_length=25)
+    seat_capacity: int = Field(..., ge=1, le=60)
+    fuel_type: Optional[str] = Field("petrol")
+    comfort_level: Optional[str] = Field("economy")
+    ownership_type: Optional[str] = Field("self")
+    registered_owner_name: Optional[str] = Field(None, max_length=255)
+    service_capabilities: Optional[List[str]] = None
     parcel_capable: bool = False
-    parcel_capacity_kg: Optional[float] = Field(None, ge=0, le=1000)
+    parcel_capacity_kg: Optional[float] = Field(None, ge=0, le=10000)
     has_ac: bool = True
+    photos: Optional[List[str]] = Field(default_factory=list)
+
+    @field_validator("vehicle_type", mode="before")
+    @classmethod
+    def validate_vehicle_type(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
 
 
 class VehicleResponse(BaseModel):

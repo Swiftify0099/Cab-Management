@@ -11,6 +11,7 @@ from typing import List, Optional, Any, Dict
 import structlog
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.profile import (
@@ -248,14 +249,21 @@ async def register_vehicle(
     if not profile:
         raise HTTPException(status_code=404, detail="Please complete driver profile setup first")
 
-    vehicle = await add_driver_vehicle(db=db, driver=profile, data=data)
-    await db.commit()
+    try:
+        vehicle = await add_driver_vehicle(db=db, driver=profile, data=data)
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Vehicle registration number '{data.registration_number}' is already registered.",
+        )
 
     return APIResponse(
         message="Vehicle registered",
         data=VehicleResponse(
             id=vehicle.id,
-            vehicle_type=vehicle.vehicle_type.value,
+            vehicle_type=vehicle.vehicle_type.value if hasattr(vehicle.vehicle_type, "value") else str(vehicle.vehicle_type),
             make=vehicle.make,
             model=vehicle.model,
             year=vehicle.year,
@@ -1220,14 +1228,21 @@ async def create_vehicle_alias(
     if not profile:
         raise HTTPException(status_code=404, detail="Please complete driver profile setup first")
 
-    vehicle = await add_driver_vehicle(db=db, driver=profile, data=data)
-    await db.commit()
+    try:
+        vehicle = await add_driver_vehicle(db=db, driver=profile, data=data)
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Vehicle registration number '{data.registration_number}' is already registered.",
+        )
 
     return APIResponse(
         message="Vehicle registered",
         data=VehicleResponse(
             id=vehicle.id,
-            vehicle_type=vehicle.vehicle_type.value,
+            vehicle_type=vehicle.vehicle_type.value if hasattr(vehicle.vehicle_type, "value") else str(vehicle.vehicle_type),
             make=vehicle.make,
             model=vehicle.model,
             year=vehicle.year,

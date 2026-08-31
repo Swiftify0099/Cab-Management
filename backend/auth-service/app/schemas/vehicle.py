@@ -6,7 +6,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from common.models.all_models import VehicleType
 
@@ -37,6 +37,13 @@ class VehicleCreateRequest(BaseModel):
     permit_expiry: Optional[date] = None
     fitness_expiry: Optional[date] = None
     photos: Optional[List[str]] = Field(default_factory=list)
+
+    @field_validator("vehicle_type", mode="before")
+    @classmethod
+    def validate_vehicle_type(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
 
 
 class VehicleUpdateRequest(BaseModel):

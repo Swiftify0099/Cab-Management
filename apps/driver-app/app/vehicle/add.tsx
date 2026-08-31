@@ -157,23 +157,27 @@ export default function AddVehicleScreen() {
     setLoading(true)
     try {
       const payload = {
-        ...form,
+        make: form.make.trim(),
+        model: form.model.trim(),
         year: Number(form.year),
-        seat_capacity: Number(form.seat_capacity),
-        status: 'ACTIVE',
+        registration_number: form.registration_number.toUpperCase().trim(),
+        vehicle_type: (form.vehicle_type || 'sedan').toLowerCase() as any,
+        seat_capacity: Number(form.seat_capacity) || 4,
+        color: form.color.trim(),
+        fuel_type: (form.fuel_type || 'petrol').toLowerCase(),
+        ownership_type: 'self',
+        registered_owner_name: 'Driver Partner',
+        has_ac: true,
         is_active: true,
+        status: 'ACTIVE',
       }
 
-      // 1. Post to backend
-      try {
-        await VehicleService.createVehicle(payload as any)
-      } catch {
-        await api.post('/driver/vehicles', payload).catch(() => api.post('/driver/me/vehicle', payload))
-      }
+      // 1. Call authoritative VehicleService (which posts to backend and caches)
+      const created = await VehicleService.createVehicle(payload as any)
 
       // 2. Cache in local storage for instant trip creation & active vehicle switcher
-      await AsyncStorage.setItem('driver_active_vehicle', JSON.stringify(payload))
-      await AsyncStorage.setItem('driver_vehicle_details', JSON.stringify(payload))
+      await AsyncStorage.setItem('driver_active_vehicle', JSON.stringify(created))
+      await AsyncStorage.setItem('driver_vehicle_details', JSON.stringify(created))
 
       Alert.alert(
         'Vehicle Registered!',
@@ -186,8 +190,8 @@ export default function AddVehicleScreen() {
         ]
       )
     } catch (e: any) {
-      const msg = e?.response?.data?.detail || e?.message || 'Failed to save vehicle details.'
-      Alert.alert('Error', msg)
+      const msg = e?.response?.data?.detail || e?.response?.data?.message || e?.message || 'Failed to save vehicle details.'
+      Alert.alert('Registration Notice', msg)
     } finally {
       setLoading(false)
     }

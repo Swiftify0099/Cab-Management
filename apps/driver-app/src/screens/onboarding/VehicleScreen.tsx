@@ -159,24 +159,35 @@ export default function VehicleScreen() {
     setLoading(true)
     try {
       const payload = {
-        ...form,
+        make: form.make.trim(),
+        model: form.model.trim(),
         year: Number(form.year),
-        seat_capacity: Number(form.seat_capacity),
+        registration_number: form.registration_number.toUpperCase().trim(),
+        vehicle_type: (form.vehicle_type || 'sedan').toLowerCase(),
+        seat_capacity: Number(form.seat_capacity) || 4,
+        color: form.color.trim(),
+        fuel_type: (form.fuel_type || 'petrol').toLowerCase(),
+        ownership_type: 'self',
+        registered_owner_name: 'Driver Partner',
+        has_ac: true,
+        parcel_capable: form.parcel_capable || false,
+        parcel_capacity_kg: form.parcel_capacity_kg || undefined,
         status: 'APPROVED',
         is_active: true,
       }
 
       // 1. Post to backend
-      await api.post('/driver/me/vehicle', payload).catch(() => api.post('/driver/vehicles', payload)).catch(() => {})
+      const res = await api.post('/driver/me/vehicle', payload).catch(() => api.post('/driver/vehicles', payload))
+      const savedVehicle = res?.data?.data || payload
 
       // 2. Cache in local storage for instant trip creation & active vehicle switcher
-      await AsyncStorage.setItem('driver_active_vehicle', JSON.stringify(payload))
-      await AsyncStorage.setItem('driver_vehicle_details', JSON.stringify(payload))
+      await AsyncStorage.setItem('driver_active_vehicle', JSON.stringify(savedVehicle))
+      await AsyncStorage.setItem('driver_vehicle_details', JSON.stringify(savedVehicle))
 
       router.push('/onboarding/documents')
     } catch (e: any) {
-      const msg = e?.response?.data?.detail || 'Failed to save vehicle details.'
-      Alert.alert('Error', msg)
+      const msg = e?.response?.data?.detail || e?.response?.data?.message || e?.message || 'Failed to save vehicle details.'
+      Alert.alert('Notice', msg)
     } finally {
       setLoading(false)
     }

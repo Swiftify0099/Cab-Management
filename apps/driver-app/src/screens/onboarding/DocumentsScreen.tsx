@@ -266,8 +266,8 @@ export default function DocumentsScreen() {
       const cachedPayload = {
         doc_type: docId,
         front_uri: uri,
-        status: 'approved',
-        is_verified: true,
+        status: 'under_review',
+        is_verified: false,
         updated_at: new Date().toISOString(),
       }
       await AsyncStorage.setItem(`kyc_doc_${docId}`, JSON.stringify(cachedPayload))
@@ -276,7 +276,7 @@ export default function DocumentsScreen() {
       const existingDocs = existingDocsStr ? JSON.parse(existingDocsStr) : {}
       existingDocs[docId] = {
         uploaded: true,
-        status: 'approved',
+        status: 'under_review',
         front_uri: uri,
       }
       await AsyncStorage.setItem('driver_uploaded_docs', JSON.stringify(existingDocs))

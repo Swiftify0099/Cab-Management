@@ -1,3 +1,4 @@
+from decimal import Decimal
 """
 Customer and Driver profile API endpoints.
 Phase 2  Complete implementation.
@@ -25,6 +26,7 @@ from app.services.profile_service import (
     create_customer_profile,
     delete_address,
     get_customer_profile,
+    get_or_create_customer_profile,
     get_user_addresses,
     update_address,
     update_customer_profile,
@@ -122,45 +124,95 @@ async def get_my_profile(
     db: AsyncSession = Depends(get_db),
 ):
     profile = await get_customer_profile(db=db, user_id=current_user.id)
+    user_obj = getattr(current_user, "_user", None)
+    if not user_obj:
+        user_res = await db.execute(select(User).where(User.id == current_user.id))
+        user_obj = user_res.scalar_one_or_none()
+
+    if not profile and user_obj:
+        profile = await get_or_create_customer_profile(db=db, user=user_obj)
+        await db.commit()
+        await db.refresh(profile)
+
+    user_phone = getattr(user_obj, "phone", None) or getattr(current_user, "phone", None)
+    user_email = getattr(user_obj, "email", None)
+
     if not profile:
-        user_obj = getattr(current_user, "_user", None)
-        user_name = getattr(user_obj, "name", None) or getattr(user_obj, "full_name", "") or ""
-        user_photo = getattr(user_obj, "profile_photo", None) or getattr(user_obj, "avatar_url", None)
         resp = CustomerProfileResponse(
             user_id=current_user.id,
-            full_name=user_name,
+            full_name="",
+            phone=user_phone,
+            email=user_email,
             gender=None,
             dob=None,
             emergency_contact=None,
-            profile_photo=get_file_url(user_photo) if user_photo else None,
+            profile_photo=None,
+            profile_photo_url=None,
             reward_points=0,
-            wallet_balance=0,
-            referral_code=getattr(user_obj, "referral_code", None),
+            wallet_balance=Decimal("0.00"),
+            referral_code=None,
             women_only_mode=False,
             subscription_plan_id=None,
+            is_profile_complete=False,
         )
         return APIResponse(message="Profile setup pending", data=resp)
 
+    photo_url = get_file_url(profile.profile_photo) if profile.profile_photo else None
     resp = CustomerProfileResponse(
         user_id=profile.user_id,
-        full_name=profile.full_name,
+        full_name=profile.full_name or "",
+        phone=user_phone,
+        email=user_email,
         gender=profile.gender,
         dob=profile.dob,
         emergency_contact=profile.emergency_contact,
-        profile_photo=get_file_url(profile.profile_photo) if profile.profile_photo else None,
-        reward_points=profile.reward_points,
-        wallet_balance=profile.wallet_balance,
+        profile_photo=photo_url,
+        profile_photo_url=photo_url,
+        reward_points=profile.reward_points or 0,
+        wallet_balance=profile.wallet_balance or Decimal("0.00"),
+        promo_credit_balance=profile.promo_credit_balance or Decimal("0.00"),
+        referral_reward_balance=profile.referral_reward_balance or Decimal("0.00"),
+        pending_refund_balance=profile.pending_refund_balance or Decimal("0.00"),
         referral_code=profile.referral_code,
-        women_only_mode=profile.women_only_mode,
+        women_only_mode=profile.women_only_mode or False,
+        service_preferences=profile.service_preferences,
         subscription_plan_id=profile.subscription_plan_id,
+        rating=profile.rating or Decimal("5.00"),
+        total_ratings=profile.total_ratings or 0,
+        is_profile_complete=getattr(user_obj, "is_profile_complete", True),
     )
     return APIResponse(message="Profile fetched", data=resp)
 
 
 @router.patch(
+    "",
+    response_model=APIResponse[CustomerProfileResponse],
+    summary="Update customer profile (root alias)",
+)
+@router.patch(
+    "/",
+    response_model=APIResponse[CustomerProfileResponse],
+    summary="Update customer profile (slash alias)",
+)
+@router.patch(
     "/me",
     response_model=APIResponse[CustomerProfileResponse],
     summary="Update customer profile",
+)
+@router.put(
+    "",
+    response_model=APIResponse[CustomerProfileResponse],
+    summary="Update customer profile (put root alias)",
+)
+@router.put(
+    "/",
+    response_model=APIResponse[CustomerProfileResponse],
+    summary="Update customer profile (put slash alias)",
+)
+@router.put(
+    "/me",
+    response_model=APIResponse[CustomerProfileResponse],
+    summary="Update customer profile (put me alias)",
 )
 async def update_my_profile(
     data: CustomerProfileUpdate,
@@ -168,33 +220,67 @@ async def update_my_profile(
     db: AsyncSession = Depends(get_db),
 ):
     profile = await get_customer_profile(db=db, user_id=current_user.id)
+    user_obj = getattr(current_user, "_user", None)
+    if not user_obj:
+        user_res = await db.execute(select(User).where(User.id == current_user.id))
+        user_obj = user_res.scalar_one_or_none()
+
     if not profile:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Profile not found",
-        )
+        if user_obj:
+            profile = await get_or_create_customer_profile(
+                db=db,
+                user=user_obj,
+                full_name=data.full_name,
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
 
     profile = await update_customer_profile(
-        db=db, profile=profile, data=data, user=current_user._user
+        db=db, profile=profile, data=data, user=user_obj
     )
     await db.commit()
+    await db.refresh(profile)
+    if user_obj:
+        await db.refresh(user_obj)
+
+    user_phone = getattr(user_obj, "phone", None) or getattr(current_user, "phone", None)
+    user_email = getattr(user_obj, "email", None)
+    photo_url = get_file_url(profile.profile_photo) if profile.profile_photo else None
 
     resp = CustomerProfileResponse(
         user_id=profile.user_id,
-        full_name=profile.full_name,
+        full_name=profile.full_name or "",
+        phone=user_phone,
+        email=user_email,
         gender=profile.gender,
         dob=profile.dob,
         emergency_contact=profile.emergency_contact,
-        profile_photo=get_file_url(profile.profile_photo) if profile.profile_photo else None,
-        reward_points=profile.reward_points,
-        wallet_balance=profile.wallet_balance,
+        profile_photo=photo_url,
+        profile_photo_url=photo_url,
+        reward_points=profile.reward_points or 0,
+        wallet_balance=profile.wallet_balance or Decimal("0.00"),
+        promo_credit_balance=profile.promo_credit_balance or Decimal("0.00"),
+        referral_reward_balance=profile.referral_reward_balance or Decimal("0.00"),
+        pending_refund_balance=profile.pending_refund_balance or Decimal("0.00"),
         referral_code=profile.referral_code,
-        women_only_mode=profile.women_only_mode,
+        women_only_mode=profile.women_only_mode or False,
+        service_preferences=profile.service_preferences,
         subscription_plan_id=profile.subscription_plan_id,
+        rating=profile.rating or Decimal("5.00"),
+        total_ratings=profile.total_ratings or 0,
+        is_profile_complete=getattr(user_obj, "is_profile_complete", True),
     )
     return APIResponse(message="Profile updated", data=resp)
 
 
+@router.post(
+    "/photo",
+    response_model=APIResponse[dict],
+    summary="Upload customer profile photo (root alias)",
+)
 @router.post(
     "/me/photo",
     response_model=APIResponse[dict],
@@ -207,6 +293,16 @@ async def upload_profile_photo(
 ):
     """Upload customer profile photo. Stores file in Cloudinary and metadata in PostgreSQL."""
     profile = await get_customer_profile(db=db, user_id=current_user.id)
+    user_obj = getattr(current_user, "_user", None)
+    if not user_obj:
+        user_res = await db.execute(select(User).where(User.id == current_user.id))
+        user_obj = user_res.scalar_one_or_none()
+
+    if not profile and user_obj:
+        profile = await get_or_create_customer_profile(db=db, user=user_obj)
+        await db.commit()
+        await db.refresh(profile)
+
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
 
@@ -285,6 +381,11 @@ async def upload_profile_photo(
 
 
 @router.delete(
+    "/photo",
+    response_model=APIResponse[dict],
+    summary="Remove customer profile photo (root alias)",
+)
+@router.delete(
     "/me/photo",
     response_model=APIResponse[dict],
     summary="Remove customer profile photo",
@@ -296,7 +397,10 @@ async def delete_profile_photo(
     """Removes customer profile photo, deletes Cloudinary asset, and clears DB metadata."""
     profile = await get_customer_profile(db=db, user_id=current_user.id)
     if not profile:
-        raise HTTPException(status_code=404, detail="Profile not found")
+        return APIResponse(
+            message="Profile photo removed successfully",
+            data={"photo_url": None},
+        )
 
     old_photo = profile.profile_photo
     if old_photo:
@@ -589,6 +693,16 @@ async def add_favorite_driver(
         select(CustomerProfile).where(CustomerProfile.user_id == current_user.id)
     )
     cp = cp_res.scalar_one_or_none()
+    if not cp:
+        user_obj = getattr(current_user, "_user", None)
+        if not user_obj:
+            user_res = await db.execute(select(User).where(User.id == current_user.id))
+            user_obj = user_res.scalar_one_or_none()
+        if user_obj:
+            cp = await get_or_create_customer_profile(db=db, user=user_obj)
+            await db.commit()
+            await db.refresh(cp)
+
     if not cp:
         raise HTTPException(status_code=404, detail="Customer profile not found")
 

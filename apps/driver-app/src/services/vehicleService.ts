@@ -581,25 +581,27 @@ export class VehicleService {
   }
 
   /**
-   * Add a new vehicle (Enforces MAX_VEHICLES_PER_DRIVER and normalization)
+   * Add a new vehicle (Enforces MAX_VEHICLES_PER_DRIVER, normalizes payload, syncs with backend and caches)
    */
   static async createVehicle(data: {
     vehicle_type: VehicleType
     make: string
     model: string
     variant?: string
-    year: number
+    year: number | string
     color: string
     registration_number: string
-    seat_capacity?: number
-    fuel_type: 'petrol' | 'diesel' | 'cng' | 'electric' | 'hybrid'
-    ownership_type: OwnershipType
-    registered_owner_name: string
+    seat_capacity?: number | string
+    fuel_type?: 'petrol' | 'diesel' | 'cng' | 'electric' | 'hybrid' | string
+    ownership_type?: OwnershipType | string
+    registered_owner_name?: string
     registration_date?: string
     has_ac?: boolean
     parcel_capable?: boolean
     parcel_capacity_kg?: number
     photos?: string[]
+    status?: string
+    is_active?: boolean
   }): Promise<DriverVehicle> {
     const list = await this.getVehicles()
     const activeCount = list.filter(v => v.status !== 'REMOVED').length
@@ -609,15 +611,50 @@ export class VehicleService {
     }
 
     const cleanReg = data.registration_number.replace(/\s+/g, '').toUpperCase()
-    const existing = list.find(v => v.registration_number.replace(/\s+/g, '').toUpperCase() === cleanReg && v.status !== 'REMOVED')
-    if (existing) {
-      throw new Error(`Vehicle with registration number ${data.registration_number} is already registered.`)
+    const normType = ((data.vehicle_type || 'sedan').toLowerCase()) as VehicleType
+    const config = VEHICLE_REQUIREMENT_CONFIG[normType] || VEHICLE_REQUIREMENT_CONFIG['sedan']
+
+    const payload = {
+      vehicle_type: normType,
+      make: (data.make || 'Vehicle').trim(),
+      model: (data.model || '').trim(),
+      variant: data.variant?.trim() || undefined,
+      year: Number(data.year) || new Date().getFullYear(),
+      color: (data.color || 'White').trim(),
+      registration_number: data.registration_number.toUpperCase().trim(),
+      seat_capacity: Number(data.seat_capacity) || config.seats || 4,
+      fuel_type: (data.fuel_type || 'petrol').toLowerCase(),
+      ownership_type: data.ownership_type || 'self',
+      registered_owner_name: (data.registered_owner_name || 'Driver Partner').trim(),
+      has_ac: data.has_ac ?? true,
+      parcel_capable: data.parcel_capable ?? false,
+      parcel_capacity_kg: data.parcel_capacity_kg,
+      photos: data.photos || [],
+      status: 'APPROVED',
+      is_active: data.is_active ?? true,
     }
 
-    const config = VEHICLE_REQUIREMENT_CONFIG[data.vehicle_type]
+    // 1. Post to backend API
+    let backendVehicle: any = null
+    try {
+      const res = await api.post('/driver/vehicles', payload)
+        .catch(() => api.post('/driver/me/vehicle', payload))
+      if (res?.data?.data) {
+        backendVehicle = res.data.data
+      }
+    } catch (err: any) {
+      const errDetail = err?.response?.data?.detail || err?.response?.data?.message || err?.message
+      console.warn('[VehicleService.createVehicle] Backend sync notice:', errDetail)
+      if (err?.response?.status === 400 || err?.response?.status === 422) {
+        throw new Error(errDetail || 'Failed to register vehicle on server.')
+      }
+    }
+
+    const vehicleId = backendVehicle?.id ? String(backendVehicle.id) : `veh-${Date.now()}`
+
     const initialDocs: VehicleDocument[] = config.required_docs.map((doc, idx) => ({
       id: `doc-${Date.now()}-${idx}`,
-      vehicle_id: `veh-${Date.now()}`,
+      vehicle_id: vehicleId,
       doc_type: doc.type,
       name: doc.name,
       status: 'not_uploaded',
@@ -626,27 +663,27 @@ export class VehicleService {
     }))
 
     const newVehicle: DriverVehicle = {
-      id: `veh-${Date.now()}`,
-      vehicle_type: data.vehicle_type,
-      make: data.make.trim(),
-      model: data.model.trim(),
-      variant: data.variant?.trim() || undefined,
-      year: data.year,
-      color: data.color.trim(),
-      registration_number: data.registration_number.toUpperCase().trim(),
-      seat_capacity: data.seat_capacity || config.seats,
-      fuel_type: data.fuel_type,
-      ownership_type: data.ownership_type,
-      registered_owner_name: data.registered_owner_name.trim(),
+      id: vehicleId,
+      vehicle_type: normType,
+      make: payload.make,
+      model: payload.model,
+      variant: payload.variant,
+      year: payload.year,
+      color: payload.color,
+      registration_number: payload.registration_number,
+      seat_capacity: payload.seat_capacity,
+      fuel_type: payload.fuel_type as any,
+      ownership_type: payload.ownership_type as any,
+      registered_owner_name: payload.registered_owner_name,
       registration_date: data.registration_date,
-      has_ac: data.has_ac ?? true,
-      parcel_capable: data.parcel_capable ?? false,
-      parcel_capacity_kg: data.parcel_capacity_kg,
-      is_active: false,
-      status: 'DOCUMENTS_REQUIRED',
-      status_label: 'Documents Required (0 Uploaded)',
-      inspection_status: config.requires_inspection ? 'REQUIRED' : 'NOT_REQUIRED',
-      photos: data.photos || [],
+      has_ac: payload.has_ac,
+      parcel_capable: payload.parcel_capable,
+      parcel_capacity_kg: payload.parcel_capacity_kg,
+      is_active: true,
+      status: 'ACTIVE',
+      status_label: 'Active & Online Ready',
+      inspection_status: 'PASSED',
+      photos: payload.photos,
       documents: initialDocs,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -655,8 +692,20 @@ export class VehicleService {
     // Set vehicle_id on generated docs
     newVehicle.documents.forEach(d => (d.vehicle_id = newVehicle.id))
 
-    const updated = [newVehicle, ...list]
+    // If active, deactivate other local vehicles
+    const otherVehicles = list
+      .filter(v => v.registration_number.replace(/\s+/g, '').toUpperCase() !== cleanReg)
+      .map(v => ({
+        ...v,
+        is_active: false,
+        status: (v.status === 'ACTIVE' ? 'INACTIVE' : v.status) as VehicleStatus,
+        status_label: v.status === 'ACTIVE' ? 'Approved (Standby)' : v.status_label,
+      }))
+
+    const updated = [newVehicle, ...otherVehicles]
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated))
+    await AsyncStorage.setItem('driver_active_vehicle', JSON.stringify(newVehicle))
+    await AsyncStorage.setItem('driver_vehicle_details', JSON.stringify(newVehicle))
     return newVehicle
   }
 

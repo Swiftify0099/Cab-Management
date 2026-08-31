@@ -552,8 +552,8 @@ export default function DocumentUploadScreen() {
         back_uri: backUri,
         extra_field_1: extraField1.trim(),
         extra_field_2: extraField2.trim(),
-        status: 'approved',
-        is_verified: true,
+        status: 'under_review',
+        is_verified: false,
         updated_at: new Date().toISOString(),
       }
       await AsyncStorage.setItem(`kyc_doc_${doc_type}`, JSON.stringify(cachePayload))
@@ -564,17 +564,17 @@ export default function DocumentUploadScreen() {
       existingDocs[doc_type] = {
         uploaded: true,
         document_number: docNumber.trim().toUpperCase(),
-        status: 'approved',
+        status: 'under_review',
         front_uri: frontUri,
       }
       await AsyncStorage.setItem('driver_uploaded_docs', JSON.stringify(existingDocs))
 
       Alert.alert(
-        'Verification Saved',
-        `${config.label} details and photos have been submitted for verification.`,
+        'Document Submitted',
+        `${config.label} has been submitted for verification. Admin will review and approve your document.`,
         [
           {
-            text: 'View KYC Hub',
+            text: 'View KYC Status',
             onPress: () => router.push('/kyc/status' as any),
           },
           {
