@@ -107,10 +107,6 @@ export default function MultiServicePartnerLoginScreen() {
     }
   }
 
-  const handleRegisterNewPartner = () => {
-    router.push({ pathname: '/onboarding/profile' as any })
-  }
-
   const handleDemoFill = () => {
     setPhone('9876543210')
   }
@@ -263,9 +259,9 @@ export default function MultiServicePartnerLoginScreen() {
                 },
               ]}
             >
-              <Text style={styles.loginCardTitle}>Partner Portal Sign In</Text>
+              <Text style={styles.loginCardTitle}>Partner Portal Access</Text>
               <Text style={styles.loginCardSubtitle}>
-                Enter your registered mobile number to access active dispatches, fleet earnings & live trips.
+                Enter your mobile number to log in or register as a new fleet/service partner.
               </Text>
 
               {/* Phone Input Box */}
@@ -314,7 +310,7 @@ export default function MultiServicePartnerLoginScreen() {
                 </View>
               </View>
 
-              {/* Primary Login Button */}
+              {/* Primary Login / Register Button */}
               <TouchableOpacity
                 style={[styles.primaryBtn, loading && { opacity: 0.7 }]}
                 onPress={handleLogin}
@@ -331,7 +327,7 @@ export default function MultiServicePartnerLoginScreen() {
                     <ActivityIndicator color="#FFFFFF" />
                   ) : (
                     <View style={styles.primaryBtnContent}>
-                      <Text style={styles.primaryBtnText}>Continue to Dashboard</Text>
+                      <Text style={styles.primaryBtnText}>Continue with OTP</Text>
                       <Feather name="arrow-right" size={18} color="#FFFFFF" />
                     </View>
                   )}
@@ -350,12 +346,12 @@ export default function MultiServicePartnerLoginScreen() {
                 </TouchableOpacity>
               </View>
 
-              {/* New Partner Registration CTA */}
+              {/* Seamless Auto-Registration Notice */}
               <View style={styles.registerRow}>
-                <Text style={styles.registerPromptText}>Looking to partner with us? </Text>
-                <TouchableOpacity onPress={handleRegisterNewPartner} activeOpacity={0.7}>
-                  <Text style={styles.registerLinkText}>Register as Partner →</Text>
-                </TouchableOpacity>
+                <Feather name="check-circle" size={13} color="#10B981" style={{ marginRight: 6 }} />
+                <Text style={styles.registerPromptText}>
+                  New Partner? Enter mobile number above for instant registration.
+                </Text>
               </View>
             </Animated.View>
 

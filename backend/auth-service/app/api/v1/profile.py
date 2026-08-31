@@ -103,6 +103,16 @@ async def setup_profile(
 
 
 @router.get(
+    "",
+    response_model=APIResponse[CustomerProfileResponse],
+    summary="Get current user profile (root alias)",
+)
+@router.get(
+    "/",
+    response_model=APIResponse[CustomerProfileResponse],
+    summary="Get current user profile (slash alias)",
+)
+@router.get(
     "/me",
     response_model=APIResponse[CustomerProfileResponse],
     summary="Get current user profile",
@@ -113,10 +123,23 @@ async def get_my_profile(
 ):
     profile = await get_customer_profile(db=db, user_id=current_user.id)
     if not profile:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Profile not found. Please complete profile setup.",
+        user_obj = getattr(current_user, "_user", None)
+        user_name = getattr(user_obj, "name", None) or getattr(user_obj, "full_name", "") or ""
+        user_photo = getattr(user_obj, "profile_photo", None) or getattr(user_obj, "avatar_url", None)
+        resp = CustomerProfileResponse(
+            user_id=current_user.id,
+            full_name=user_name,
+            gender=None,
+            dob=None,
+            emergency_contact=None,
+            profile_photo=get_file_url(user_photo) if user_photo else None,
+            reward_points=0,
+            wallet_balance=0,
+            referral_code=getattr(user_obj, "referral_code", None),
+            women_only_mode=False,
+            subscription_plan_id=None,
         )
+        return APIResponse(message="Profile setup pending", data=resp)
 
     resp = CustomerProfileResponse(
         user_id=profile.user_id,

@@ -234,9 +234,9 @@ export default function DriverPhoneScreen() {
                 },
               ]}
             >
-              <Text style={styles.loginCardTitle}>Partner Portal Sign In</Text>
+              <Text style={styles.loginCardTitle}>Partner Portal Access</Text>
               <Text style={styles.loginCardSubtitle}>
-                Enter your registered mobile number to access active dispatches, fleet earnings & live trips.
+                Enter your mobile number to log in or register as a new fleet/service partner.
               </Text>
 
               {/* Phone Input */}
@@ -291,12 +291,20 @@ export default function DriverPhoneScreen() {
                     <ActivityIndicator color="#FFFFFF" />
                   ) : (
                     <View style={styles.primaryBtnContent}>
-                      <Text style={styles.primaryBtnText}>Continue to Dashboard</Text>
+                      <Text style={styles.primaryBtnText}>Continue with OTP</Text>
                       <Feather name="arrow-right" size={18} color="#FFFFFF" />
                     </View>
                   )}
                 </LinearGradient>
               </TouchableOpacity>
+
+              {/* Seamless Auto-Registration Notice */}
+              <View style={styles.registerRow}>
+                <Feather name="check-circle" size={13} color="#10B981" style={{ marginRight: 6 }} />
+                <Text style={styles.registerPromptText}>
+                  New Partner? Enter mobile number above for instant registration.
+                </Text>
+              </View>
             </Animated.View>
 
             {/* ── Trust & Security Badges ── */}

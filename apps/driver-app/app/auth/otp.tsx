@@ -23,7 +23,7 @@ import { LinearGradient } from 'expo-linear-gradient'
 import { router, useLocalSearchParams } from 'expo-router'
 import * as SecureStore from 'expo-secure-store'
 import AsyncStorage from '@react-native-async-storage/async-storage'
-import { authApi } from '../../src/api/client'
+import { authApi, driverApi } from '../../src/api/client'
 
 export default function MultiServiceOtpScreen() {
   const { phone } = useLocalSearchParams()
@@ -135,9 +135,33 @@ export default function MultiServiceOtpScreen() {
 
       if (tokenData.profile_complete === false || tokenData.is_new_user === true) {
         router.replace('/onboarding/profile' as any)
-      } else {
-        router.replace('/(tabs)/' as any)
+        return
       }
+
+      // Check live partner status from backend to prevent "Partner Not Found" errors
+      try {
+        const onboardingRes = await driverApi.getOnboardingStatus().catch(() => null)
+        const statusData = onboardingRes?.data?.data || onboardingRes?.data
+        if (statusData && statusData.profile === false) {
+          router.replace('/onboarding/profile' as any)
+          return
+        }
+      } catch {
+        router.replace('/onboarding/profile' as any)
+        return
+      }
+
+      const srvStr = await AsyncStorage.getItem('partner_selected_services')
+      if (srvStr) {
+        try {
+          const list = JSON.parse(srvStr)
+          if (Array.isArray(list) && list.length === 1 && list[0] === 'HOTEL') {
+            router.replace('/hotel-partner' as any)
+            return
+          }
+        } catch {}
+      }
+      router.replace('/(tabs)/' as any)
     } catch (err: any) {
       triggerShake()
       const detail =

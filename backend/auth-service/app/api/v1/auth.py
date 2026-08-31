@@ -51,6 +51,7 @@ router = APIRouter()
 # OTP SEND
 # ============================================================
 
+@router.post("/send-otp", response_model=APIResponse[OTPSendResponse], summary="Send OTP (alias)")
 @router.post(
     "/otp/send",
     response_model=APIResponse[OTPSendResponse],
@@ -118,11 +119,14 @@ async def send_otp(
 
     logger.info("OTP sent", phone=phone, dev_mode=auth_settings.OTP_DEV_MODE, otp=otp_code)
 
+    user_check = await db.execute(select(User).where(User.phone == phone))
+    is_existing_user = user_check.scalar_one_or_none() is not None
+
     response_data = OTPSendResponse(
         phone=phone,
         expires_in_minutes=auth_settings.OTP_EXPIRE_MINUTES,
         dev_otp=otp_code if auth_settings.OTP_DEV_MODE else None,
-        is_existing=False,
+        is_existing=is_existing_user,
     )
 
     return APIResponse(
@@ -135,6 +139,7 @@ async def send_otp(
 # OTP VERIFY
 # ============================================================
 
+@router.post("/verify-otp", response_model=APIResponse[TokenResponse], summary="Verify OTP (alias)")
 @router.post(
     "/otp/verify",
     response_model=APIResponse[TokenResponse],

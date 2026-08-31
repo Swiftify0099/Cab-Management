@@ -381,7 +381,7 @@ all_service_mod_dicts = [
     _auth_mods, _booking_mods, _matching_mods, _payment_mods,
     _admin_mods, _analytics_mods, _parcel_mods, _hotel_mods,
     _transport_mods, _airport_mods, _rental_mods, _outstation_mods,
-    _corporate_mods, _notification_mods,
+    _carpool_mods, _packers_mods, _corporate_mods, _notification_mods,
 ]
 for mod_dict in all_service_mod_dicts:
     sys.modules.update(mod_dict)

@@ -3,7 +3,7 @@ Customer and Driver profile Pydantic schemas.
 """
 from datetime import date
 from decimal import Decimal
-from typing import List, Optional
+from typing import List, Optional, Any, Dict
 import uuid
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -84,15 +84,28 @@ class CustomerProfileResponse(BaseModel):
 class AddressCreate(BaseModel):
     address_type: Optional[str] = Field("general", max_length=20, description="general, pickup, or drop")
     label: str = Field(..., min_length=1, max_length=100, description="Home, Office, etc.")
-    latitude: float = Field(..., ge=-90, le=90)
-    longitude: float = Field(..., ge=-180, le=180)
+    latitude: Optional[float] = Field(18.5204, ge=-90, le=90)
+    longitude: Optional[float] = Field(73.8567, ge=-180, le=180)
     # pincode / district / state are optional: map-based picker doesn't collect these
-    pincode: str = Field("000000", min_length=0, max_length=10)
-    district: str = Field("Unknown", min_length=0, max_length=100)
-    state: str = Field("Unknown", min_length=0, max_length=100)
+    pincode: Optional[str] = Field("000000", min_length=0, max_length=10)
+    district: Optional[str] = Field("Unknown", min_length=0, max_length=100)
+    state: Optional[str] = Field("Unknown", min_length=0, max_length=100)
     landmark: Optional[str] = Field(None, max_length=255)
-    full_address: str = Field(..., min_length=5, max_length=500)
+    full_address: Optional[str] = Field(None, max_length=500)
+    address: Optional[str] = Field(None, max_length=500)
     is_default: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def handle_address_fields(cls, values: Any) -> Any:
+        if isinstance(values, dict):
+            if not values.get("full_address"):
+                values["full_address"] = values.get("address") or values.get("label") or "Saved Location"
+            if values.get("latitude") is None:
+                values["latitude"] = 18.5204
+            if values.get("longitude") is None:
+                values["longitude"] = 73.8567
+        return values
 
 
 class AddressUpdate(BaseModel):

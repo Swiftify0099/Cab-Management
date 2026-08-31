@@ -81,18 +81,24 @@ export default function DriverOnboardingScreen() {
     import('expo-secure-store').then(SecureStore => {
       SecureStore.getItemAsync('access_token').then(token => {
         if (!token || token === 'demo_token') {
-          Alert.alert(
-            'Authentication Required',
-            'Please verify your phone number first to register as a partner.',
-            [{ text: 'Sign In / Register', onPress: () => router.replace('/auth/phone' as any) }]
-          )
+          router.replace('/auth/phone' as any)
+          return
+        }
+      })
+      SecureStore.getItemAsync('user_data').then(dataStr => {
+        if (dataStr) {
+          try {
+            const u = JSON.parse(dataStr)
+            if (u.name) setFullName(u.name)
+            if (u.email) setEmail(u.email)
+          } catch {}
         }
       })
     })
 
     // Load pre-existing profile and saved addresses
-    api.get('/profile').then(res => {
-      const p = res.data?.data || res.data
+    api.get('/driver/me').catch(() => api.get('/profile')).then(res => {
+      const p = res?.data?.data || res?.data
       if (p) {
         if (p.full_name) setFullName(p.full_name)
         if (p.email) setEmail(p.email)

@@ -1610,7 +1610,7 @@ async def get_vehicle_catalog():
     )
 
 
-class SavedAddressPayload(BaseModel):
+class SavedAddressPayload(_BaseModel):
     home: Optional[dict] = None
     office: Optional[dict] = None
     other: Optional[dict] = None

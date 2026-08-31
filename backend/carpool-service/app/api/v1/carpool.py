@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.database import async_session_maker
 from app.services.carpool_service import CarpoolService
+from common.middleware.auth import AuthenticatedUser, get_current_user
 
 router = APIRouter(prefix="/carpool", tags=["Intercity Carpool Service"])
 

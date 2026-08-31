@@ -134,20 +134,36 @@ export default function MultiServiceFlashScreen() {
               await api.post('/driver/claim-driver-role', {})
             } catch {}
           }
-          const srvStr = await AsyncStorage.getItem('partner_selected_services')
-          if (srvStr) {
-            try {
-              const srvList = JSON.parse(srvStr)
-              if (Array.isArray(srvList) && srvList.length === 1 && srvList[0] === 'HOTEL') {
-                destination = '/hotel-partner'
-              } else {
+          // Check if driver profile onboarding is complete
+          let isProfileComplete = false
+          try {
+            const onboardingRes = await api.get('/driver/me/onboarding-status')
+            const obData = onboardingRes.data?.data || onboardingRes.data
+            if (obData && obData.profile === true) {
+              isProfileComplete = true
+            }
+          } catch {
+            isProfileComplete = false
+          }
+
+          if (!isProfileComplete) {
+            destination = '/onboarding/profile'
+          } else {
+            const srvStr = await AsyncStorage.getItem('partner_selected_services')
+            if (srvStr) {
+              try {
+                const srvList = JSON.parse(srvStr)
+                if (Array.isArray(srvList) && srvList.length === 1 && srvList[0] === 'HOTEL') {
+                  destination = '/hotel-partner'
+                } else {
+                  destination = '/(tabs)'
+                }
+              } catch {
                 destination = '/(tabs)'
               }
-            } catch {
+            } else {
               destination = '/(tabs)'
             }
-          } else {
-            destination = '/(tabs)'
           }
         }
       } catch (err) {
